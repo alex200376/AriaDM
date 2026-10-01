@@ -72,6 +72,46 @@ describe('parseRelease', () => {
     expect(portableOnly.downloadUrl).toBe('u')
   })
 
+  it('carries the SHA-256 GitHub published for the installer', () => {
+    // The digest is what tells a damaged transfer apart from a good one; a file
+    // can arrive the right length and the wrong bytes.
+    const digest = 'a'.repeat(64)
+    const info = parseRelease(
+      {
+        tag_name: 'v0.2.0',
+        assets: [
+          {
+            name: 'AriaDM-0.2.0-setup.exe',
+            browser_download_url: 'https://example.test/setup.exe',
+            size: 100,
+            digest: `sha256:${digest}`
+          }
+        ]
+      },
+      '0.1.0'
+    )
+
+    expect(info.downloadSha256).toBe(digest)
+  })
+
+  it('lowercases the digest and survives an unreadable one', () => {
+    const payload = (digest: unknown) => ({
+      tag_name: 'v0.2.0',
+      assets: [
+        { name: 'AriaDM-0.2.0-setup.exe', browser_download_url: 'https://example.test/s', digest }
+      ]
+    })
+
+    expect(parseRelease(payload(`sha256:${'AB'.repeat(32)}`), '0.1.0').downloadSha256).toBe(
+      'ab'.repeat(32)
+    )
+    // "No digest" is not an error: the size check still applies, and refusing
+    // every update over a field we cannot read would be worse than the bug.
+    expect(parseRelease(payload('sha512:abc'), '0.1.0').downloadSha256).toBe('')
+    expect(parseRelease(payload(undefined), '0.1.0').downloadSha256).toBe('')
+    expect(parseRelease(payload('sha256:tooshort'), '0.1.0').downloadSha256).toBe('')
+  })
+
   it('ignores drafts and pre-releases', () => {
     expect(parseRelease({ tag_name: 'v9.0.0', draft: true }, '0.1.0').available).toBe(false)
     expect(parseRelease({ tag_name: 'v9.0.0', prerelease: true }, '0.1.0').available).toBe(false)

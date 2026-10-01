@@ -199,6 +199,18 @@ export interface UpdateInfo {
   /** Size of the installer asset in bytes, or 0 when the release did not say. */
   downloadSize: number
   /**
+   * SHA-256 of the installer asset in lowercase hex, or '' when the release did
+   * not publish one.
+   *
+   * GitHub computes this for every uploaded asset and returns it with the
+   * release, so it costs nothing to obtain and cannot be spoofed by the transfer
+   * itself. It is the only check that catches a download which arrives the right
+   * length and the wrong bytes — which is what a storage or antivirus glitch
+   * produces, and what has to be caught here: the installer's own integrity check
+   * is the last link in the chain, and by then there is no way back.
+   */
+  downloadSha256: string
+  /**
    * True when this build can download and install an update itself.
    *
    * False for the portable build — running the NSIS installer would leave a

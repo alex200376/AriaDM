@@ -1327,6 +1327,7 @@ function AboutTab(): JSX.Element {
         releaseUrl: null,
         downloadUrl: null,
         downloadSize: 0,
+        downloadSha256: '',
         canInstall: false,
         installKind: 'dev',
         needsElevation: false,

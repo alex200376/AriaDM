@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -9,6 +10,16 @@ import type { UpdateCheckResult, UpdateDiagnostics, UpdateInfo, UpdateProgress }
 
 import type { InstallInfo } from './install-kind'
 import { checkForUpdate } from './update-checker'
+
+/**
+ * What the NSIS installer exits with when its own integrity check fails.
+ *
+ * It is the "Installer integrity check has failed. Common causes include
+ * incomplete download and damaged media" box, and it is the one exit code that
+ * means the *file* is bad rather than the user having cancelled a prompt (which
+ * arrives as Windows' 1223, `ERROR_CANCELLED`).
+ */
+const NSIS_INTEGRITY_FAILURE = 2
 
 /**
  * In-app update: download the installer, then run it silently.
@@ -34,10 +45,18 @@ import { checkForUpdate } from './update-checker'
  *    no window and no message; without this check the user is left with a closed
  *    app and an update that never happened.
  *
- * The download is verified before it is allowed to run: the byte count must
- * match what the release advertised (a truncated installer is worse than no
- * update), the file must actually start with an `MZ` header, and it is left on
- * disk so a failed update can be retried without downloading it all again.
+ * The download is verified before it is allowed to run: the byte count must match
+ * what the release advertised (a truncated installer is worse than no update),
+ * the bytes themselves must hash to the SHA-256 GitHub published for that asset,
+ * and the file must start with an `MZ` header. The digest is what makes a
+ * *damaged* transfer detectable — a file can arrive the right length and the
+ * wrong bytes, and without a hash to compare against it was accepted, then reused
+ * on every retry, and refused by the installer's own integrity check again and
+ * again without ever being downloaded a second time.
+ *
+ * A verified installer is left on disk so a failed update does not have to fetch
+ * 197 MB twice — but "verified" means the digest matched, and that is checked
+ * again on reuse rather than taken on trust from last time.
  */
 
 /** The minimum of `fetch`'s response this module needs, so tests can stub it. */
@@ -240,7 +259,11 @@ export class UpdateManager {
 
     // An installer that survived verification last time is worth keeping: the
     // alternative is asking for 197 MB again after a declined UAC prompt.
-    const pending = await this.findVerifiedInstaller(installerNameFor(info), info.downloadSize)
+    const pending = await this.findVerifiedInstaller(
+      installerNameFor(info),
+      info.downloadSize,
+      info.downloadSha256
+    )
     this.installer = pending
 
     this.info = {
@@ -279,7 +302,7 @@ export class UpdateManager {
 
     // Already downloaded and verified? Then this is a retry after a failed
     // install, not a new download.
-    const existing = await this.findVerifiedInstaller(name, info.downloadSize)
+    const existing = await this.findVerifiedInstaller(name, info.downloadSize, info.downloadSha256)
     if (existing) {
       const reused = this.installer !== existing
       this.installer = existing
@@ -333,6 +356,20 @@ export class UpdateManager {
         throw new Error(`更新檔不完整（${received}/${total} bytes）`)
       }
 
+      /*
+       * The bytes, not just the count.
+       *
+       * This is the check that separates "the transfer finished" from "the file
+       * is the one that was published". A damaged write of the right length is
+       * rare, but it is not hypothetical: it is what a storage or antivirus fault
+       * in the middle of a 197 MB write looks like, and without this the damage
+       * is only discovered by the installer — which cannot re-download anything,
+       * so every retry fails identically.
+       */
+      if (info.downloadSha256 && (await this.hashFile(partial)) !== info.downloadSha256) {
+        throw new Error('更新檔內容與發佈的檢查碼不符（可能已損毀），請再試一次。')
+      }
+
       await fsp.rm(target, { force: true })
       await fsp.rename(partial, target)
       await this.assertExecutable(target)
@@ -352,14 +389,24 @@ export class UpdateManager {
       this.emit({ phase: 'error', received: 0, total: 0, percent: -1, error: message }, true)
       throw new Error(message)
     } finally {
-      this.controller = null
+      // Only our own: a newer attempt may already have taken the slot, and
+      // clearing that one would let a third start on top of it.
+      if (this.controller === controller) this.controller = null
     }
   }
 
-  /** Abort an in-flight download. Harmless when nothing is running. */
+  /**
+   * Abort an in-flight download. Harmless when nothing is running.
+   *
+   * Deliberately does *not* clear the controller: this attempt's own `finally`
+   * does that, and only once its `pipeline` has finished unwinding. Clearing it
+   * here released the "already downloading" guard while the aborted write stream
+   * still had buffered chunks to flush, so a retry could open a second writer on
+   * the same `.part` file — two file positions, one file, and a result that is
+   * the right length and the wrong bytes.
+   */
   cancel(): void {
     this.controller?.abort()
-    this.controller = null
   }
 
   /**
@@ -465,8 +512,26 @@ export class UpdateManager {
       this.deps.log(
         `update installer launched: ${image} ${args.join(' ')} (kind=${info.kind} pid=${child.pid ?? '?'})`
       )
-      const started = await this.confirmStarted(child, image, info.needsElevation)
-      if (!started) {
+      const outcome = await this.confirmStarted(child, image, info.needsElevation)
+      if (!outcome.started) {
+        /*
+         * A damaged file is the one failure the installer cannot walk away from:
+         * it cannot re-download itself, so leaving it on disk means every retry
+         * fails on the same bytes. Dropping it here turns a permanent dead end
+         * into one more attempt — which the digest check either passes or catches
+         * before the install is even tried.
+         */
+        if (outcome.exitCode === NSIS_INTEGRITY_FAILURE) {
+          await fsp.rm(file, { force: true }).catch(() => {})
+          this.installer = null
+          this.deps.log(
+            'update installer reported a damaged file; discarded so the next attempt downloads it again'
+          )
+          const damaged = '安裝程式回報檔案已損毀，已刪除更新檔；再試一次會重新下載。'
+          this.fail(`${damaged}若持續失敗，可到發佈頁面手動下載。`)
+          return { started: false, reason: damaged }
+        }
+
         const reason = info.needsElevation
           ? '安裝程式沒有啟動，通常是 Windows 的權限提示被取消。'
           : '安裝程式啟動後立即結束。'
@@ -505,7 +570,11 @@ export class UpdateManager {
    * administrator rights and exits immediately, so the proof is the *new*
    * process — which only appears after the user answers the UAC prompt.
    */
-  private async confirmStarted(child: UpdateChild, image: string, needsElevation: boolean): Promise<boolean> {
+  private async confirmStarted(
+    child: UpdateChild,
+    image: string,
+    needsElevation: boolean
+  ): Promise<{ started: boolean; exitCode: number | null }> {
     const exited = new Promise<number | null>((resolve) => {
       child.once('exit', (code: number | null) => resolve(code))
       // A spawn failure is reported as an exit with code -1: either way, nothing
@@ -514,13 +583,15 @@ export class UpdateManager {
     })
 
     const outcome = await Promise.race([exited, delay(this.timings.earlyExitMs).then(() => 'alive' as const)])
-    if (outcome === 'alive') return true
+    if (outcome === 'alive') return { started: true, exitCode: null }
 
     this.deps.log(`installer process exited after ${this.timings.earlyExitMs}ms (code ${outcome})`)
     const deadline = Date.now() + (needsElevation ? this.timings.elevatedConfirmMs : 0)
     for (;;) {
-      if (await this.processRunning(image)) return true
-      if (Date.now() >= deadline) return false
+      // The exit code travels with the answer: it is what tells a damaged file
+      // apart from a declined permission prompt.
+      if (await this.processRunning(image)) return { started: true, exitCode: outcome }
+      if (Date.now() >= deadline) return { started: false, exitCode: outcome }
       await delay(this.timings.processPollMs)
     }
   }
@@ -549,7 +620,11 @@ export class UpdateManager {
    * partly deleted download, or from a different release entirely, must not be
    * offered as an update.
    */
-  private async findVerifiedInstaller(name: string, expectedSize: number): Promise<string | null> {
+  private async findVerifiedInstaller(
+    name: string,
+    expectedSize: number,
+    expectedSha256: string
+  ): Promise<string | null> {
     if (!name) return null
     const target = path.join(this.deps.installerDir(), name)
     try {
@@ -557,10 +632,37 @@ export class UpdateManager {
       if (!stat.isFile() || stat.size === 0) return null
       if (expectedSize > 0 && stat.size !== expectedSize) return null
       await this.assertExecutable(target)
+
+      /*
+       * Re-verify the contents instead of taking the name and the size as proof.
+       *
+       * A file that was damaged *after* it was written — by a storage fault, by
+       * an antivirus rewriting what it quarantined, by any of the things that
+       * leave the length intact — otherwise passes this check for ever, and the
+       * user gets an installer that fails every time and is never fetched again.
+       * That is a dead end the app cannot talk its way out of, so a mismatch is
+       * thrown away here and the next attempt downloads a clean copy.
+       */
+      if (expectedSha256 && (await this.hashFile(target)) !== expectedSha256) {
+        this.deps.log('discarding downloaded installer: its contents do not match the published check code')
+        await fsp.rm(target, { force: true }).catch(() => {})
+        return null
+      }
       return target
     } catch {
       return null
     }
+  }
+
+  /** SHA-256 of a file, streamed so a 197 MB installer never has to fit in memory. */
+  private hashFile(file: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = createHash('sha256')
+      const stream = fs.createReadStream(file)
+      stream.on('error', reject)
+      stream.on('data', (chunk) => hash.update(chunk))
+      stream.on('end', () => resolve(hash.digest('hex')))
+    })
   }
 
   /** Remove installers and `.part` files left by earlier attempts. */

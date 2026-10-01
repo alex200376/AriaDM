@@ -24,7 +24,7 @@ interface GithubRelease {
   html_url?: string
   draft?: boolean
   prerelease?: boolean
-  assets?: { name?: string; browser_download_url?: string; size?: number }[]
+  assets?: { name?: string; browser_download_url?: string; size?: number; digest?: string }[]
 }
 
 /** Minimal slice of `fetch` this module uses, so tests can inject a stub. */
@@ -76,11 +76,25 @@ function unavailable(current: string, error = ''): UpdateCheckResult {
     releaseUrl: null,
     downloadUrl: null,
     downloadSize: 0,
+    downloadSha256: '',
     // Whether the running build can self-install is decided by the caller, which
     // is the only place that knows the app is packaged and not portable.
     canInstall: false,
     error
   }
+}
+
+/**
+ * The SHA-256 the release published for an asset, if it published one.
+ *
+ * The API reports it as `sha256:<hex>`. Anything else — another algorithm, a
+ * truncated value — is treated as "no digest", so the downloader falls back to
+ * the size check instead of refusing every update on a field it cannot read.
+ */
+function readDigest(digest: unknown): string {
+  if (typeof digest !== 'string') return ''
+  const match = /^sha256:([0-9a-f]{64})$/i.exec(digest.trim())
+  return match?.[1] ? match[1].toLowerCase() : ''
 }
 
 /** Turn a GitHub release payload into an update check result. Exported for tests. */
@@ -106,6 +120,7 @@ export function parseRelease(json: unknown, current: string): UpdateCheckResult 
     // The size lets the download report real progress and reject a truncated
     // file; the GitHub API reports it for every asset, but it is optional here.
     downloadSize: typeof installer?.size === 'number' ? installer.size : 0,
+    downloadSha256: readDigest(installer?.digest),
     canInstall: false,
     error: ''
   }

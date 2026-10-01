@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -38,10 +39,30 @@ function releaseInfo(overrides: Partial<UpdateCheckResult> = {}): UpdateCheckRes
     releaseUrl: 'https://example.test/release',
     downloadUrl: `https://example.test/${INSTALLER_NAME}`,
     downloadSize: EXE_BYTES.length,
+    downloadSha256: '',
     canInstall: false,
     error: '',
     ...overrides
   }
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+/** A response whose body never ends, so a download stays in flight until aborted. */
+function hangingResponse(signal?: AbortSignal): ReturnType<UpdateDownloadFetch> {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(EXE_BYTES)
+        signal?.addEventListener('abort', () => controller.error(new Error('aborted')), { once: true })
+      }
+    })
+  })
 }
 
 function streamResponse(bytes: Uint8Array, contentLength: number): ReturnType<UpdateDownloadFetch> {
@@ -105,6 +126,10 @@ function makeManager(
     /** Image names `tasklist` reports; mutated by tests to simulate the elevated copy. */
     running?: string[]
     onProgress?: (progress: UpdateProgress) => void
+    /** The SHA-256 the release published for the asset. */
+    digest?: string
+    /** Replaces the default body, for a download that has to stay in flight. */
+    fetchImpl?: UpdateDownloadFetch
   } = {}
 ): {
   manager: UpdateManager
@@ -143,9 +168,10 @@ function makeManager(
     // Short windows: the real ones exist so a human can answer a UAC prompt, and
     // a test should not stand in for one.
     timings: { earlyExitMs: 30, elevatedConfirmMs: 60, processPollMs: 5 },
-    checkImpl: async () => releaseInfo(),
-    fetchImpl: () => {
+    checkImpl: async () => releaseInfo({ downloadSha256: options.digest ?? '' }),
+    fetchImpl: (url, init) => {
       fetches += 1
+      if (options.fetchImpl) return options.fetchImpl(url, init)
       return streamResponse(bytes, options.contentLength ?? bytes.length)
     },
     spawnImpl: (file, args) => {
@@ -188,6 +214,21 @@ describe('UpdateManager.check', () => {
     // Right name, wrong size: a partly deleted download, not something to run.
     writeFileSync(path.join(stale.dir, INSTALLER_NAME), EXE_BYTES.slice(0, 100))
     expect((await stale.manager.check()).pendingInstaller).toBeNull()
+  })
+
+  it('throws away an installer whose contents no longer match the release', async () => {
+    // The live failure: right name, right size, a few damaged bytes. Nothing but
+    // the digest can tell it apart from a good file, so it was offered as
+    // "verified" on every retry and refused by the installer every time.
+    const damaged = makeManager({ digest: sha256(EXE_BYTES) })
+    const file = path.join(damaged.dir, INSTALLER_NAME)
+    const bytes = Uint8Array.from(EXE_BYTES)
+    bytes[100] = 0x7a
+    writeFileSync(file, bytes)
+
+    expect((await damaged.manager.check()).pendingInstaller).toBeNull()
+    // Dropped, not merely ignored: the next attempt downloads a clean copy.
+    expect(existsSync(file)).toBe(false)
   })
 })
 
@@ -235,6 +276,51 @@ describe('UpdateManager.download', () => {
 
     await expect(manager.download()).rejects.toThrow(/可執行檔/)
     expect(manager.pendingInstaller).toBeNull()
+  })
+
+  it('accepts a download whose contents match the published check code', async () => {
+    const { manager } = makeManager({ digest: sha256(EXE_BYTES) })
+    await manager.check()
+
+    expect((await manager.download()).phase).toBe('ready')
+  })
+
+  it('rejects a download that arrived the right length but the wrong bytes', async () => {
+    // Byte count alone cannot see this, and the installer's own check is the last
+    // link in the chain — by then it cannot re-download anything.
+    const { manager } = makeManager({ digest: sha256(new TextEncoder().encode('some other build')) })
+    await manager.check()
+
+    await expect(manager.download()).rejects.toThrow(/檢查碼|損毀/)
+    expect(manager.pendingInstaller).toBeNull()
+    expect(manager.progress.phase).toBe('error')
+  })
+
+  it('keeps the slot taken while a cancelled attempt is still unwinding', async () => {
+    // Two attempts writing the same `.part` file means two file positions and one
+    // file: the result is the right length with blocks of the wrong data in it.
+    let calls = 0
+    const { manager } = makeManager({
+      fetchImpl: (_url, init) => {
+        calls += 1
+        return hangingResponse(init?.signal)
+      }
+    })
+    await manager.check()
+
+    const first = manager.download().catch(() => 'aborted')
+    // The slot is taken just before the fetch goes out, so a call that has
+    // reached the network is one whose guard is set.
+    await vi.waitFor(() => expect(calls).toBe(1))
+    manager.cancel()
+
+    // Synchronously after a cancel the first write stream may still have buffered
+    // chunks to flush, so a retry must not be allowed to open a second one yet.
+    expect(await manager.download()).toMatchObject({ phase: 'downloading' })
+    expect(calls).toBe(1)
+
+    await first
+    expect(manager.progress.phase).toBe('error')
   })
 })
 
@@ -316,6 +402,22 @@ describe('UpdateManager.install', () => {
     expect(opened).toHaveLength(1)
     expect(opened[0]!.endsWith(INSTALLER_NAME)).toBe(true)
     expect(manager.progress.phase).toBe('error')
+  })
+
+  it('throws away an installer the installer itself calls damaged', async () => {
+    // NSIS exits with 2 for "Installer integrity check has failed": the file is
+    // bad, which is not the same as a declined permission prompt (1223) and is
+    // the one failure that can never succeed on a retry of the same bytes.
+    const { manager, dir, quit } = makeManager({ child: { exitAfterMs: 0, exitCode: 2 } })
+    await manager.check()
+    await manager.download()
+    const file = path.join(dir, INSTALLER_NAME)
+
+    await expect(manager.install()).rejects.toThrow(/損毀/)
+
+    expect(quit).not.toHaveBeenCalled()
+    expect(manager.pendingInstaller).toBeNull()
+    expect(existsSync(file)).toBe(false)
   })
 
   it('does nothing on the shutdown safety net when no installer is pending', async () => {

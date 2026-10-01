@@ -510,6 +510,9 @@ export function createMockApi(): AriaDmApi {
         releaseUrl: 'https://github.com/alex200376/AriaDM/releases',
         downloadUrl: 'https://example.test/AriaDM-9.9.9-setup.exe',
         downloadSize: 197_000_000,
+        // A digest no real file will match: the mock stands in for a release
+        // whose check code the downloader would compare against.
+        downloadSha256: '0'.repeat(64),
         canInstall: true,
         installKind: 'dev' as const,
         needsElevation: false,
