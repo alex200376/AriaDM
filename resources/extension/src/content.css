@@ -1,0 +1,128 @@
+/*
+ * The on-video download panel.
+ *
+ * Every rule is prefixed and resets with `all: initial`, because this sheet runs
+ * inside pages we do not control. Video sites style bare `button` and `div`
+ * aggressively, and a control that inherits their type scale or hover treatment
+ * looks broken and can even shift the page layout.
+ *
+ * The panel is hidden until the pointer is over the player, and it scales in
+ * rather than appearing instantly so it reads as something the site is showing
+ * rather than a glitch.
+ */
+
+#ariadm-download-panel {
+  all: initial;
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px 0 10px;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(12, 14, 20, 0.82);
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans TC', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  z-index: 2147483647;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease;
+  -webkit-user-drag: none;
+}
+
+#ariadm-download-panel[data-visible='true'] {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+#ariadm-download-panel:hover {
+  background: #7c6cf5;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+#ariadm-download-panel:focus-visible {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  outline: 2px solid #7c6cf5;
+  outline-offset: 2px;
+}
+
+/* The icon-only form, used when the player is too small for a label. */
+#ariadm-download-panel[data-compact='true'] {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+#ariadm-download-panel[data-compact='true'] .ariadm-label {
+  display: none;
+}
+
+#ariadm-download-panel[data-state='busy'] {
+  background: rgba(12, 14, 20, 0.92);
+  cursor: progress;
+}
+
+#ariadm-download-panel[data-state='done'] {
+  background: #2f9e6b;
+}
+
+#ariadm-download-panel[data-state='error'] {
+  background: #c0453a;
+}
+
+#ariadm-download-panel .ariadm-glyph {
+  all: initial;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+#ariadm-download-panel .ariadm-glyph svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+#ariadm-download-panel .ariadm-label {
+  all: initial;
+  display: block;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+#ariadm-download-panel[data-state='busy'] .ariadm-glyph svg {
+  animation: ariadm-spin 900ms linear infinite;
+  transform-origin: center;
+}
+
+@keyframes ariadm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ariadm-download-panel,
+  #ariadm-download-panel svg {
+    transition: none;
+    animation: none;
+  }
+}

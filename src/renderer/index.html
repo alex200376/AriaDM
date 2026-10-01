@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-TW" class="dark" data-accent="violet" data-density="comfortable">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The renderer never loads remote content, so the CSP is maximally strict.
+      'unsafe-inline' is required for style because Tailwind and the progress
+      bars set inline styles; scripts have no such exemption.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>AriaDM</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

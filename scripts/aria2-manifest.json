@@ -1,0 +1,37 @@
+{
+  "$comment": "Pinned download manifest. sha256 values are filled in on first fetch by the fetch scripts and MUST be committed afterwards for integrity checking to mean anything.",
+  "aria2": {
+    "version": "1.37.0",
+    "release": "release-1.37.0",
+    "binary": "aria2c.exe",
+    "assets": {
+      "win32-x64": {
+        "file": "aria2-1.37.0-win-64bit-build1.zip",
+        "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
+        "sha256": "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288",
+        "note": "Filled in on first fetch, then verified on every later fetch."
+      },
+      "win32-ia32": {
+        "file": "aria2-1.37.0-win-32bit-build1.zip",
+        "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-32bit-build1.zip",
+        "sha256": null,
+        "note": "Filled in on first fetch."
+      }
+    }
+  },
+  "ytdlp": {
+    "version": "latest",
+    "binary": "yt-dlp.exe",
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+    "sumsUrl": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
+    "sha256": null,
+    "note": "yt-dlp publishes SHA2-256SUMS; the fetcher prefers that and falls back to pinning locally."
+  },
+  "ffmpeg": {
+    "version": "latest",
+    "binary": "ffmpeg.exe",
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+    "sha256": null,
+    "note": "Optional media pack. Large (about 80MB compressed), downloaded on demand only."
+  }
+}

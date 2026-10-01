@@ -1,0 +1,68 @@
+{
+  "name": "ariadm",
+  "version": "0.1.1",
+  "description": "AriaDM - a modern IDM-style download manager powered by aria2",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "author": "AriaDM",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:ui": "vite --config vite.ui.config.ts",
+    "build": "npm run typecheck && electron-vite build",
+    "build:ui": "vite build --config vite.ui.config.ts",
+    "build:extension": "node scripts/build-extension.mjs",
+    "preview:ui": "vite preview --config vite.ui.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "icons": "node scripts/generate-icons.mjs",
+    "fetch:aria2": "node scripts/fetch-aria2.mjs",
+    "fetch:ytdlp": "node scripts/fetch-ytdlp.mjs",
+    "fetch:media": "node scripts/fetch-ffmpeg.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:int": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "dist": "npm run build && electron-builder",
+    "dist:portable": "npm run build && electron-builder --win portable"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
+    "@radix-ui/react-select": "^2.3.7",
+    "@tanstack/react-virtual": "^3.10.8",
+    "@types/node": "^22.7.4",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@types/ws": "^8.5.12",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "clsx": "^2.1.1",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.7",
+    "electron-vite": "^2.3.0",
+    "framer-motion": "^11.11.1",
+    "lucide-react": "^0.453.0",
+    "postcss": "^8.4.47",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.5.4",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.2",
+    "zustand": "^4.5.5"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="utf-8" />
+    <title>AriaDM</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #14161c;
+        --surface: #1a1d25;
+        --line: #272b35;
+        --fg: #e7e9ef;
+        --muted: #9aa2b1;
+        --brand: #7c6cf5;
+        --ok: #3ec98a;
+        --danger: #f2695c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 320px;
+        margin: 0;
+        padding: 14px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+      }
+      h1 { margin: 0; font-size: 14px; font-weight: 600; }
+      header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+      .dot.ok { background: var(--ok); }
+      .dot.bad { background: var(--danger); }
+      .status { margin-left: auto; font-size: 11px; color: var(--muted); }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 10px;
+      }
+      .url { font-size: 11px; color: var(--muted); word-break: break-all; max-height: 46px; overflow: hidden; }
+      label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+      input[type="text"], input[type="number"] {
+        width: 100%;
+        height: 30px;
+        padding: 0 8px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--fg);
+        font-size: 12px;
+      }
+      input:focus { outline: none; border-color: var(--brand); }
+      .row { display: flex; gap: 8px; }
+      .row > div { flex: 1; }
+      button {
+        width: 100%;
+        height: 32px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--brand);
+        color: #fff;
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary { background: var(--line); color: var(--fg); }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+      .toggle input { accent-color: var(--brand); }
+      .actions { display: flex; gap: 8px; margin-bottom: 10px; }
+      .hint { font-size: 10.5px; color: var(--muted); margin-top: 6px; }
+      .result { font-size: 11px; color: var(--muted); min-height: 16px; margin-top: 8px; }
+      .advanced summary {
+        font-size: 11px;
+        color: var(--muted);
+        cursor: pointer;
+        list-style: none;
+      }
+      .advanced summary::-webkit-details-marker { display: none; }
+      .advanced summary::before { content: '▸ '; }
+      .advanced[open] summary::before { content: '▾ '; }
+      .advanced .row { margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span id="dot" class="dot"></span>
+      <h1>AriaDM</h1>
+      <span id="status" class="status">檢查中…</span>
+    </header>
+
+    <div class="actions">
+      <button id="send">傳送目前頁面</button>
+      <button id="sendLinks" class="secondary">傳送所有連結</button>
+    </div>
+
+    <div class="card">
+      <div class="url" id="currentUrl">—</div>
+    </div>
+
+    <div class="card">
+      <label class="toggle"><input type="checkbox" id="autoIntercept" /> 攔截瀏覽器下載並轉交</label>
+      <div class="hint">開啟後，瀏覽器開始的下載會被取消並改由 AriaDM 接手。</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button id="pair">重新連線</button>
+        <button id="openApp" class="secondary">開啟設定</button>
+      </div>
+      <div class="result" id="result"></div>
+    </div>
+
+    <details class="card advanced">
+      <summary>進階：手動指定連線</summary>
+      <div class="hint">
+        擴充功能會自動找到 AriaDM。只有在自動探索的連接埠被其他程式占用時，才需要在這裡手動填寫。
+      </div>
+      <div class="row">
+        <div>
+          <label for="port">連接埠</label>
+          <input type="number" id="port" min="1" max="65535" />
+        </div>
+        <div>
+          <label for="token">權杖</label>
+          <input type="text" id="token" placeholder="設定 → 整合" />
+        </div>
+      </div>
+      <button id="save" class="secondary" style="margin-top: 8px">儲存手動設定</button>
+      <div class="hint">儲存後就不會再自動覆寫；按「重新連線」可改回自動。</div>
+    </details>
+
+    <script src="pairing.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

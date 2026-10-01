@@ -1,0 +1,68 @@
+appId: app.ariadm
+productName: AriaDM
+copyright: AriaDM
+
+# Nothing is published from this project, and there is no repository to derive
+# an update channel from. Leaving publish unset makes electron-builder try to
+# build update metadata anyway and fail, so it is disabled explicitly.
+publish: null
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# Everything here lands under process.resourcesPath, which is what the main
+# process reads at runtime. It has to sit outside the asar archive: a binary
+# inside an asar cannot be spawned, and the extension folder is meant to be
+# browsed to by the user.
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter: ['**/*']
+  - from: resources/icons
+    to: icons
+    filter: ['**/*']
+  - from: resources/extension/chrome
+    to: extension/chrome
+    filter: ['**/*']
+  - from: resources/extension/firefox
+    to: extension/firefox
+    filter: ['**/*']
+
+win:
+  icon: resources/icons/app.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+# Both targets default to the same artifact name, which means the portable build
+# silently overwrites the installer. They are named apart deliberately.
+nsis:
+  artifactName: ${productName}-${version}-setup.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AriaDM
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+  requestExecutionLevel: user
+
+linux:
+  icon: resources/icons/app.png
+  category: Network
+  target: [AppImage, deb]
+
+mac:
+  icon: resources/icons/app.png
+  category: public.app-category.utilities
+  target: [dmg]

@@ -1,0 +1,267 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Design tokens.
+ *
+ * Colours are stored as bare RGB triples so Tailwind's `<alpha-value>` syntax
+ * keeps working (`bg-surface/60`), which the layered UI relies on heavily.
+ */
+:root {
+  --bg: 246 247 250;
+  --surface: 255 255 255;
+  --elevated: 255 255 255;
+  --line: 224 227 234;
+  --fg: 24 27 33;
+  --muted: 96 105 122;
+  --faint: 142 150 165;
+  --brand: 104 76 235;
+  --brand-fg: 255 255 255;
+  --ok: 22 163 74;
+  --warn: 202 138 4;
+  --danger: 220 38 38;
+  --info: 37 99 235;
+
+  --shadow-panel: 0 1px 2px rgb(15 18 25 / 0.06), 0 8px 24px rgb(15 18 25 / 0.06);
+  --row-height: 60px;
+
+  /* Tells the engine which palette the native controls (time/number inputs,
+     scrollbars, and any leftover <select>) should be painted with. Without it
+     Chromium draws dark-theme text on a white OS control. */
+  color-scheme: light;
+}
+
+.dark {
+  --bg: 10 12 17;
+  --surface: 16 19 26;
+  --elevated: 23 27 36;
+  --line: 38 44 56;
+  --fg: 233 236 243;
+  --muted: 152 161 178;
+  --faint: 104 114 132;
+  --brand: 124 92 255;
+  --brand-fg: 255 255 255;
+  --ok: 52 199 123;
+  --warn: 240 178 62;
+  --danger: 244 101 101;
+  --info: 96 165 250;
+
+  --shadow-panel: 0 1px 1px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.35);
+  color-scheme: dark;
+}
+
+/* Accent palettes, applied as a data attribute on the root element. */
+[data-accent='violet'] { --brand: 124 92 255; }
+[data-accent='blue'] { --brand: 59 130 246; }
+[data-accent='emerald'] { --brand: 16 185 129; }
+[data-accent='amber'] { --brand: 245 158 11; }
+[data-accent='rose'] { --brand: 244 63 94; }
+[data-accent='cyan'] { --brand: 6 182 212; }
+[data-accent='slate'] { --brand: 100 116 139; }
+
+[data-density='compact'] { --row-height: 46px; }
+[data-density='comfortable'] { --row-height: 60px; }
+[data-density='roomy'] { --row-height: 72px; }
+
+@layer base {
+  * {
+    border-color: rgb(var(--line));
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background-color: rgb(var(--bg));
+    color: rgb(var(--fg));
+    font-family: Inter, 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 13.5px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    /* Text selection is off by default in app chrome; opt in where it matters. */
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [data-selectable] {
+    user-select: text;
+  }
+
+  ::selection {
+    background-color: rgb(var(--brand) / 0.35);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--brand) / 0.75);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--faint) / 0.35);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--faint) / 0.6);
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* The frameless window needs explicit drag regions. */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  .panel {
+    background-color: rgb(var(--surface));
+    border: 1px solid rgb(var(--line));
+    border-radius: 0.75rem;
+    box-shadow: var(--shadow-panel);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 999px;
+    padding: 0.125rem 0.5rem;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
+  /* A progress bar that animates locally at 60fps between 1 Hz snapshots. */
+  .progress-track {
+    position: relative;
+    overflow: hidden;
+    border-radius: 999px;
+    background-color: rgb(var(--line));
+  }
+
+  .progress-fill {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    border-radius: 999px;
+    /* transform-only animation keeps this off the layout path */
+    will-change: transform;
+    transform-origin: left center;
+  }
+
+  .progress-indeterminate::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+
+  .row-hover {
+    transition: background-color 120ms ease;
+  }
+
+  /**
+   * The queue table's column template.
+   *
+   * It lives here rather than in a JS constant because a narrow window has to
+   * give columns up: 剩餘 and 連線 only matter while watching one transfer, and
+   * 大小 is the least useful of what remains. The app opens at 1024x664, so the
+   * breakpoints are tuned for that rather than for a maximised window.
+   *
+   * Columns are dropped by position, which is safe because the header and every
+   * row render the same list in the same order.
+   */
+  .queue-grid {
+    grid-template-columns: 34px minmax(180px, 1fr) 92px 180px 96px 78px 58px 108px 96px;
+  }
+
+  @media (max-width: 1200px) {
+    .queue-grid {
+      grid-template-columns: 30px minmax(150px, 1fr) 86px 120px 88px 104px 88px;
+    }
+
+    .queue-grid > :nth-child(6),
+    .queue-grid > :nth-child(7) {
+      display: none;
+    }
+  }
+
+  /* Tuned so a window at the app's 720px minimum still fits without clipping;
+     the name column gets the rest and truncates with its tooltip intact. */
+  @media (max-width: 920px) {
+    .queue-grid {
+      grid-template-columns: 28px minmax(88px, 1fr) 88px 68px 80px 88px;
+    }
+
+    .queue-grid > :nth-child(3) {
+      display: none;
+    }
+  }
+
+  /**
+   * The detail panel is docked from 1360px up, where it takes 400px of the row.
+   * `data-detail` is set by App whenever that panel is open, so the table can
+   * give up the same two columns a narrower window would — and only until the
+   * window is wide enough for both. Below 1360px the panel floats instead, so the
+   * table keeps its full width.
+   */
+  @media (min-width: 1360px) and (max-width: 1600px) {
+    [data-detail='open'] .queue-grid {
+      grid-template-columns: 30px minmax(120px, 1fr) 86px 112px 88px 100px 88px;
+    }
+
+    [data-detail='open'] .queue-grid > :nth-child(6),
+    [data-detail='open'] .queue-grid > :nth-child(7) {
+      display: none;
+    }
+  }
+}
+
+@layer utilities {
+  .text-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Respect the OS setting; a download manager is often left open all day. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
