@@ -121,10 +121,24 @@
    */
   const MAX_CARD_SCALE = 8
 
-  /** Every link inside an element, as absolute URLs. */
+  /**
+   * Every link inside an element, plus the element itself when it is one.
+   *
+   * The subtree search alone misses the commonest shape on a feed: the player is
+   * *wrapped in* the link to its post, so the anchor is the player's own parent
+   * and `querySelectorAll` on it never returns the anchor itself. That is the
+   * reported Instagram case — the same button worked as soon as the post was
+   * opened, and only there.
+   */
   function linksWithin(element) {
     if (!element || typeof element.querySelectorAll !== 'function') return []
-    return Array.from(element.querySelectorAll('a[href]'), (link) => link.href)
+
+    const links = []
+    if (element.href && typeof element.matches === 'function' && element.matches('a[href]')) {
+      links.push(element.href)
+    }
+    for (const link of element.querySelectorAll('a[href]')) links.push(link.href)
+    return links
   }
 
   /**
@@ -140,14 +154,25 @@
    * a reason: walking up from the player on a watch page would reach the sidebar
    * and pick a *recommended* video instead.
    *
-   * Returns the page URL when nothing is recognised, which is the behaviour
-   * callers had before: the app then reports its own reason rather than the
-   * extension inventing one.
+   * Two callers, two outcomes when nothing is recognised:
+   *
+   *  - a site with no rule gets the page URL, exactly as before. Nobody has
+   *    looked at its markup, so the app is left to try and report its own reason;
+   *  - a site *with* a rule gets an empty string, because there we do know what a
+   *    video's address looks like and the page is not it. That says the page is a
+   *    feed, and a feed cannot be downloaded — the caller should ask for the post
+   *    instead of sending a request that is certain to fail.
+   *
+   * The empty string is deliberately *not* an address, so a caller that passes it
+   * on unchanged asks the app to download `''` and gets "這個網址沒有 AriaDM 能下載
+   * 的影片" for a click that could never have worked. `content.js` turns it into
+   * "open the post first".
    */
   function itemUrlNear(video, location, options) {
     const pageUrl = location.href
     if (isItemUrl(location.hostname, pageUrl)) return pageUrl
-    if (!video) return pageUrl
+    if (!patternFor(location.hostname)) return pageUrl
+    if (!video) return ''
 
     const maxDepth = (options && options.maxDepth) || MAX_CARD_DEPTH
     const maxScale = (options && options.maxScale) || MAX_CARD_SCALE
@@ -175,7 +200,7 @@
       node = parent
     }
 
-    return pageUrl
+    return ''
   }
 
   root.AriaDmUrls = {

@@ -33,6 +33,16 @@ export type MediaErrorKind =
    * signed out. Worth one retry without credentials rather than a dead end.
    */
   | 'session'
+  /**
+   * The site returned an empty body for a request that carried a session.
+   *
+   * Measured, not guessed: yt-dlp given Instagram's `sessionid` in a Cookie
+   * header fails with `Failed to parse JSON (…Expecting value in '': line 1
+   * column 1 (char 0))`, and the very same URL resolves perfectly with no
+   * cookies at all. Like `session` above, the answer is to give up the
+   * credential and try once more — so it belongs in the same retry set.
+   */
+  | 'empty-response'
   | 'extractor'
   /** The file could not be written: a read-only folder, or a full disk. */
   | 'fs'
@@ -167,6 +177,24 @@ const RULES: Rule[] = [
       '網站不接受目前的登入狀態，回傳了無法播放的頁面（YouTube 對已登入的 Cookie 常見此狀況）。已改用未登入身分重試仍失敗，請更新 yt-dlp 或在設定中改用其他瀏覽器的 Cookie。',
     action: 'update-ytdlp',
     actionLabel: '更新 yt-dlp'
+  },
+  {
+    /**
+     * An empty body where JSON was expected.
+     *
+     * yt-dlp reports this as `Failed to parse JSON (caused by
+     * JSONDecodeError("Expecting value in '': line 1 column 1 (char 0)"))`, which
+     * says nothing to anybody. Listed next to the session rule because the cause
+     * is the same kind of thing: a site that will not answer a *logged-in*
+     * request. The wording deliberately does not claim a retry already happened —
+     * a signed-out user with no credentials to drop never gets one.
+     */
+    kind: 'empty-response',
+    patterns: [/failed to parse json/i, /jsondecodeerror/i],
+    message:
+      '網站對這次要求沒有回傳內容（常見於帶著登入狀態連 Instagram）。請稍後再試；若持續失敗請更新 yt-dlp。',
+    action: 'retry',
+    actionLabel: '重試'
   },
   {
     /**

@@ -67,6 +67,10 @@ const PROBE = {
 const LOCKED = 'ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info'
 const UNDECRYPTABLE = 'ERROR: Failed to decrypt with DPAPI. See https://github.com/yt-dlp/yt-dlp/issues/10927 for more info'
 const STALE_SESSION = 'ERROR: [youtube] abc: The page needs to be reloaded.'
+// Instagram handed a sessionid answers with an empty body, which yt-dlp reports
+// as a JSON parse failure; the same URL resolves fine with no cookies sent.
+const EMPTY_RESPONSE =
+  'ERROR: [Instagram] abc: Failed to parse JSON (caused by JSONDecodeError("Expecting value in \'\': line 1 column 1 (char 0)"))'
 
 function makeJobs(options: { cookieArgs?: string[] } = {}) {
   const jobs = new MediaJobs({
@@ -146,6 +150,30 @@ describe('MediaJobs credentials', () => {
     await jobs.add(addInput(), probe, { cookieHeader: 'SID=stale' })
     expect(runnerOptions(0).cookieHeader).toBe('')
     expect(runnerOptions(0).cookieArgs).toEqual([])
+  })
+
+  it('drops the session when the site answers with nothing at all', async () => {
+    // The live Instagram failure: the panel hands over the browser's own cookies
+    // (which include a sessionid), and yt-dlp's extractor sees an empty body.
+    state.probeFormats.mockRejectedValueOnce(new Error(EMPTY_RESPONSE)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+
+    await expect(
+      jobs.probe(PROBE.url, { cookieHeader: 'sessionid=abc', referer: PROBE.url })
+    ).resolves.toMatchObject({ id: 'abc' })
+
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+    expect(state.probeFormats.mock.calls[1]![2].cookieHeader).toBe('')
+    expect(state.probeFormats.mock.calls[1]![2].cookieArgs).toEqual([])
+  })
+
+  it('blames the cookie store for an empty response when the store was in use', async () => {
+    state.probeFormats.mockRejectedValueOnce(new Error(EMPTY_RESPONSE)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+
+    await expect(jobs.probe(PROBE.url)).resolves.toMatchObject({ id: 'abc' })
+    expect(state.probeFormats.mock.calls[1]![2].cookieArgs).toEqual([])
+    expect(state.probeFormats.mock.calls[1]![2].cookieHeader).toBeFalsy()
   })
 
   it('reports the credential-free failure when both attempts fail', async () => {

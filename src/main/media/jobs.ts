@@ -89,11 +89,16 @@ const STORE_FAILURES = new Set<MediaErrorKind>([
  *
  * YouTube answers a logged-in cookie jar with "The page needs to be reloaded",
  * and the very same video downloads fine signed out, so the session is what is
- * in the way. The opposite failure — a site that says it *needs* a login — is
- * deliberately not retried: dropping credentials there just fails again, and the
- * message already asks for the session the site wanted.
+ * in the way. Instagram does the same thing in another shape: given a
+ * `sessionid`, yt-dlp's extractor gets an empty body back and reports it as
+ * `Failed to parse JSON`, while the same URL resolves with no cookies at all.
+ * Both are fixed by the same response — give up the credential and try once more.
+ *
+ * The opposite failure — a site that says it *needs* a login — is deliberately
+ * not retried: dropping credentials there just fails again, and the message
+ * already asks for the session the site wanted.
  */
-const SESSION_FAILURES = new Set<MediaErrorKind>(['session'])
+const SESSION_FAILURES = new Set<MediaErrorKind>(['session', 'empty-response'])
 
 /**
  * What a probe proved about the credentials it was given.

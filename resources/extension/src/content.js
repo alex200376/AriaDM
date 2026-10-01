@@ -29,8 +29,13 @@
   const FRAME_MS = 16
   /** Keep the panel up briefly after the pointer leaves, so it can be reached. */
   const HIDE_DELAY_MS = 450
+  /** How long a plain result (加入成功 / 失敗) holds the label. */
+  const RESULT_MS = 2600
+  /** Advice is longer than a result, because it has to be read and acted on. */
+  const ADVICE_MS = 4000
 
   const ICONS = {
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 10v7"/><path d="M12 7h.01"/></svg>',
     download:
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>',
     busy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg>',
@@ -44,7 +49,9 @@
     busy: '正在取得畫質…',
     done: '已加入 AriaDM',
     error: '無法加入，請見通知',
-    choose: '選擇畫質'
+    choose: '選擇畫質',
+    /** A feed page, so there is no post to name: the user has to open one. */
+    noItem: '請先開啟這則貼文'
   }
 
   let panel = null
@@ -94,11 +101,17 @@
   }
 
   /**
-   * The address of the video the panel is over.
+   * The address of the video the panel is over, or '' when there is none.
    *
    * The rule itself lives in `urls.js`, where it can be tested: it decides which
    * video gets downloaded, and on a timeline the page URL it used to send is a
    * timeline (see `itemUrlNear`).
+   *
+   * An empty answer is not an address. On a site whose video addresses we know,
+   * it means this page is a feed — `instagram.com/`, the reels tab, X's timeline —
+   * and a feed cannot be downloaded. Handing the app that empty string produced
+   * "這個網址沒有 AriaDM 能下載的影片" for a click that was never going to work, so
+   * the panel now says what to do instead of asking.
    */
   function currentVideoUrl() {
     const video = anchor && anchor.isConnected ? anchor : findMainVideo()
@@ -142,13 +155,26 @@
     state = next
     if (!panel) return
     panel.dataset.state = next
-    glyph.innerHTML = next === 'idle' || next === 'choose' ? ICONS.download : ICONS[next]
+    glyph.innerHTML = ICONS[next] ?? ICONS.download
     label.textContent = TEXT[next] ?? LABEL
     if (next !== 'choose') closeMenu()
     window.clearTimeout(resetTimer)
-    if (next === 'done' || next === 'error') {
-      resetTimer = window.setTimeout(() => setState('idle'), 2600)
+    if (next === 'done' || next === 'error' || next === 'noItem') {
+      resetTimer = window.setTimeout(() => setState('idle'), next === 'noItem' ? ADVICE_MS : RESULT_MS)
     }
+  }
+
+  /**
+   * Tells the user to open the post, and answers whether anything was sent.
+   *
+   * The app is not asked at all here. It has no way to know that the page is a
+   * feed rather than a broken video, and its answer was the same unhelpful
+   * sentence every time.
+   */
+  function cannotTellWhichVideo() {
+    setState('noItem')
+    show(true)
+    panel.title = 'AriaDM：這個頁面是動態牆，請先點開那則貼文，再按一次下載。'
   }
 
   function closeMenu() {
@@ -201,12 +227,15 @@
 
   /** Sends the handoff for one chosen quality (or for the app's default). */
   async function send(formatId) {
+    const url = currentVideoUrl()
+    if (!url) return cannotTellWhichVideo()
+
     setState('busy')
     show(true)
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'downloadVideo',
-        url: currentVideoUrl(),
+        url,
         // The page is the right referer even when it is not the right address:
         // it is what the site's own player would send.
         referer: location.href,
@@ -230,6 +259,10 @@
       return
     }
 
+    // Asked before the panel goes busy, so a feed never even reaches the app.
+    const url = currentVideoUrl()
+    if (!url) return cannotTellWhichVideo()
+
     setState('busy')
     show(true)
     panel.title = ''
@@ -238,7 +271,7 @@
     try {
       response = await chrome.runtime.sendMessage({
         type: 'downloadVideo',
-        url: currentVideoUrl(),
+        url,
         referer: location.href
       })
     } catch {

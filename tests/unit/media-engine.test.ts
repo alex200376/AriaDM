@@ -134,6 +134,21 @@ describe('media error reporting', () => {
     expect(info.message).not.toContain('Errno')
   })
 
+  it('reads an empty response as a session problem, in words a person can use', () => {
+    // What Instagram answers a request that carries a `sessionid`: nothing. The
+    // same URL resolves with no cookies at all, so the session is what is in the
+    // way — and yt-dlp's complaint about the empty body was the entire message
+    // the user was shown.
+    const info = classifyMediaError(
+      'DdlvDq7SDji: Failed to parse JSON (caused by JSONDecodeError("Expecting value in \'\': line 1 column 1 (char 0)"))'
+    )
+
+    expect(info.kind).toBe('empty-response')
+    expect(info.message).not.toContain('JSONDecodeError')
+    expect(info.message).not.toContain('parse JSON')
+    expect(info.action).toBe('retry')
+  })
+
   it('still reads an unreadable cookie store as the browser holding it open', () => {
     // yt-dlp reports that one as a PermissionError too. Telling the user their
     // disk is full would send them looking in the wrong place entirely.

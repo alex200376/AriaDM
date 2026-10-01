@@ -138,7 +138,9 @@ interface FakeNode {
   parentElement: FakeNode | null
   children: FakeNode[]
   anchors: string[]
+  href: string
   side: number
+  matches(selector: string): boolean
   querySelectorAll(selector: string): { href: string }[]
   getBoundingClientRect(): { width: number; height: number }
 }
@@ -147,14 +149,25 @@ function collectLinks(target: FakeNode): { href: string }[] {
   return [...target.anchors.map((href) => ({ href })), ...target.children.flatMap(collectLinks)]
 }
 
-/** An element whose `querySelectorAll` really does search its subtree. */
-function node(options: { anchors?: string[]; side?: number } = {}, children: FakeNode[] = []): FakeNode {
+/**
+ * An element whose `querySelectorAll` really does search its subtree.
+ *
+ * `href` makes the element itself an anchor, which is the shape a feed uses: the
+ * player sits *inside* the link to its post, so the link is the player's parent
+ * and a subtree search on it can never return the link itself.
+ */
+function node(
+  options: { anchors?: string[]; href?: string; side?: number } = {},
+  children: FakeNode[] = []
+): FakeNode {
   const target = {} as FakeNode
   Object.assign(target, {
     parentElement: null,
     children,
     anchors: options.anchors ?? [],
+    href: options.href ?? '',
     side: options.side ?? 100,
+    matches: (selector: string) => selector === 'a[href]' && Boolean(target.href),
     querySelectorAll: () => collectLinks(target),
     getBoundingClientRect: () => ({ width: target.side, height: target.side })
   })
@@ -167,6 +180,15 @@ function page(href: string, body: FakeNode, documentElement: FakeNode) {
 }
 
 describe('itemUrlNear', () => {
+  it('still sends the page when the page is a post on a ruled site', () => {
+    const video = node({ side: 400 })
+    const body = node({ side: 2000 }, [video])
+
+    expect(urls.itemUrlNear(video, page('https://www.instagram.com/reel/CxYzAbCdEf/', body, body))).toBe(
+      'https://www.instagram.com/reel/CxYzAbCdEf/'
+    )
+  })
+
   it('finds the post a video in X\u2019s timeline belongs to', () => {
     const video = node({ side: 100 })
     const card = node({ anchors: ['https://x.com/someone/status/1234567890'], side: 200 }, [video])
@@ -219,9 +241,26 @@ describe('itemUrlNear', () => {
     )
   })
 
+  it('finds the post a player is wrapped in', () => {
+    // The reported Instagram case: the player sits inside the link to its own
+    // post, so there is no link *under* it to find. The button only worked once
+    // the post was opened, because only then was the page itself the post.
+    const player = node({ href: 'https://www.instagram.com/reel/CxYzAbCdEf/', side: 220 })
+    const video = node({ side: 100 })
+    player.children.push(video)
+    video.parentElement = player
+    const body = node({ side: 2000 }, [player])
+
+    expect(urls.itemUrlNear(video, page('https://www.instagram.com/', body, body))).toBe(
+      'https://www.instagram.com/reel/CxYzAbCdEf/'
+    )
+  })
+
   it('stops at the point where the container is no longer a card', () => {
     // Past that point the links belong to other posts, and a link found up there
-    // would download a video the user never pointed at.
+    // would download a video the user never pointed at. Nothing is better than
+    // somebody else's video, so the answer is "no video here" rather than the
+    // timeline, which the app could only fail on.
     const video = node({ side: 100 })
     const cardWithoutLink = node({ side: 200 }, [video])
     const feed = node({ anchors: ['https://x.com/someone/status/999'], side: 1000 }, [
@@ -229,7 +268,7 @@ describe('itemUrlNear', () => {
     ])
     const body = node({ side: 2000 }, [feed])
 
-    expect(urls.itemUrlNear(video, page('https://x.com/home', body, body))).toBe('https://x.com/home')
+    expect(urls.itemUrlNear(video, page('https://x.com/home', body, body))).toBe('')
   })
 
   it('never reads a link out of the document itself', () => {
@@ -237,10 +276,25 @@ describe('itemUrlNear', () => {
     const card = node({ side: 200 }, [video])
     const body = node({ anchors: ['https://x.com/someone/status/999'], side: 2000 }, [card])
 
-    expect(urls.itemUrlNear(video, page('https://x.com/home', body, body))).toBe('https://x.com/home')
+    expect(urls.itemUrlNear(video, page('https://x.com/home', body, body))).toBe('')
+  })
+
+  it('answers "no video here" rather than the page on a feed', () => {
+    // The panel is over a video in a feed, and the feed is not a video. An empty
+    // answer is what tells the panel to say "open the post" instead of sending a
+    // request for `instagram.com/` that is certain to fail.
+    const video = node({ side: 100 })
+    const card = node({ side: 200 }, [video])
+    const body = node({ side: 2000 }, [card])
+
+    expect(urls.itemUrlNear(video, page('https://www.instagram.com/', body, body))).toBe('')
+    expect(urls.itemUrlNear(video, page('https://x.com/home', body, body))).toBe('')
+    expect(urls.itemUrlNear(video, page('https://www.instagram.com/reels/', body, body))).toBe('')
   })
 
   it('falls back to the page on a site with no rules', () => {
+    // Nobody has looked at this markup, so the app is left to try and report its
+    // own reason rather than the extension refusing on a guess.
     const video = node({ side: 100 })
     const card = node({ anchors: ['https://example.com/watch/1'], side: 200 }, [video])
     const body = node({ side: 2000 }, [card])
@@ -250,8 +304,15 @@ describe('itemUrlNear', () => {
     )
   })
 
-  it('falls back to the page when there is no player at all', () => {
+  it('says nothing on a site with no rules and no player either', () => {
     const body = node({ side: 2000 })
-    expect(urls.itemUrlNear(null, page('https://x.com/home', body, body))).toBe('https://x.com/home')
+    expect(urls.itemUrlNear(null, page('https://example.com/feed', body, body))).toBe(
+      'https://example.com/feed'
+    )
+  })
+
+  it('answers "no video here" when a ruled site has no player', () => {
+    const body = node({ side: 2000 })
+    expect(urls.itemUrlNear(null, page('https://x.com/home', body, body))).toBe('')
   })
 })
