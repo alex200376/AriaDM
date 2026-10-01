@@ -40,6 +40,7 @@ function makeManager(options: {
   bytes?: Uint8Array
   contentLength?: number
   canInstall?: boolean
+  spawnThrows?: boolean
   onProgress?: (progress: UpdateProgress) => void
 } = {}): {
   manager: UpdateManager
@@ -58,10 +59,12 @@ function makeManager(options: {
     canInstall: () => options.canInstall ?? true,
     onProgress: options.onProgress ?? (() => {}),
     requestQuit: quit,
+    openInstaller: () => {},
     log: () => {},
     checkImpl: async () => releaseInfo(),
     fetchImpl: () => streamResponse(bytes, options.contentLength ?? bytes.length),
     spawnImpl: (file, args) => {
+      if (options.spawnThrows) throw new Error('blocked by the system')
       spawned.push({ file, args })
       return { unref: () => {} }
     }
@@ -138,5 +141,17 @@ describe('UpdateManager.install', () => {
 
     manager.install()
     expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the app alive and reports the error when the installer will not start', async () => {
+    const { manager, quit } = makeManager({ spawnThrows: true })
+    await manager.check()
+    await manager.download()
+
+    // Quitting here would leave the user with no app and no update, which is
+    // exactly the failure this ordering exists to prevent.
+    expect(() => manager.install()).toThrow(/blocked by the system/)
+    expect(quit).not.toHaveBeenCalled()
+    expect(manager.progress.phase).toBe('error')
   })
 })

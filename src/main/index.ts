@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
@@ -97,6 +98,27 @@ function log(line: string): void {
   // Main-process logging goes to the terminal in development and is otherwise
   // surfaced through the aria2 log and the UI's engine banner.
   if (!app.isPackaged) console.log(`[ariadm] ${line}`)
+}
+
+/**
+ * Log the update path to a file as well as the console.
+ *
+ * In a packaged build nothing is printed at all, so a failed update left no
+ * trace of why. This is the one sequence a user cannot reproduce on demand, so
+ * it gets a durable record next to the settings file.
+ */
+function updateLog(line: string): void {
+  log(`update: ${line}`)
+  try {
+    if (!paths) return
+    fs.appendFileSync(
+      path.join(path.dirname(paths.settings), 'update.log'),
+      `${new Date().toISOString()} ${line}\n`,
+      'utf8'
+    )
+  } catch {
+    // Logging must never be the reason an update fails.
+  }
 }
 
 function send(channel: string, payload: unknown): void {
@@ -776,27 +798,33 @@ function handleFailed(item: DownloadItem): void {
 
 async function shutdownAndQuit(): Promise<void> {
   quitting = true
-  manager.stop()
-  scheduler.stop()
-  // Anything the popup was holding stays paused, which is exactly what leaving
-  // it unanswered means. `destroy` instead of a plain close so the window's own
-  // close handler does not race this.
-  catcher?.destroy()
-  clipboardWatcher?.stop()
-  mediaJobs.killAll()
-  if (rendezvousRetry) {
-    clearTimeout(rendezvousRetry)
-    rendezvousRetry = null
+  try {
+    manager.stop()
+    scheduler.stop()
+    // Anything the popup was holding stays paused, which is exactly what leaving
+    // it unanswered means. `destroy` instead of a plain close so the window's own
+    // close handler does not race this.
+    catcher?.destroy()
+    clipboardWatcher?.stop()
+    mediaJobs.killAll()
+    if (rendezvousRetry) {
+      clearTimeout(rendezvousRetry)
+      rendezvousRetry = null
+    }
+    await handoff?.stop()
+    await rendezvous?.stop()
+    await supervisor.stop()
+    await history.flush()
+    await settingsStore.save()
+  } catch (error) {
+    // One failing teardown step must never leave the app running: the user asked
+    // to quit, and during an update the installer is waiting on us to exit.
+    log(`shutdown step failed: ${(error as Error).message}`)
+  } finally {
+    // No-op unless an update was queued and could not be started earlier.
+    updateManager?.launchInstaller()
+    app.quit()
   }
-  await handoff?.stop()
-  await rendezvous?.stop()
-  await supervisor.stop()
-  await history.flush()
-  await settingsStore.save()
-  // Everything is flushed, so the installer has no running app to report on and
-  // nothing left to kill. It relaunches AriaDM itself when it finishes.
-  updateManager?.launchInstaller()
-  app.quit()
 }
 
 async function bootstrap(): Promise<void> {
@@ -927,7 +955,10 @@ async function bootstrap(): Promise<void> {
     canInstall: () => app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR,
     onProgress: (progress) => send(IPC.eventUpdateProgress, progress),
     requestQuit: () => void shutdownAndQuit(),
-    log
+    openInstaller: (file) => {
+      void shell.openPath(file)
+    },
+    log: updateLog
   })
 
   mediaJobs.on('completed', (item: DownloadItem) => void handleCompleted(item))

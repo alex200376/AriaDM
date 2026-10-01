@@ -53,6 +53,11 @@ export interface UpdateManagerDeps {
   onProgress(progress: UpdateProgress): void
   /** Gracefully shut the app down; the installer is launched during that. */
   requestQuit(): void
+  /**
+   * Last resort: hand the installer to the OS so the user can run it by hand.
+   * Used only when the silent launch itself cannot start.
+   */
+  openInstaller(file: string): void
   log(line: string): void
   /** Injectable for tests. */
   fetchImpl?: UpdateDownloadFetch
@@ -88,7 +93,16 @@ export class UpdateManager {
       ((url, init) => fetch(url, init) as unknown as ReturnType<UpdateDownloadFetch>)
     this.spawnImpl =
       deps.spawnImpl ??
-      ((file, args) => nodeSpawn(file, args, { detached: true, stdio: 'ignore', windowsHide: true }))
+      ((file, args) =>
+        nodeSpawn(file, args, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          // Run from the installer's own directory, never from the app's. An
+          // installer whose working directory is inside the folder it is
+          // replacing can fail to replace the files it is standing on.
+          cwd: path.dirname(file)
+        }))
   }
 
   /** Latest progress, for a UI that reloads while a download is running. */
@@ -103,7 +117,12 @@ export class UpdateManager {
 
   async check(): Promise<UpdateInfo> {
     const info = await this.checkImpl(this.deps.currentVersion())
-    this.info = { ...info, canInstall: this.deps.canInstall() && Boolean(info.downloadUrl) }
+    const canInstall = this.deps.canInstall()
+    this.info = { ...info, canInstall: canInstall && Boolean(info.downloadUrl) }
+    this.deps.log(
+      `checked: current=${info.current} latest=${info.latest ?? '-'} available=${info.available} ` +
+        `canInstall=${this.info.canInstall} size=${info.downloadSize} error=${info.error || '-'}`
+    )
     return this.info
   }
 
@@ -150,6 +169,7 @@ export class UpdateManager {
         true
       )
 
+      this.deps.log(`downloading ${info.downloadUrl} -> ${target}`)
       const response = await this.fetchImpl(info.downloadUrl, { signal: controller.signal })
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
 
@@ -205,10 +225,14 @@ export class UpdateManager {
   }
 
   /**
-   * Ask for the app to shut down with an installer queued.
+   * Start the installer and then shut down.
    *
-   * The actual launch happens in `launchInstaller`, called from the shutdown
-   * path once the app is done writing its state.
+   * The installer is started *first*, before the app begins to close. Waiting
+   * until the shutdown had finished meant a slow or failing shutdown (a stalled
+   * engine stop, a post-download action) could strand the update with the app
+   * still running — which is exactly how "install" appeared to do nothing. The
+   * installer copes with a running app anyway: `--updated` makes it wait for
+   * this process to exit before installing.
    */
   install(): void {
     if (!this.installer) throw new Error('更新尚未下載完成。')
@@ -217,24 +241,52 @@ export class UpdateManager {
       { phase: 'installing', received: this.state.received, total: this.state.total, percent: 100, error: '' },
       true
     )
+    // Only quit once the installer is definitely running; otherwise the user is
+    // left with no app and no update.
+    if (!this.launchInstaller()) throw new Error(this.state.error || '無法啟動安裝程式。')
     this.deps.requestQuit()
   }
 
-  /** Start the installer detached. No-op when none is waiting. */
-  launchInstaller(): void {
+  /**
+   * Start the installer detached. Returns false when it could not be started.
+   *
+   * Called from `install`, and again from the shutdown path as a no-op safety
+   * net if the app is closing for another reason while an update is queued.
+   */
+  launchInstaller(): boolean {
     const file = this.installer
-    if (!file) return
+    if (!file) return false
     this.installer = null
 
-    // Only the Windows build ships an NSIS installer.
-    if (process.platform !== 'win32') return
+    if (process.platform !== 'win32') {
+      this.fail('此平台不支援自動安裝。')
+      return false
+    }
 
     try {
       this.spawnImpl(file, ['/S', '--updated', '--force-run'])
       this.deps.log(`update installer launched: ${file}`)
+      return true
     } catch (error) {
-      this.deps.log(`update installer failed: ${(error as Error).message}`)
+      const message = (error as Error).message
+      this.deps.log(`update installer failed: ${message}`)
+      // Silent install is the goal, not a requirement: rather than leave the
+      // user with a failed update, hand the file to the shell.
+      let opened = false
+      try {
+        this.deps.openInstaller(file)
+        opened = true
+      } catch (openError) {
+        this.deps.log(`could not open installer: ${(openError as Error).message}`)
+      }
+      this.fail(opened ? `${message}（已改為手動開啟安裝程式）` : message)
+      return false
     }
+  }
+
+  /** Report a failure that happened after the download, so the UI can show it. */
+  private fail(error: string): void {
+    this.emit({ phase: 'error', received: this.state.received, total: this.state.total, percent: -1, error }, true)
   }
 
   /** An installer that is not a Windows executable never gets to run. */
