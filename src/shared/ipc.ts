@@ -89,10 +89,16 @@ export const IPC = {
   integrationsDismissDetected: 'integrations:dismissDetected',
 
   appOpenExternal: 'app:openExternal',
+  /** Show a file or folder in the OS file manager. */
+  appReveal: 'app:reveal',
   updateCheck: 'update:check',
   updateDownload: 'update:download',
   updateInstall: 'update:install',
   updateCancel: 'update:cancel',
+  /** Run an installer that was already downloaded and verified. */
+  updateOpenInstaller: 'update:openInstaller',
+  /** Everything needed to file a useful bug report about an update. */
+  updateDiagnostics: 'update:diagnostics',
 
   catcherGet: 'catcher:get',
   catcherResolve: 'catcher:resolve',
@@ -167,6 +173,17 @@ export interface CatcherInfo {
  */
 export const UPDATE_REPO = 'alex200376/AriaDM'
 
+/**
+ * How this copy of AriaDM got onto the machine.
+ *
+ * It decides whether an update can be installed quietly: a per-machine install
+ * lives in Program Files, which needs administrator rights to replace, so the
+ * silent installer has to raise a UAC prompt — and if that prompt is declined
+ * the installer exits without a word. Knowing the kind up front is what turns
+ * that silence into a warning before the user presses anything.
+ */
+export type UpdateInstallKind = 'machine' | 'user' | 'portable' | 'dev'
+
 /** Result of a release check. Never throws: a failed check is reported in `error`. */
 export interface UpdateInfo {
   /** The running app version, echoed back for the UI. */
@@ -189,8 +206,35 @@ export interface UpdateInfo {
    * there is nothing to replace. Those builds keep the manual link.
    */
   canInstall: boolean
+  /** How this copy is installed, which decides whether quiet install is possible. */
+  installKind: UpdateInstallKind
+  /** True when installing the update needs administrator rights (so, a UAC prompt). */
+  needsElevation: boolean
+  /**
+   * A previously downloaded installer that passed verification and is still on
+   * disk, so an update that failed can be retried without downloading 197 MB
+   * again. Null when there is nothing usable.
+   */
+  pendingInstaller: string | null
   /** Non-empty only when the check itself could not run. */
   error: string
+}
+
+/**
+ * What a release check can know by itself.
+ *
+ * The install-mode fields are filled in by the updater, which is the only place
+ * that knows how this copy of the app is installed, so the checker returns the
+ * narrower shape.
+ */
+export type UpdateCheckResult = Omit<UpdateInfo, 'installKind' | 'needsElevation' | 'pendingInstaller'>
+
+/** Facts about this installation, for the About tab and for bug reports. */
+export interface UpdateDiagnostics {
+  /** Multi-line, already formatted, safe to copy into a report. */
+  text: string
+  /** Path of the update log, so the UI can offer to open it. */
+  logPath: string
 }
 
 /**
@@ -200,7 +244,12 @@ export interface UpdateInfo {
  * bar instead of a bar stuck at 0.
  */
 export interface UpdateProgress {
-  phase: 'idle' | 'downloading' | 'ready' | 'installing' | 'error'
+  /**
+   * `waiting-permission` is the state a per-machine install passes through while
+   * Windows shows the UAC prompt; it is distinct from `installing` because the
+   * user may have to do something before anything is installed.
+   */
+  phase: 'idle' | 'downloading' | 'ready' | 'waiting-permission' | 'installing' | 'error'
   /** Bytes written so far. */
   received: number
   /** Total bytes, or 0 when the server did not report a length. */
@@ -250,6 +299,11 @@ export interface AddMediaResult {
 export interface AriaDmApi {
   platform: 'win32' | 'darwin' | 'linux'
   version: string
+  /** Runtime versions, for the About tab and for bug reports. */
+  runtime: {
+    electron: string
+    chromium: string
+  }
 
   engine: {
     getStatus(): Promise<EngineStatus>
@@ -320,6 +374,8 @@ export interface AriaDmApi {
 
   app: {
     openExternal(url: string): Promise<void>
+    /** Show a file or folder in Explorer/Finder. */
+    reveal(target: string): Promise<void>
   }
 
   update: {
@@ -327,10 +383,19 @@ export interface AriaDmApi {
     check(): Promise<UpdateInfo>
     /** Download the newest installer into the app's temp folder. */
     download(): Promise<UpdateProgress>
-    /** Run the downloaded installer silently and relaunch the app. */
+    /**
+     * Run the downloaded installer silently and relaunch the app.
+     *
+     * Rejects when the installer could not be started, in which case the app is
+     * deliberately still running and `pendingInstaller` can be offered instead.
+     */
     install(): Promise<void>
     /** Abort an in-flight download. */
     cancel(): Promise<void>
+    /** Launch a verified installer by hand, with its normal window. */
+    openInstaller(file: string): Promise<void>
+    /** Version, install kind and the tail of the update log, in one string. */
+    diagnostics(): Promise<UpdateDiagnostics>
   }
 
   /** Only meaningful inside the catch popup window. */

@@ -27,6 +27,12 @@ function subscribe<T>(channel: string, handler: (payload: T) => void): () => voi
 const api: AriaDmApi = {
   platform: process.platform as AriaDmApi['platform'],
   version: __APP_VERSION__ ?? process.env.npm_package_version ?? '0.0.0',
+  // Runtime versions, shown on the About tab: a bug report that names the
+  // Electron build it happened on is a bug report that can be reproduced.
+  runtime: {
+    electron: process.versions.electron ?? '',
+    chromium: process.versions.chrome ?? ''
+  },
 
   engine: {
     getStatus: () => invoke(IPC.engineGetStatus),
@@ -96,14 +102,17 @@ const api: AriaDmApi = {
   },
 
   app: {
-    openExternal: (url) => invoke(IPC.appOpenExternal, url)
+    openExternal: (url) => invoke(IPC.appOpenExternal, url),
+    reveal: (target) => invoke(IPC.appReveal, target)
   },
 
   update: {
     check: () => invoke(IPC.updateCheck),
     download: () => invoke(IPC.updateDownload),
     install: () => invoke(IPC.updateInstall),
-    cancel: () => invoke(IPC.updateCancel)
+    cancel: () => invoke(IPC.updateCancel),
+    openInstaller: (file) => invoke(IPC.updateOpenInstaller, file),
+    diagnostics: () => invoke(IPC.updateDiagnostics)
   },
 
   catcher: {

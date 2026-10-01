@@ -154,6 +154,7 @@ let settings: Settings = {
   showCatchPopup: true,
   ytdlpEnabled: true,
   mediaCookiesFromBrowser: 'auto',
+  mediaExtensionCookies: true,
   ytdlpDetectSites: true,
   ffmpegPath: '',
   aria2Path: "C:\\AriaDM\\resources\\bin\\aria2c.exe",
@@ -288,6 +289,7 @@ export function createMockApi(): AriaDmApi {
   return {
     platform: 'win32',
     version: '0.1.0-mock',
+    runtime: { electron: '0.0.0-mock', chromium: '0.0.0-mock' },
 
     engine: {
       getStatus: async () => tick().engine,
@@ -430,9 +432,11 @@ export function createMockApi(): AriaDmApi {
         bin: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\bin',
         session: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\session.aria2',
         aria2Log: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\logs\\aria2.log',
+        appLog: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\logs\\ariadm.log',
         history: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\history.json',
         settings: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\settings.json',
-        extensions: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\extensions'
+        extensions: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\extensions',
+        updateLog: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\update.log'
       }),
       chooseDirectory: async () => 'C:\\Users\\WOW\\Downloads\\Chosen'
     },
@@ -492,7 +496,8 @@ export function createMockApi(): AriaDmApi {
     app: {
       openExternal: async (url) => {
         window.open(url, '_blank', 'noopener')
-      }
+      },
+      reveal: async () => {}
     },
 
     update: {
@@ -506,11 +511,19 @@ export function createMockApi(): AriaDmApi {
         downloadUrl: 'https://example.test/AriaDM-9.9.9-setup.exe',
         downloadSize: 197_000_000,
         canInstall: true,
+        installKind: 'dev' as const,
+        needsElevation: false,
+        pendingInstaller: null,
         error: ''
       }),
       download: mockUpdateDownload,
       install: async () => {},
-      cancel: async () => {}
+      cancel: async () => {},
+      openInstaller: async () => {},
+      diagnostics: async () => ({
+        text: 'AriaDM 0.1.0-mock\nplatform: mock\ninstall kind: dev',
+        logPath: '/mock/update.log'
+      })
     },
 
     catcher: {

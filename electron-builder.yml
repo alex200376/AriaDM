@@ -41,6 +41,24 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
+  #
+  # Code signing.
+  #
+  # Nothing here names a certificate on purpose: electron-builder signs when it
+  # is given one (CSC_LINK + CSC_KEY_PASSWORD, or WIN_CSC_LINK on Windows) and
+  # builds unsigned otherwise, so a contributor without a certificate can still
+  # produce a working installer.
+  #
+  # The timestamp server is what keeps a signed release verifiable after the
+  # certificate expires, and sha256 is the only algorithm Windows still accepts
+  # for new code-signing certificates.
+  #
+  # SignPath Foundation signs open-source projects for free by running the build
+  # in their pipeline instead of holding a key here — see docs/CODE-SIGNING.md.
+  #
+  signtoolOptions:
+    signingHashAlgorithms: [sha256]
+    rfc3161TimeStampServer: http://timestamp.digicert.com
 
 # Both targets default to the same artifact name, which means the portable build
 # silently overwrites the installer. They are named apart deliberately.

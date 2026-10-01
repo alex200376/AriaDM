@@ -1,8 +1,10 @@
 import type { AddDownloadInput, AddDownloadResult, Settings } from '@shared/settings'
+import { defaultFormatId } from '@shared/media-formats'
 import { chooseEngine, shouldWarnAboutMissingYtDlp } from '@shared/media-sites'
 
 import type { DownloadManager } from './manager'
 import type { MediaJobs } from '../media/jobs'
+import type { HttpContext } from '../media/ytdlp'
 
 export interface EngineRouterOptions {
   manager: DownloadManager
@@ -62,14 +64,45 @@ export class EngineRouter {
     const url = input.uris[0]!
     this.options.log(`engine router: ${url} -> yt-dlp`)
 
+    const http: HttpContext = {
+      cookieHeader: input.cookieHeader,
+      referer: input.referer,
+      userAgent: input.userAgent
+    }
+
     try {
-      const { gid } = await this.options.mediaJobs.addFromUrl(url, {
-        dir: input.dir,
-        cookieHeader: input.cookieHeader,
-        referer: input.referer,
-        userAgent: input.userAgent,
-        playlist: false
-      })
+      /*
+       * Probe here rather than inside the media engine, so *this* function can
+       * still change its mind about the engine. A probe that found nothing but a
+       * single plain HTTP payload means the link was a file, not a media page —
+       * sometimes a page whose only media is that file. yt-dlp would fetch it on
+       * one connection after a startup and an extraction pass; aria2 does it with
+       * its full fan-out and a real size. See MediaProbe.directUrl.
+       */
+      const probe = await this.options.mediaJobs.probe(url, http)
+
+      if (probe.directUrl) {
+        this.options.log(`engine router: ${url} resolved to a direct file; using aria2`)
+        // The engine is named rather than left to default, or the history row
+        // would claim this download was made by yt-dlp.
+        return await this.options.manager.add({ ...input, engine: 'aria2', uris: [probe.directUrl] })
+      }
+
+      const { gid } = await this.options.mediaJobs.add(
+        {
+          url,
+          // Not `formats[0]`: on a machine without ffmpeg the best entry cannot
+          // be produced at all, and this path is the extension's "download this
+          // video" — it has to just work.
+          formatId: defaultFormatId(probe.formats, this.options.mediaJobs.hasFfmpeg),
+          dir: input.dir,
+          audioOnly: false,
+          playlist: false,
+          maxConcurrent: 0
+        },
+        probe,
+        http
+      )
       return { gids: [gid], duplicates: [], warnings: [] }
     } catch (error) {
       // yt-dlp being installed but unable to handle a link is a normal outcome

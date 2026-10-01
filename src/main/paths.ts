@@ -16,9 +16,13 @@ export function resolvePaths(userDataDir: string, downloadsDir: string): AppPath
     bin: path.join(userDataDir, 'bin'),
     session: path.join(userDataDir, 'session.aria2'),
     aria2Log: path.join(logs, 'aria2.log'),
+    appLog: path.join(logs, 'ariadm.log'),
     history: path.join(userDataDir, 'history.json'),
     settings: path.join(userDataDir, 'settings.json'),
-    extensions: path.join(userDataDir, 'extensions')
+    extensions: path.join(userDataDir, 'extensions'),
+    // Written by the updater next to the settings file, so a failed update
+    // leaves a trace a packaged build would otherwise not have.
+    updateLog: path.join(userDataDir, 'update.log')
   }
 }
 

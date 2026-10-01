@@ -11,6 +11,7 @@
         --line: #272b35;
         --fg: #e7e9ef;
         --muted: #9aa2b1;
+        --faint: #6b7382;
         --brand: #7c6cf5;
         --ok: #3ec98a;
         --danger: #f2695c;
@@ -19,67 +20,102 @@
       body {
         width: 320px;
         margin: 0;
-        padding: 14px;
+        padding: 12px;
         background: var(--bg);
         color: var(--fg);
-        font: 13px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+        font: 12.5px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
       }
-      h1 { margin: 0; font-size: 14px; font-weight: 600; }
-      header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+      header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      h1 { margin: 0; font-size: 13.5px; font-weight: 600; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
       .dot.ok { background: var(--ok); }
       .dot.bad { background: var(--danger); }
       .status { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+      /* One card style for every block: the popup used to be five differently
+         shaped boxes, which read as five unrelated things to configure. */
       .card {
         background: var(--surface);
         border: 1px solid var(--line);
         border-radius: 10px;
-        padding: 10px;
-        margin-bottom: 10px;
+        padding: 9px 10px;
+        margin-bottom: 8px;
       }
-      .url { font-size: 11px; color: var(--muted); word-break: break-all; max-height: 46px; overflow: hidden; }
-      label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-      input[type="text"], input[type="number"] {
-        width: 100%;
+      .card-row { display: flex; align-items: center; gap: 10px; }
+      .card-row > div:first-child { min-width: 0; flex: 1; }
+      .card-title { font-size: 12px; }
+      .hint { font-size: 10.5px; line-height: 1.45; color: var(--faint); margin-top: 2px; }
+
+      .page-url {
+        font-size: 11px;
+        color: var(--muted);
+        word-break: break-all;
+        max-height: 32px;
+        overflow: hidden;
+      }
+      .page-state { margin-top: 5px; font-size: 11px; color: var(--faint); }
+      .page-state.ready { color: var(--ok); }
+      .page-state.blocked { color: var(--warn, #e0b34f); }
+
+      .actions { display: flex; gap: 8px; margin-bottom: 8px; }
+      button {
+        border: 0;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 0 10px;
         height: 30px;
+      }
+      button:disabled { opacity: 0.4; cursor: default; }
+      .primary { background: var(--brand); color: #fff; flex: 2; }
+      .secondary { background: var(--line); color: var(--fg); flex: 1; }
+      .ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); height: 26px; font-weight: 500; }
+      .ghost:hover { color: var(--fg); }
+
+      .switch { position: relative; width: 34px; height: 19px; flex: none; }
+      .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+      .switch span {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: var(--line);
+        transition: background 120ms;
+        pointer-events: none;
+      }
+      .switch span::after {
+        content: "";
+        position: absolute;
+        top: 2.5px;
+        left: 2.5px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--fg);
+        transition: transform 120ms;
+      }
+      .switch input:checked + span { background: var(--brand); }
+      .switch input:checked + span::after { transform: translateX(15px); }
+
+      .footer { display: flex; gap: 8px; }
+      .footer button { flex: 1; }
+      .result { min-height: 15px; margin-top: 8px; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
+
+      .advanced { margin-top: 8px; }
+      .advanced summary { font-size: 10.5px; color: var(--faint); cursor: pointer; }
+      .advanced input {
+        width: 100%;
+        height: 28px;
         padding: 0 8px;
+        margin-top: 6px;
         border-radius: 8px;
         border: 1px solid var(--line);
         background: var(--bg);
         color: var(--fg);
-        font-size: 12px;
+        font-size: 11.5px;
       }
-      input:focus { outline: none; border-color: var(--brand); }
-      .row { display: flex; gap: 8px; }
-      .row > div { flex: 1; }
-      button {
-        width: 100%;
-        height: 32px;
-        border: 0;
-        border-radius: 8px;
-        background: var(--brand);
-        color: #fff;
-        font-size: 12.5px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      button.secondary { background: var(--line); color: var(--fg); }
-      button:disabled { opacity: 0.45; cursor: default; }
-      .toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-      .toggle input { accent-color: var(--brand); }
-      .actions { display: flex; gap: 8px; margin-bottom: 10px; }
-      .hint { font-size: 10.5px; color: var(--muted); margin-top: 6px; }
-      .result { font-size: 11px; color: var(--muted); min-height: 16px; margin-top: 8px; }
-      .advanced summary {
-        font-size: 11px;
-        color: var(--muted);
-        cursor: pointer;
-        list-style: none;
-      }
-      .advanced summary::-webkit-details-marker { display: none; }
-      .advanced summary::before { content: '▸ '; }
-      .advanced[open] summary::before { content: '▾ '; }
-      .advanced .row { margin-top: 8px; }
+      .advanced input:focus { outline: none; border-color: var(--brand); }
+      .advanced button { width: 100%; margin-top: 6px; }
     </style>
   </head>
   <body>
@@ -89,45 +125,54 @@
       <span id="status" class="status">檢查中…</span>
     </header>
 
+    <div class="card">
+      <div class="page-url" id="currentUrl">—</div>
+      <div class="page-state" id="pageState"></div>
+    </div>
+
     <div class="actions">
-      <button id="sendVideo">下載此頁面的影片</button>
+      <button id="sendVideo" class="primary">下載此頁面的影片</button>
       <button id="sendLinks" class="secondary">傳送所有連結</button>
     </div>
 
     <div class="card">
-      <div class="url" id="currentUrl">—</div>
-    </div>
-
-    <div class="card">
-      <label class="toggle"><input type="checkbox" id="autoIntercept" /> 攔截瀏覽器下載並轉交</label>
-      <div class="hint">開啟後，瀏覽器開始的下載會被取消並改由 AriaDM 接手。</div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <button id="pair">重新連線</button>
-        <button id="openApp" class="secondary">開啟設定</button>
+      <div class="card-row">
+        <div>
+          <div class="card-title">登入狀態</div>
+          <div class="hint">把這個網站的 Cookie 交給 AriaDM，需要登入的影片才下載得動。只存在記憶體中，不會寫入紀錄。</div>
+        </div>
+        <button id="sendCookies" class="ghost">傳送</button>
       </div>
-      <div class="result" id="result"></div>
     </div>
 
-    <details class="card advanced">
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div class="card-title">攔截瀏覽器下載</div>
+          <div class="hint">開啟後，瀏覽器開始的下載會被取消並改由 AriaDM 接手。</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="autoIntercept" />
+          <span></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button id="reconnect" class="ghost">重新連線</button>
+      <button id="openApp" class="ghost">開啟設定</button>
+    </div>
+
+    <div class="result" id="result"></div>
+
+    <details class="advanced">
       <summary>進階：手動指定連線</summary>
       <div class="hint">
         擴充功能會自動找到 AriaDM。只有在自動探索的連接埠被其他程式占用時，才需要在這裡手動填寫。
       </div>
-      <div class="row">
-        <div>
-          <label for="port">連接埠</label>
-          <input type="number" id="port" min="1" max="65535" />
-        </div>
-        <div>
-          <label for="token">權杖</label>
-          <input type="text" id="token" placeholder="設定 → 整合" />
-        </div>
-      </div>
-      <button id="save" class="secondary" style="margin-top: 8px">儲存手動設定</button>
-      <div class="hint">儲存後就不會再自動覆寫；按「重新連線」可改回自動。</div>
+      <input type="number" id="port" min="1" max="65535" placeholder="連接埠" />
+      <input type="text" id="token" placeholder="權杖（設定 → 整合與工具）" />
+      <button id="save" class="ghost">儲存手動設定</button>
     </details>
 
     <script src="pairing.js"></script>

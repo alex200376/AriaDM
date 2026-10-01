@@ -5,7 +5,6 @@ import path from 'node:path'
 
 import type { DownloadItem } from '@shared/download'
 import { classifyMediaError } from '@shared/media-errors'
-import { defaultFormatId } from '@shared/media-formats'
 import type { AddMediaInput, MediaFormatInfo } from '@shared/settings'
 import { extensionOf } from '@shared/uri'
 
@@ -128,34 +127,6 @@ export class MediaJobs extends EventEmitter {
       this.options.log(`yt-dlp probe failed: ${(error as Error).message}`)
       throw new Error(described)
     }
-  }
-
-  /**
-   * Add a media URL without asking which format to use.
-   *
-   * This is the path an auto-detected link takes: the user pasted "this video",
-   * not a quality preference, so the best available stream is the right answer.
-   */
-  async addFromUrl(
-    url: string,
-    options: { dir: string; playlist: boolean } & HttpContext
-  ): Promise<{ gid: string }> {
-    const probe = await this.probe(url, options)
-    return this.add(
-      {
-        url,
-        // Not `formats[0]`: on a machine without ffmpeg the best entry cannot be
-        // produced at all, and this path is the extension's "download this
-        // video" — it has to just work.
-        formatId: defaultFormatId(probe.formats, this.hasFfmpeg),
-        dir: options.dir,
-        audioOnly: false,
-        playlist: options.playlist,
-        maxConcurrent: 0
-      },
-      probe,
-      options
-    )
   }
 
   findFormat(probe: MediaProbe, formatId: string): MediaFormatInfo | undefined {

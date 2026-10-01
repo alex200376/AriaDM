@@ -1,5 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import type { Socket } from 'node:net'
+
+import { hostOf } from '../media/cookie-vault'
 
 /**
  * The loopback handoff API that the browser extension talks to.
@@ -13,7 +16,7 @@ import { randomBytes } from 'node:crypto'
  *  - the Origin header is checked, so a random web page cannot even probe it
  *    (a page's fetch would carry an http(s) origin, which we reject).
  */
-export interface HandoffPayload {
+export interface  HandoffPayload {
   urls: string[]
   filename?: string
   referer?: string
@@ -52,6 +55,23 @@ export interface HandoffServerOptions {
   token: string
   onAdd(payload: HandoffPayload): Promise<HandoffAddResult>
   onPing(): { version: string; active: number; waiting: number }
+  /**
+   * A live session the extension read out of its own browser.
+   *
+   * The extension is the only thing that can read some of these: a Chromium
+   * fork yt-dlp has no name for, a database the running browser is holding open,
+   * or cookies encrypted with a key bound to that browser's executable.
+   */
+  onCookies?(payload: { url: string; cookies: string }): { accepted: boolean }
+  /**
+   * A URL the app is waiting for a session for, or '' when nothing is pending.
+   *
+   * Deliberately a plain short poll rather than a long-held request: the
+   * extension asks when the user opens its popup (which is what AriaDM's error
+   * message tells them to do) instead of keeping a background connection that a
+   * service worker suspension would silently drop.
+   */
+  cookieRequest?(): string
   log(line: string): void
   version?: string
   /**
@@ -66,6 +86,16 @@ export interface HandoffServerOptions {
 /** Reject oversized bodies; a torrent file is the largest legitimate payload. */
 const MAX_BODY_BYTES = 12 * 1024 * 1024
 const MAX_URLS = 200
+
+/**
+ * How long an in-flight request gets to finish before the socket is destroyed.
+ *
+ * The point of the deadline is that a browser extension's fetch keeps its socket
+ * alive long after the response is written — Chrome holds an idle keep-alive
+ * connection for minutes — and `server.close()` waits for exactly that. Idle
+ * sockets are dropped immediately; this grace is only for a request mid-flight.
+ */
+const STOP_GRACE_MS = 750
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
@@ -120,6 +150,8 @@ export class HandoffServer {
   private currentToken: string
   private readonly options: HandoffServerOptions
   private lastError = ''
+  /** Live connections, so `stop` can drop the ones `close` would wait on. */
+  private readonly sockets = new Set<Socket>()
 
   constructor(options: HandoffServerOptions) {
     this.options = options
@@ -150,6 +182,11 @@ export class HandoffServer {
         void this.handle(request, response)
       })
 
+      server.on('connection', (socket: Socket) => {
+        this.sockets.add(socket)
+        socket.on('close', () => this.sockets.delete(socket))
+      })
+
       server.on('error', (error: NodeJS.ErrnoException) => {
         this.lastError =
           error.code === 'EADDRINUSE'
@@ -169,17 +206,52 @@ export class HandoffServer {
     })
   }
 
+  /**
+   * Close the listener and everything still attached to it.
+   *
+   * `server.close()` on its own waits for every open connection to end, and a
+   * browser extension holds an idle keep-alive socket open long after its
+   * response is done. During a shutdown that stalled the whole quit sequence for
+   * minutes while the update installer waited for this process to exit — the
+   * user-visible version of which is "the download finished and then nothing
+   * happened".
+   *
+   * Idle connections are therefore swept immediately, an in-flight response gets
+   * a short grace period, and anything still left is destroyed. The promise
+   * always resolves, and always promptly.
+   */
   stop(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.server) {
+    const server = this.server
+    this.server = null
+    if (!server) {
+      this.destroySockets()
+      return Promise.resolve()
+    }
+
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.destroySockets()
         resolve()
-        return
       }
-      this.server.close(() => {
-        this.server = null
-        resolve()
-      })
+
+      const timer = setTimeout(finish, STOP_GRACE_MS)
+      timer.unref?.()
+
+      server.close(() => finish())
+      // Node 18.2+; the fallback for older runtimes is the grace period above,
+      // after which `destroySockets` does the same job.
+      server.closeIdleConnections?.()
     })
+  }
+
+  /** Drop every socket we are holding, so no client can keep a port busy. */
+  private destroySockets(): void {
+    for (const socket of this.sockets) socket.destroy()
+    this.sockets.clear()
   }
 
   /**
@@ -268,6 +340,41 @@ export class HandoffServer {
     try {
       if (request.method === 'GET' && url.pathname === '/ping') {
         send(200, { ok: true, ...this.options.onPing() })
+        return
+      }
+
+      /**
+       * "Is there a download waiting for a session?"
+       *
+       * The extension asks this when its popup is opened, which is what AriaDM's
+       * cookie error tells the user to do. 204 means nothing is pending, so the
+       * extension does not have to guess.
+       */
+      if (request.method === 'GET' && url.pathname === '/cookie-request') {
+        const wanted = this.options.cookieRequest?.() ?? ''
+        if (!wanted) {
+          response.writeHead(204, headers)
+          response.end()
+          return
+        }
+        send(200, { ok: true, url: wanted })
+        return
+      }
+
+      /**
+       * A live session the extension read from its own browser.
+       *
+       * Only the host is ever logged: the value is a credential.
+       */
+      if (request.method === 'POST' && url.pathname === '/cookies') {
+        const parsed = JSON.parse((await readBody(request)) || '{}') as { url?: string; cookies?: string }
+        if (typeof parsed.url !== 'string' || typeof parsed.cookies !== 'string') {
+          send(400, { ok: false, error: 'url and cookies required' })
+          return
+        }
+        const accepted = this.options.onCookies?.({ url: parsed.url, cookies: parsed.cookies })?.accepted ?? false
+        this.options.log(`handoff cookies ${accepted ? 'accepted' : 'ignored'} for ${hostOf(parsed.url) || 'unknown host'}`)
+        send(200, { ok: true, accepted })
         return
       }
 

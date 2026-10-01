@@ -64,7 +64,18 @@ export interface CategoryRule {
  * all, so this defaults to on rather than making the user discover the setting
  * through a failure.
  */
-export type MediaCookieSource = 'auto' | 'none' | 'chrome' | 'edge' | 'brave' | 'firefox' | 'vivaldi' | 'opera'
+export type MediaCookieSource =
+  | 'auto'
+  | 'none'
+  | 'chrome'
+  | 'edge'
+  | 'brave'
+  | 'chromium'
+  | 'whale'
+  | 'comet'
+  | 'firefox'
+  | 'vivaldi'
+  | 'opera'
 
 export type ConnectionsPreset = 'standard' | 'steady' | 'turbo' | 'single' | 'custom'
 
@@ -134,6 +145,15 @@ export interface Settings {
   ytdlpEnabled: boolean
   ytdlpDetectSites: boolean
   mediaCookiesFromBrowser: MediaCookieSource
+  /**
+   * Let the browser extension hand over the live session for a page it can see.
+   *
+   * The only way to get cookies out of a browser yt-dlp cannot read (a Chromium
+   * fork it has no name for, a database the running browser holds open, or one
+   * using app-bound encryption). The value is held in memory only, and never
+   * logged or written to disk.
+   */
+  mediaExtensionCookies: boolean
   ffmpegPath: string
 
   aria2Path: string
@@ -259,6 +279,15 @@ export interface AppPaths {
   history: string
   settings: string
   extensions: string
+  /** Where the updater records what it did, next to the settings file. */
+  updateLog: string
+  /**
+   * The main process's own log.
+   *
+   * A packaged build prints nothing, so without this there is no record of why
+   * the engine, the browser handoff or a shutdown step misbehaved.
+   */
+  appLog: string
 }
 
 export type DeepPartial<T> = {

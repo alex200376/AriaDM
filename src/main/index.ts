@@ -21,7 +21,9 @@ import type { DeepPartial, Settings } from '@shared/settings'
 import { formatSpeed } from '@shared/format'
 import { localeFromSetting } from '@shared/i18n'
 
+import { createAppLog } from './app-log'
 import { locateAria2 } from './aria2/locate'
+import { bounded, type BoundedResult } from './bounded'
 import { DownloadCatcher } from './catcher'
 import { Aria2Supervisor } from './aria2/supervisor'
 import { findCategory } from './downloads/categorizer'
@@ -31,12 +33,16 @@ import { DownloadManager } from './downloads/manager'
 import { registerIpcHandlers } from './ipc/handlers'
 import { ClipboardWatcher, looksLikeDirectFile } from './integrations/clipboard-watch'
 import { HandoffServer } from './integrations/handoff-api'
+import { resolveHandoffEngine } from '@shared/media-sites'
 import { runPostAction, type PostActionDeps } from './integrations/post-actions'
 import { Scheduler } from './integrations/scheduler'
+import { CookieVault, hostOf } from './media/cookie-vault'
 import { isMediaGid, MediaJobs, mergeMediaItems } from './media/jobs'
 import { defaultDownloadDir, resolvePaths } from './paths'
 import { SettingsStore } from './settings/store'
 import { ToolkitManager } from './toolkit'
+import { detectInstallInfo } from './update/install-kind'
+import { verifyInstallerSignature } from './update/signature'
 import { UpdateManager } from './update/update-manager'
 import { resolveCookieArgs } from './media/browser-cookies'
 import { BACKGROUND, createMainWindow, resolvePreloadPath, resolveRendererPage } from './window'
@@ -74,6 +80,14 @@ const RENDEZVOUS_RETRY_BASE_MS = 5_000
 const RENDEZVOUS_RETRY_MAX_MS = 60_000
 let scheduler: Scheduler
 
+/**
+ * Live sessions offered by the browser extension, matched by host.
+ *
+ * Process-wide rather than per-window because the paste path (the dialog) and
+ * the capture path (the extension's button) are two doors into the same job.
+ */
+const cookieVault = new CookieVault()
+
 let paths: ReturnType<typeof resolvePaths>
 let resourcesRoot = ''
 
@@ -94,10 +108,19 @@ let completionTimer: NodeJS.Timeout | null = null
 /** How long to gather completions before announcing them. */
 const COMPLETION_BATCH_MS = 1_200
 
+/**
+ * The main process's own log.
+ *
+ * A packaged build prints nothing to a terminal, which is how "the app is open
+ * but the extension cannot reach it" became undiagnosable: the handoff
+ * listener's failures went to a console nobody has. Every line also lands in
+ * `logs/ariadm.log`, next to aria2.log, and the About tab can open it.
+ */
+const appLog = createAppLog({ path: () => paths?.appLog ?? '' })
+
 function log(line: string): void {
-  // Main-process logging goes to the terminal in development and is otherwise
-  // surfaced through the aria2 log and the UI's engine banner.
   if (!app.isPackaged) console.log(`[ariadm] ${line}`)
+  appLog.write(line)
 }
 
 /**
@@ -111,13 +134,24 @@ function updateLog(line: string): void {
   log(`update: ${line}`)
   try {
     if (!paths) return
-    fs.appendFileSync(
-      path.join(path.dirname(paths.settings), 'update.log'),
-      `${new Date().toISOString()} ${line}\n`,
-      'utf8'
-    )
+    fs.appendFileSync(updateLogPath(), `${new Date().toISOString()} ${line}\n`, 'utf8')
   } catch {
     // Logging must never be the reason an update fails.
+  }
+}
+
+/** Where the update log lives, so the UI can offer to open it. */
+function updateLogPath(): string {
+  return paths.updateLog
+}
+
+/** Last `lines` lines of the update log, for the About tab's diagnostics blob. */
+function readUpdateLogTail(lines: number): string {
+  try {
+    const content = fs.readFileSync(updateLogPath(), 'utf8')
+    return content.split('\n').filter(Boolean).slice(-lines).join('\n')
+  } catch {
+    return '(no update log yet)'
   }
 }
 
@@ -415,6 +449,11 @@ async function applySettingsSideEffects(previous: Settings, next: Settings): Pro
     await restartHandoff()
   }
 
+  if (previous.mediaExtensionCookies !== next.mediaExtensionCookies && !next.mediaExtensionCookies) {
+    // Switching this off must not leave live sessions sitting in memory.
+    cookieVault.clear()
+  }
+
   if (previous.aria2Path !== next.aria2Path && next.aria2Path) {
     supervisor.updateBinaryPath(next.aria2Path)
   }
@@ -511,6 +550,14 @@ async function restartHandoff(): Promise<void> {
       const global = manager.getGlobalStat()
       return { version: app.getVersion(), active: global.numActive, waiting: global.numWaiting }
     },
+    onCookies: ({ url, cookies }) => {
+      // Off means the disk store is the only source, and nothing is held here.
+      if (!settingsStore.get().mediaExtensionCookies) return { accepted: false }
+      const accepted = cookieVault.remember(url, cookies)
+      if (accepted) log(`extension supplied a session for ${hostOf(url)}`)
+      return { accepted }
+    },
+    cookieRequest: () => cookieVault.nextNeed(),
     onAdd: async (payload) => {
       const settings = settingsStore.get()
       // Hold the capture for confirmation when the popup is on. It goes in
@@ -529,9 +576,13 @@ async function restartHandoff(): Promise<void> {
         headers: payload.headers ?? [],
         paused: hold || (payload.paused ?? false),
         torrentBase64: payload.torrentBase64 ?? null,
-        // The extension's button is an explicit "this is a video" signal, which
-        // is stronger evidence than our own host list.
-        engine: payload.engine ?? (payload.media ? 'ytdlp' : 'auto')
+        // The extension's video hint, resolved against the URL: a link that names
+        // a file is a file, whichever button sent it. See resolveHandoffEngine.
+        engine: resolveHandoffEngine({
+          urls: payload.urls ?? [],
+          engine: payload.engine,
+          media: payload.media
+        })
       }
       const result = await engineRouter.add(input)
 
@@ -796,35 +847,70 @@ function handleFailed(item: DownloadItem): void {
 
 // ---- lifecycle -------------------------------------------------------------
 
+/**
+ * How long a single shutdown step may take, and how long the whole sequence may
+ * take before the app exits regardless.
+ *
+ * These exist because a shutdown step that never returned used to strand the
+ * quit entirely, and during an update that means the installer waits forever for
+ * an app that will not die.
+ */
+const SHUTDOWN_STEP_MS = 1_000
+const SHUTDOWN_HARD_MS = 12_000
+
 async function shutdownAndQuit(): Promise<void> {
   quitting = true
-  try {
-    manager.stop()
-    scheduler.stop()
+  const startedAt = Date.now()
+
+  // The backstop is not a fallback for slow teardown but a guarantee that the
+  // process ends: `app.exit` skips the event handlers that could otherwise be
+  // waiting on the same stuck resource.
+  const backstop = setTimeout(() => {
+    updateLog('shutdown passed its hard deadline; exiting anyway')
+    app.exit(0)
+  }, SHUTDOWN_HARD_MS)
+  backstop.unref?.()
+
+  const steps: [string, () => void | Promise<unknown>][] = [
+    ['engine manager', () => manager.stop()],
+    ['scheduler', () => scheduler.stop()],
     // Anything the popup was holding stays paused, which is exactly what leaving
     // it unanswered means. `destroy` instead of a plain close so the window's own
     // close handler does not race this.
-    catcher?.destroy()
-    clipboardWatcher?.stop()
-    mediaJobs.killAll()
-    if (rendezvousRetry) {
+    ['catch popup', () => catcher?.destroy()],
+    ['clipboard watcher', () => clipboardWatcher?.stop()],
+    ['media jobs', () => mediaJobs.killAll()],
+    ['handoff API', () => handoff?.stop()],
+    ['discovery listener', () => rendezvous?.stop()],
+    ['aria2 supervisor', () => supervisor.stop()],
+    ['history', () => history.flush()],
+    ['settings', () => settingsStore.save()]
+  ]
+
+  for (const [label, run] of steps) {
+    if (rendezvousRetry && label === 'handoff API') {
       clearTimeout(rendezvousRetry)
       rendezvousRetry = null
     }
-    await handoff?.stop()
-    await rendezvous?.stop()
-    await supervisor.stop()
-    await history.flush()
-    await settingsStore.save()
-  } catch (error) {
-    // One failing teardown step must never leave the app running: the user asked
-    // to quit, and during an update the installer is waiting on us to exit.
-    log(`shutdown step failed: ${(error as Error).message}`)
-  } finally {
-    // No-op unless an update was queued and could not be started earlier.
-    updateManager?.launchInstaller()
-    app.quit()
+    let result: BoundedResult
+    try {
+      result = await bounded(Promise.resolve().then(run), SHUTDOWN_STEP_MS)
+    } catch (error) {
+      // A step that throws synchronously is a teardown failure, not a crash.
+      result = { outcome: 'failed', error: error as Error }
+    }
+    if (result.outcome === 'timeout') {
+      updateLog(`shutdown step timed out after ${SHUTDOWN_STEP_MS}ms: ${label}`)
+    } else if (result.outcome === 'failed') {
+      updateLog(`shutdown step failed: ${label}: ${result.error?.message ?? ''}`)
+    }
   }
+
+  clearTimeout(backstop)
+  updateLog(`shutdown finished in ${Date.now() - startedAt}ms`)
+  // No-op unless an update was queued and could not be started earlier.
+  updateManager?.launchInstaller()
+  app.quit()
 }
 
 async function bootstrap(): Promise<void> {
@@ -833,6 +919,7 @@ async function bootstrap(): Promise<void> {
   resourcesRoot = isPackaged ? process.resourcesPath : path.join(appRoot, 'resources')
 
   paths = resolvePaths(app.getPath('userData'), defaultDownloadDir())
+  appLog.trim()
 
   settingsStore = new SettingsStore(paths)
   await settingsStore.load()
@@ -953,12 +1040,26 @@ async function bootstrap(): Promise<void> {
     currentVersion: () => app.getVersion(),
     installerDir: () => path.join(app.getPath('temp'), 'ariadm-update'),
     canInstall: () => app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR,
+    // A per-machine install in Program Files cannot be replaced quietly: the
+    // installer has to elevate, so the UI warns before the app closes.
+    installInfo: () =>
+      detectInstallInfo({
+        platform: process.platform,
+        isPackaged: app.isPackaged,
+        env: process.env,
+        exePath: process.execPath
+      }),
     onProgress: (progress) => send(IPC.eventUpdateProgress, progress),
     requestQuit: () => void shutdownAndQuit(),
     openInstaller: (file) => {
       void shell.openPath(file)
     },
-    log: updateLog
+    log: updateLog,
+    logPath: updateLogPath,
+    readLogTail: readUpdateLogTail,
+    // Only meaningful once a certificate exists; an unsigned build skips it (see
+    // update/signature.ts).
+    verifyInstaller: (file) => verifyInstallerSignature({ appPath: app.getPath('exe'), installerPath: file })
   })
 
   mediaJobs.on('completed', (item: DownloadItem) => void handleCompleted(item))
@@ -1013,6 +1114,13 @@ async function bootstrap(): Promise<void> {
     getHandoff: () => handoff,
     getRendezvous: () => rendezvous,
     getClipboard: () => clipboardWatcher,
+    // A session the extension offered recently, for the dialog path: pasting a
+    // link that needs a login should work when the browser is already signed in.
+    getExtensionCookies: (url) =>
+      settingsStore.get().mediaExtensionCookies ? cookieVault.forUrl(url) : '',
+    noteCookieNeed: (url) => {
+      if (settingsStore.get().mediaExtensionCookies) cookieVault.noteNeed(url)
+    },
     get catcher(): DownloadCatcher {
       if (!catcher) throw new Error('catch popup is not available yet')
       return catcher

@@ -52,6 +52,10 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     // On by default: most of the sites people actually want (X, Instagram,
     // Facebook, age-gated YouTube) return nothing without a logged-in session.
     mediaCookiesFromBrowser: 'auto',
+    // On by default: without it, a browser whose cookie store yt-dlp cannot read
+    // (Perplexity Comet, for instance) can never download anything that needs a
+    // login. Nothing is stored or logged beyond the download in question.
+    mediaExtensionCookies: true,
     ffmpegPath: '',
 
     aria2Path: '',

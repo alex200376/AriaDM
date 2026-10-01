@@ -27,6 +27,10 @@ export const en = {
   'common.name': 'Name',
   'common.advanced.show': 'Show advanced options',
   'common.advanced.hide': 'Hide advanced options',
+  'common.copy': 'Copy',
+  'common.open': 'Open',
+  'common.showMore': 'Show more',
+  'common.showLess': 'Show less',
 
   'app.name': 'AriaDM',
   'app.starting': 'Starting AriaDM…',
@@ -488,6 +492,7 @@ export const en = {
     'Asks before starting what the extension caught, in an IDM-style window. Closing it keeps the download for later.',
   'settings.browser.running': 'Running :{port}',
   'settings.browser.stopped': 'Not running',
+  'settings.browser.lastError': 'The browser integration reported a problem: {message}',
   'settings.browser.discovery': 'Auto-pairing :{port}',
   'settings.browser.discoveryOff': 'Auto-pairing off',
   'settings.browser.discoveryWarning':
@@ -550,14 +555,13 @@ export const en = {
     'Supports %f for the full path, %d for the folder and %n for the filename. Run through execFile, never a shell.',
   'settings.postAction.commandPlaceholder': 'For example "C:\\Program Files\\7-Zip\\7z.exe" x %f',
   'settings.about.title': 'About AriaDM',
-  'settings.about.body':
-    'A desktop download manager built on aria2. The front end is Electron and React; the main process supervises the aria2 child process and drives it over JSON-RPC, with WebSocket events backed by a once-a-second status poll.',
   'settings.about.engine': 'aria2 engine',
   'settings.about.ytdlp': 'yt-dlp',
   'settings.about.platform': 'Platform',
   'settings.about.paths': 'Where things live',
   'settings.about.limitations': 'Known limitations',
-  'settings.about.limit1': 'The installer is not code signed, so Windows SmartScreen warns about it.',
+  'settings.about.limit1':
+    'The installer is unsigned or only recently signed, so Windows SmartScreen still warns until publisher reputation builds.',
   'settings.about.limit2': 'aria2 upstream has had no stable release since 1.37.0 (2023); this app pins that build and verifies its hash.',
   'settings.about.limit3': 'The installer bundles aria2, yt-dlp and ffmpeg, so it is large; updating those tools means reinstalling.',
   'settings.about.limit4': 'yt-dlp cannot pause — pausing ends the process, and resuming continues from the .part file.',
@@ -580,6 +584,54 @@ export const en = {
   'settings.update.installFailed': 'Update failed: {error}',
   'settings.update.manualHint':
     'This build cannot install updates itself. Download and run the installer manually.',
+
+  // -- about tab: header, components, install kind --------------------------
+  'settings.media.extensionCookies': 'Let the extension supply your login',
+  'settings.media.extensionCookiesHint':
+    'Click the AriaDM extension in your browser and it hands over that page\u2019s cookies. They are kept in memory only, never written to history, and dropped shortly after. For browsers whose cookie store yt-dlp cannot read (Perplexity Comet), this is the only way.',
+  'settings.about.tagline': 'A desktop download manager built on the aria2 engine, with yt-dlp and ffmpeg included.',
+  'settings.about.engineRunning': 'Engine running',
+  'settings.about.engineStopped': 'Engine stopped',
+  'settings.about.versions': 'Component versions',
+  'settings.about.electron': 'Electron',
+  'settings.about.installKind': 'Install type',
+  'settings.about.installKind.machine': 'All users (Program Files)',
+  'settings.about.installKind.user': 'Current user',
+  'settings.about.installKind.portable': 'Portable',
+  'settings.about.installKind.dev': 'Development build',
+  'settings.about.installKind.machineHint':
+    'Updating shows a Windows permission prompt; choose "Yes" there, or the installer exits without installing anything.',
+
+  // -- about tab: data locations -------------------------------------------
+  'settings.about.pathsHint': 'Click the icon on the right to open a location in your file manager.',
+  'settings.about.pathsMore': 'Show other locations',
+  'settings.about.pathsLess': 'Hide other locations',
+  'settings.paths.downloads': 'Downloads folder',
+  'settings.paths.userData': 'Application data',
+  'settings.paths.bin': 'Engines and tools',
+  'settings.paths.logs': 'Logs',
+  'settings.paths.settings': 'Settings file',
+  'settings.paths.updateLog': 'Update log',
+  'settings.paths.appLog': 'App log',
+  'settings.paths.history': 'Download history',
+  'settings.paths.session': 'Session file',
+  'settings.paths.aria2Log': 'aria2 log',
+  'settings.paths.extensions': 'Browser extensions',
+
+  // -- about tab: update card ---------------------------------------------
+  'settings.about.limitationsCount': 'Known limitations ({count})',
+  'settings.update.installStarted': 'The installer is running. AriaDM is closing…',
+  'settings.update.waitingPermission': 'Waiting for the Windows permission prompt. Choose "Yes" there…',
+  'settings.update.permissionRequired':
+    'This update needs administrator rights, so Windows will show a permission prompt. Choose "Yes".',
+  'settings.update.retryInstall': 'Retry the install',
+  'settings.update.openInstaller': 'Open the installer',
+  'settings.update.openLog': 'Open the update log',
+  'settings.update.copyDiagnostics': 'Copy diagnostics',
+  'settings.update.diagnosticsCopied': 'Diagnostics copied.',
+  'settings.update.pendingReady': 'A verified installer is already on disk, so this will not download again.',
+  'settings.update.installFailedHint':
+    'AriaDM is still running. Use "Open the installer" to finish the update by hand, or try again.',
 
   // -- weekdays (numeric day index 0 = Sunday) -----------------------------
   'weekday.sun': 'Su',

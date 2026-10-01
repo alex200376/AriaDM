@@ -110,6 +110,42 @@ export function chooseEngine(request: EngineRequest, options: EngineAvailability
   return options.ytdlpAvailable ? 'ytdlp' : 'aria2'
 }
 
+export interface HandoffEngineRequest {
+  urls: string[]
+  /** An engine the caller named outright, when it had a real reason to. */
+  engine?: 'auto' | 'aria2' | 'ytdlp'
+  /** The extension's "this is a video" hint from its download button. */
+  media?: boolean
+}
+
+/**
+ * The engine a browser handoff should use.
+ *
+ * `media` is the extension's "this is a video" signal, and it is better evidence
+ * than our host list: the on-page panel only appears on sites we recognise, but
+ * the popup's button is offered on any page. It is still only a *hint*, not an
+ * instruction.
+ *
+ * A URL that names a file is a file. yt-dlp fetches a bare payload over one
+ * connection, after its own process startup and an extraction pass, and reports
+ * no size — on a plain 3.5 MB CDN file that measured tens of times slower than
+ * aria2, with a speed readout that is pure noise. Handing it to aria2 is what
+ * the user actually wants, whichever button they pressed.
+ *
+ * An engine the caller named outright is honoured untouched: only the extension's
+ * hint is treated as fallible.
+ */
+export function resolveHandoffEngine(request: HandoffEngineRequest): 'auto' | 'aria2' | 'ytdlp' {
+  if (request.engine) return request.engine
+  if (!request.media) return 'auto'
+
+  // 'auto' rather than 'aria2' so the ordinary detection still runs; a URL with a
+  // file extension is never a media *page*, so it lands on aria2 either way.
+  const first = request.urls[0]
+  if (first && hasFileExtension(first)) return 'auto'
+  return 'ytdlp'
+}
+
 /**
  * True when detection wanted yt-dlp but it could not be used, so the caller can
  * explain the fallback instead of silently doing something different.

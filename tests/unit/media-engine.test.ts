@@ -70,12 +70,20 @@ describe('browser cookie resolution', () => {
   const windowsEnv = { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local', APPDATA: 'C:\\Users\\me\\AppData\\Roaming' }
 
   it('uses whichever browser is installed when set to automatic', () => {
+    const cookies = 'C:\\Users\\me\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Network\\Cookies'
     const result = resolveCookieArgs('auto', {
       platform: 'win32',
       env: windowsEnv,
-      exists: (file) => file.includes('Microsoft\\Edge')
+      exists: (file) => file === cookies,
+      stat: (file) => (file === cookies ? { mtimeMs: 1000 } : null),
+      readdir: () => ['Default']
     })
-    expect(result.args).toEqual(['--cookies-from-browser', 'edge'])
+    // The profile is named explicitly, so the store that was checked is the one
+    // yt-dlp reads — see browser-cookies.test.ts for the detection cases.
+    expect(result.args).toEqual([
+      '--cookies-from-browser',
+      'edge:C:\\Users\\me\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default'
+    ])
     expect(result.browser).toBe('Edge')
   })
 
@@ -96,9 +104,23 @@ describe('browser cookie resolution', () => {
     expect(result.args).toEqual(['--cookies-from-browser', 'firefox'])
   })
 
-  it('prefers Chrome over the browsers after it in the list', () => {
-    const result = resolveCookieArgs('auto', { platform: 'win32', env: windowsEnv, exists: () => true })
-    expect(result.args[1]).toBe('chrome')
+  it('picks the newest cookie store, not merely the first browser in the list', () => {
+    const chrome = 'C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies'
+    const opera = 'C:\\Users\\me\\AppData\\Roaming\\Opera Software\\Opera Stable\\Network\\Cookies'
+    const times: Record<string, number> = { [chrome]: 2000, [opera]: 1000 }
+
+    const result = resolveCookieArgs('auto', {
+      platform: 'win32',
+      env: windowsEnv,
+      exists: (file) => file in times,
+      stat: (file) => ({ mtimeMs: times[file]! }),
+      readdir: () => ['Default']
+    })
+
+    expect(result.args[1]).toBe(
+      `chrome:${chrome.slice(0, chrome.indexOf('\\Network'))}`
+    )
+    expect(result.browser).toBe('Chrome')
   })
 })
 

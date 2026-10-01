@@ -19,6 +19,10 @@ export type MediaErrorKind =
   | 'geo'
   | 'ffmpeg'
   | 'cookies-missing'
+  /** The cookie database exists but the browser is holding it open. */
+  | 'cookies-locked'
+  /** The cookies are encrypted with a scheme yt-dlp cannot read. */
+  | 'cookies-undecryptable'
   | 'extractor'
   | 'format'
   | 'unsupported'
@@ -96,10 +100,44 @@ const RULES: Rule[] = [
     actionLabel: '啟用瀏覽器 Cookie'
   },
   {
-    kind: 'cookies-missing',
-    patterns: [/could not find .*cookies/i, /cookies database/i, /failed to decrypt/i, /could not copy .*cookie/i],
+    /**
+     * yt-dlp's "Could not copy Chrome cookie database" (issue 7271).
+     *
+     * Chromium keeps the cookie database open with a sharing mode that denies
+     * readers, so this is almost always "the browser is still running" — and the
+     * advice that actually works is to close it, not to change browsers.
+     */
+    kind: 'cookies-locked',
+    patterns: [/could not copy .*cookie/i, /permissionerror/i, /issues\/7271/i],
     message:
-      '讀不到瀏覽器的 Cookie 資料庫。請在「設定 → 整合與工具 → 影音下載」改用你平常登入這個網站的那個瀏覽器；Chromium 系（Chrome、Edge）必須完全關閉，Cookie 才讀得到。',
+      '瀏覽器正在執行，Cookie 資料庫被鎖住而讀不到。請完全結束該瀏覽器（含背景常駐、系統匣）後再試一次。',
+    action: 'retry',
+    actionLabel: '重試'
+  },
+  {
+    /**
+     * "Failed to decrypt with DPAPI" (issue 10927): Chromium 127 and later can
+     * encrypt cookies with an app-bound key that belongs to that browser's own
+     * executable, which yt-dlp has no way to use for a browser it does not know
+     * (Perplexity Comet, for instance).
+     */
+    kind: 'cookies-undecryptable',
+    patterns: [/failed to decrypt/i, /issues\/10927/i, /app[- ]bound/i, /possibly the key is wrong/i],
+    message:
+      '這個瀏覽器的 Cookie 使用應用程式綁定加密（Chromium 127 以上），yt-dlp 無法解密。請改用 Chrome、Edge 或 Firefox，或從擴充功能傳送連結，讓 AriaDM 直接取得登入狀態。',
+    action: 'enable-cookies',
+    actionLabel: '改用其他瀏覽器'
+  },
+  {
+    kind: 'cookies-missing',
+    patterns: [
+      /could not find .*cookies/i,
+      /cookies database/i,
+      /no encrypted key/i,
+      /could not find local state/i
+    ],
+    message:
+      '偵測不到這個瀏覽器的 Cookie 資料庫。請確認該瀏覽器已安裝，或在「設定 → 整合與工具 → 影音下載」手動指定要用哪一個。',
     action: 'enable-cookies',
     actionLabel: '更換瀏覽器'
   },

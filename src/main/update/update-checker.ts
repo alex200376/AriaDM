@@ -1,4 +1,4 @@
-import { UPDATE_REPO, type UpdateInfo } from '@shared/ipc'
+import { UPDATE_REPO, type UpdateCheckResult } from '@shared/ipc'
 
 /**
  * In-app update check.
@@ -68,7 +68,7 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
-function unavailable(current: string, error = ''): UpdateInfo {
+function unavailable(current: string, error = ''): UpdateCheckResult {
   return {
     current,
     latest: null,
@@ -83,8 +83,8 @@ function unavailable(current: string, error = ''): UpdateInfo {
   }
 }
 
-/** Turn a GitHub release payload into an `UpdateInfo`. Exported for tests. */
-export function parseRelease(json: unknown, current: string): UpdateInfo {
+/** Turn a GitHub release payload into an update check result. Exported for tests. */
+export function parseRelease(json: unknown, current: string): UpdateCheckResult {
   const release = (json ?? {}) as GithubRelease
   if (release.draft === true || release.prerelease === true) return unavailable(current)
 
@@ -120,7 +120,7 @@ export function parseRelease(json: unknown, current: string): UpdateInfo {
 export async function checkForUpdate(
   current: string,
   fetchImpl: UpdateFetch = fetch as unknown as UpdateFetch
-): Promise<UpdateInfo> {
+): Promise<UpdateCheckResult> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), RESPONSE_TIMEOUT_MS)
   timer.unref?.()

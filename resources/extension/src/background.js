@@ -8,9 +8,9 @@
  * cannot drive a download on the user's behalf.
  */
 
-// Chrome runs this as a service worker; Firefox lists pairing.js first in the
-// manifest's background.scripts instead.
-if (typeof importScripts === 'function') importScripts('pairing.js')
+// Chrome runs this as a service worker; Firefox lists request.js and pairing.js
+// first in the manifest's background.scripts instead.
+if (typeof importScripts === 'function') importScripts('request.js', 'pairing.js')
 
 const DEFAULTS = {
   port: null,
@@ -61,6 +61,21 @@ function endpoint(config, path) {
   return `http://127.0.0.1:${config.port}${path}`
 }
 
+/**
+ * What the shared request policy needs from this file.
+ *
+ * Passed in rather than reached for, so the retry behaviour can be exercised
+ * without a browser or a running app (see tests/unit/extension-request.test.ts).
+ */
+function requestDeps() {
+  return {
+    endpoint,
+    getConfig,
+    fetch: (...args) => fetch(...args),
+    pair: () => self.AriaDmPairing.pair()
+  }
+}
+
 /** Cached because every handoff asks, and it never changes at runtime. */
 let mediaSitesPromise = null
 
@@ -91,13 +106,13 @@ async function ping() {
   const config = await getConfig()
   if (!config.port || !config.token) return { ok: false, error: '尚未配對' }
   try {
-    const response = await fetch(endpoint(config, '/ping'), {
-      headers: { 'x-ariadm-token': config.token }
-    })
+    // Through the shared policy, so a stale stored port is repaired here too and
+    // the badge tells the truth rather than staying OFF until the user notices.
+    const response = await self.AriaDmRequest.requestWithRepair(requestDeps(), config, '/ping')
     if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
     return { ok: true, ...(await response.json()) }
   } catch (error) {
-    return { ok: false, error: error.message }
+    return { ok: false, error: self.AriaDmRequest.describeError(error) }
   }
 }
 
@@ -157,6 +172,67 @@ async function cookieHeaderFor(url) {
   }
 }
 
+/**
+ * Offer this browser's session for a URL to the app.
+ *
+ * `chrome.cookies.getAll` answers for any URL, not just the tab that happens to
+ * be open, so this works for a link the user pasted into AriaDM as well as for a
+ * page they are looking at.
+ */
+async function offerCookies(url) {
+  const config = await getConfig()
+  if (!config.port || !config.token) return { ok: false, error: '尚未配對' }
+
+  const cookies = await cookieHeaderFor(url)
+  if (!cookies) return { ok: false, error: '這個網址沒有可用的 Cookie' }
+
+  try {
+    // The shared policy re-pairs and retries once on either a rotated token or a
+    // port that stopped answering, which is what makes this button work after the
+    // app has restarted.
+    const response = await self.AriaDmRequest.requestWithRepair(requestDeps(), config, '/cookies', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url, cookies })
+    })
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
+    const body = await response.json().catch(() => ({}))
+    return { ok: true, accepted: body.accepted === true }
+  } catch (error) {
+    return { ok: false, error: self.AriaDmRequest.describeError(error) }
+  }
+}
+
+/**
+ * Answer the app when it is waiting for a login.
+ *
+ * The app records the host whenever a download fails for cookie reasons (see its
+ * `withExtensionCookies`), and this is what turns that into a working download:
+ * one loopback request says "x.com is waiting", and the session follows. It runs
+ * on the same one-minute alarm as pairing, and immediately when the popup opens.
+ */
+async function serveCookieRequest() {
+  const config = await getConfig()
+  if (!config.port || !config.token) return { ok: false, error: '尚未配對' }
+
+  try {
+    const response = await self.AriaDmRequest.requestWithRepair(requestDeps(), config, '/cookie-request', {
+      cache: 'no-store'
+    })
+    // 204 means nothing is waiting, which is the common case.
+    if (response.status !== 200) return { ok: true, url: '' }
+
+    const { url } = await response.json()
+    if (!url) return { ok: true, url: '' }
+
+    const offered = await offerCookies(url)
+    if (offered.ok && offered.accepted) notify('AriaDM 已取得登入狀態', `已把 ${new URL(url).host} 的 Cookie 傳給 AriaDM。`)
+    return { ok: true, url, sent: Boolean(offered.ok && offered.accepted), error: offered.error ?? '' }
+  } catch (error) {
+    return { ok: false, error: self.AriaDmRequest.describeError(error) }
+  }
+}
+
 function notify(title, message) {
   if (!chrome.notifications) return
   chrome.notifications.create({
@@ -165,17 +241,6 @@ function notify(title, message) {
     title,
     message
   })
-}
-
-async function post(payload) {
-  const config = await getConfig()
-  const response = await fetch(endpoint(config, '/add'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-ariadm-token': config.token },
-    body: JSON.stringify(payload)
-  })
-  const body = await response.json().catch(() => ({}))
-  return { response, body }
 }
 
 async function handoff(payload) {
@@ -197,14 +262,14 @@ async function handoff(payload) {
   }
 
   try {
-    let { response, body } = await post(payload)
-
-    // A 401 means the app rotated its token, which is exactly what auto-pairing
-    // exists to absorb.
-    if (response.status === 401) {
-      await self.AriaDmPairing.pair()
-      ;({ response, body } = await post(payload))
-    }
+    // The shared policy absorbs both a rotated token and a stored port that has
+    // stopped answering, so a handoff survives the app being reopened.
+    const response = await self.AriaDmRequest.requestWithRepair(requestDeps(), config, '/add', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const body = await response.json().catch(() => ({}))
 
     if (!response.ok || body.ok === false) {
       const message = body.error || `HTTP ${response.status}`
@@ -222,8 +287,9 @@ async function handoff(payload) {
     void updateBadge()
     return { ok: true, ...body }
   } catch (error) {
-    notify('AriaDM 沒有回應', `${error.message}（請確認應用程式正在執行）`)
-    return { ok: false, error: error.message }
+    const message = self.AriaDmRequest.describeError(error)
+    notify('AriaDM 沒有回應', message)
+    return { ok: false, error: message }
   }
 }
 
@@ -272,7 +338,13 @@ function watchConnection() {
 }
 
 chrome.alarms?.onAlarm.addListener((alarm) => {
-  if (alarm.name === PAIR_ALARM) void ensurePaired()
+  if (alarm.name === PAIR_ALARM) {
+    // Pair first: asking an app that is not running would log a connection error
+    // on every single tick.
+    void ensurePaired().then((status) => {
+      if (status?.ok) void serveCookieRequest()
+    })
+  }
 })
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -360,6 +432,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'handoff') {
     handoff(message.payload).then(sendResponse)
+    return true
+  }
+  if (message?.type === 'offerCookies') {
+    offerCookies(message.url).then(sendResponse)
+    return true
+  }
+  if (message?.type === 'serveCookieRequest') {
+    serveCookieRequest().then(sendResponse)
     return true
   }
   if (message?.type === 'config') {

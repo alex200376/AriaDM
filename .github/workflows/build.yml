@@ -1,0 +1,62 @@
+name: Build
+
+# Builds the Windows installers. Publishing a release is done by hand (`gh
+# release create`), so this workflow's job is to produce — and, once a
+# certificate exists, sign — the artifacts.
+#
+# Signing is skipped when the SignPath secrets are absent, which keeps the
+# workflow useful for forks and for anyone without a certificate.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      # resources/bin is git-ignored: the bundled binaries are fetched and
+      # hash-checked instead of being committed (see scripts/aria2-manifest.json).
+      - run: npm run fetch:aria2
+      - run: npm run fetch:ytdlp
+      - run: npm run fetch:media
+
+      - run: npm run typecheck
+      - run: npm run test:unit
+
+      # `dist` runs build:extension first, so chrome/ and firefox/ exist here.
+      - run: npx electron-builder
+
+      - name: Sign with SignPath
+        id: signpath
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-name: installers
+          wait-for-completion: true
+
+      - name: Report signatures
+        run: npm run sign:verify
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+          if-no-files-found: error

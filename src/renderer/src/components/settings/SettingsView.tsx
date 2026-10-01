@@ -15,17 +15,28 @@ import {
   Trash2,
   Wrench
 } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
-import type { CategoryRule, ScheduleRule, SpeedProfile } from '@shared/settings'
-import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
+import type { AppPaths, CategoryRule, ScheduleRule, SpeedProfile } from '@shared/settings'
+import type { UpdateInfo, UpdateInstallKind, UpdateProgress } from '@shared/ipc'
 import { formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
 
 import { cn } from '../../lib/cn'
-import { engineLabel, engineTone } from '../../lib/labels'
+import { engineLabel, engineTone, type Tone } from '../../lib/labels'
 import { useApp, type SettingsTab } from '../../store/app-store'
-import { Badge, Button, Field, IconButton, Input, Row, SectionTitle, SelectField, Toggle } from '../ui/primitives'
+import {
+  Badge,
+  Button,
+  Field,
+  IconButton,
+  Input,
+  Row,
+  SectionTitle,
+  SelectField,
+  TONE_DOT,
+  Toggle
+} from '../ui/primitives'
 
 /**
  * Five tabs instead of the original eight.
@@ -142,6 +153,9 @@ const COOKIE_SOURCE_OPTIONS: LocalisableOption[] = [
   { value: 'chrome', label: 'Chrome' },
   { value: 'edge', label: 'Edge' },
   { value: 'brave', label: 'Brave' },
+  { value: 'chromium', label: 'Chromium' },
+  { value: 'comet', label: 'Perplexity Comet' },
+  { value: 'whale', label: 'Naver Whale' },
   { value: 'firefox', label: 'Firefox' },
   { value: 'vivaldi', label: 'Vivaldi' },
   { value: 'opera', label: 'Opera' }
@@ -922,7 +936,14 @@ function IntegrationsTab(): JSX.Element {
               {t('settings.browser.discoveryOff')}
             </Badge>
           )}
-          {handoff?.lastError && <span className="text-[11px] text-danger">{handoff.lastError}</span>}
+          {/* The listener's own error is the only explanation for "the app is open
+              but the extension cannot reach it", so it gets its own line instead
+              of being squeezed in beside the badges. */}
+          {handoff?.lastError && (
+            <span className="w-full text-[11.5px] leading-relaxed text-danger">
+              {t('settings.browser.lastError', { message: handoff.lastError })}
+            </span>
+          )}
           {handoff && handoff.enabled && handoff.discoveryPort === 0 && (
             <span className="w-full text-[11.5px] leading-relaxed text-muted">
               {t('settings.browser.discoveryWarning', { ports: portList })}
@@ -1012,6 +1033,18 @@ function IntegrationsTab(): JSX.Element {
           options={localiseOptions(COOKIE_SOURCE_OPTIONS)}
           onValueChange={(value) => void patch({ mediaCookiesFromBrowser: value as never })}
         />
+
+        {/* The only route for browsers yt-dlp cannot read, so it is worth
+            spelling out what it does and does not do. */}
+        <div className="mt-1 divide-y divide-line border-t border-line">
+          <Row label={t('settings.media.extensionCookies')} hint={t('settings.media.extensionCookiesHint')}>
+            <Toggle
+              checked={settings.mediaExtensionCookies}
+              onChange={(v) => void patch({ mediaExtensionCookies: v })}
+              label={t('settings.media.extensionCookies')}
+            />
+          </Row>
+        </div>
       </section>
     </div>
   )
@@ -1199,23 +1232,90 @@ function ToolsTab(): JSX.Element {
   )
 }
 
+/** Locations worth showing straight away, in the order they get used. */
+const PRIMARY_PATH_KEYS: (keyof AppPaths)[] = ['downloads', 'userData', 'bin']
+const SECONDARY_PATH_KEYS: (keyof AppPaths)[] = [
+  'logs',
+  'settings',
+  'updateLog',
+  'appLog',
+  'history',
+  'session',
+  'aria2Log',
+  'extensions'
+]
+
+const LIMITATION_KEYS: TranslationKey[] = [
+  'settings.about.limit1',
+  'settings.about.limit2',
+  'settings.about.limit3',
+  'settings.about.limit4',
+  'settings.about.limit5'
+]
+
+const INSTALL_KIND_KEYS: Record<UpdateInstallKind, TranslationKey> = {
+  machine: 'settings.about.installKind.machine',
+  user: 'settings.about.installKind.user',
+  portable: 'settings.about.installKind.portable',
+  dev: 'settings.about.installKind.dev'
+}
+
+/** Human labels for the paths, instead of the raw keys the object is keyed by. */
+const PATH_LABEL_KEYS: Record<keyof AppPaths, TranslationKey> = {
+  downloads: 'settings.paths.downloads',
+  userData: 'settings.paths.userData',
+  bin: 'settings.paths.bin',
+  logs: 'settings.paths.logs',
+  settings: 'settings.paths.settings',
+  updateLog: 'settings.paths.updateLog',
+  appLog: 'settings.paths.appLog',
+  history: 'settings.paths.history',
+  session: 'settings.paths.session',
+  aria2Log: 'settings.paths.aria2Log',
+  extensions: 'settings.paths.extensions'
+}
+
+/**
+ * One check per session, not one per visit to the tab.
+ *
+ * Opening About is the only way to see the version and the update state, so
+ * making the user press a button to learn what they came for is busywork — but
+ * the release API is unauthenticated, so it is asked once per run at most.
+ */
+let checkedForUpdatesThisSession = false
+
+/** A label/value pair in the compact version grid. */
+function ComponentRow({ label, value, ok }: { label: string; value: string; ok: boolean }): JSX.Element {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="truncate text-faint">{label}</span>
+      <span className={cn('truncate font-mono', ok ? 'text-fg' : 'text-warn')}>{value}</span>
+    </div>
+  )
+}
+
 function AboutTab(): JSX.Element {
   const paths = useApp((state) => state.paths)
   const toolkits = useApp((state) => state.toolkits)
-  const version = useApp((state) => state.engine.version)
+  const engine = useApp((state) => state.engine)
+  const version = engine.version
   const [update, setUpdate] = useState<UpdateInfo | null>(null)
   const [checking, setChecking] = useState(false)
   const [progress, setProgress] = useState<UpdateProgress | null>(null)
   const [installing, setInstalling] = useState(false)
   const [failure, setFailure] = useState('')
+  const [notice, setNotice] = useState('')
+  const [showAllPaths, setShowAllPaths] = useState(false)
+  const [showLimitations, setShowLimitations] = useState(false)
 
   // The main process reports download progress on its own channel, so the bar
   // advances even while the button's own promise is still pending.
   useEffect(() => window.api.on.updateProgress(setProgress), [])
 
-  const checkForUpdates = async (): Promise<void> => {
+  const checkForUpdates = useCallback(async (): Promise<void> => {
     setChecking(true)
     setFailure('')
+    setNotice('')
     setProgress(null)
     try {
       setUpdate(await window.api.update.check())
@@ -1228,76 +1328,181 @@ function AboutTab(): JSX.Element {
         downloadUrl: null,
         downloadSize: 0,
         canInstall: false,
+        installKind: 'dev',
+        needsElevation: false,
+        pendingInstaller: null,
         error: (error as Error).message
       })
     } finally {
       setChecking(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (checkedForUpdatesThisSession) return
+    checkedForUpdatesThisSession = true
+    void checkForUpdates()
+  }, [checkForUpdates])
 
   /**
-   * Download the installer and, once it is verified, hand off to the silent
-   * install. The app quits as part of that, so the `finally` is only reached
-   * when something went wrong.
+   * Download the installer and hand off to the silent install.
+   *
+   * There is deliberately no `finally` resetting `installing`: on success the app
+   * is closing, and a silent reset is what made a failed update look like nothing
+   * happened. Every way out that leaves the app running goes through the catch,
+   * which says what went wrong and leaves the verified installer on disk.
    */
   const downloadAndInstall = async (): Promise<void> => {
     setFailure('')
+    setNotice('')
     setInstalling(true)
     try {
       await window.api.update.download()
       await window.api.update.install()
     } catch (error) {
-      setFailure((error as Error).message)
-    } finally {
       setInstalling(false)
+      setFailure((error as Error).message)
     }
   }
 
-  const updateMessage = (): string => {
-    if (checking) return t('settings.update.checking')
-    if (!update) return ''
-    if (update.available && update.latest) return t('settings.update.available', { version: update.latest })
-    if (update.error) return t('settings.update.failed', { error: update.error })
-    if (update.latest) return t('settings.update.upToDate')
-    return t('settings.update.none')
+  /** Retry an installer that is already verified and on disk. */
+  const installPending = async (): Promise<void> => {
+    setFailure('')
+    setNotice('')
+    setInstalling(true)
+    try {
+      await window.api.update.install()
+    } catch (error) {
+      setInstalling(false)
+      setFailure((error as Error).message)
+    }
   }
+
+  const openInstaller = async (): Promise<void> => {
+    const file = update?.pendingInstaller
+    if (!file) return
+    try {
+      await window.api.update.openInstaller(file)
+    } catch (error) {
+      setFailure((error as Error).message)
+    }
+  }
+
+  const openUpdateLog = (): void => {
+    if (paths?.updateLog) void window.api.app.reveal(paths.updateLog)
+  }
+
+  /**
+   * Install kind, platform and the tail of the update log in one string.
+   *
+   * Assembled in the main process, because the facts that matter most for an
+   * update bug report — how the app is installed, whether it needs administrator
+   * rights, what the installer was actually passed — live there.
+   */
+  const copyDiagnostics = async (): Promise<void> => {
+    try {
+      const report = await window.api.update.diagnostics()
+      await navigator.clipboard.writeText(report.text)
+      setNotice(t('settings.update.diagnosticsCopied'))
+    } catch (error) {
+      setFailure((error as Error).message)
+    }
+  }
+
+  const installKindLabel = update ? t(INSTALL_KIND_KEYS[update.installKind]) : t('common.dash')
+  const engineRunning = engine.state === 'ready'
+  const pathEntries = paths
+    ? [...PRIMARY_PATH_KEYS, ...(showAllPaths ? SECONDARY_PATH_KEYS : [])].map((key) => ({ key, value: paths[key] }))
+    : []
+
+  /**
+   * The one line that says what is true right now.
+   *
+   * A download in flight, an install waiting on Windows, an install under way and
+   * a plain release check all used to share a single paragraph of text, which is
+   * how a stalled update ended up looking like an idle one.
+   */
+  const status = (): { text: string; tone: Tone } => {
+    const phase = progress?.phase
+    if (installing || phase === 'installing') {
+      return { text: t('settings.update.installStarted'), tone: 'ok' }
+    }
+    if (phase === 'waiting-permission') {
+      return { text: t('settings.update.waitingPermission'), tone: 'warn' }
+    }
+    if (phase === 'downloading') {
+      return {
+        text: `${t('settings.update.downloading')} ${progress && progress.percent >= 0 ? `${progress.percent}%` : ''}`.trim(),
+        tone: 'brand'
+      }
+    }
+    if (phase === 'error') return { text: t('settings.update.failed', { error: progress?.error ?? '' }), tone: 'danger' }
+    if (update?.pendingInstaller && !update.available) {
+      return { text: t('settings.update.pendingReady'), tone: 'info' }
+    }
+    if (checking) return { text: t('settings.update.checking'), tone: 'muted' }
+    if (!update) return { text: '', tone: 'muted' }
+    if (update.available && update.latest) {
+      return { text: t('settings.update.available', { version: update.latest }), tone: 'brand' }
+    }
+    if (update.error) return { text: t('settings.update.failed', { error: update.error }), tone: 'danger' }
+    if (update.latest) return { text: t('settings.update.upToDate'), tone: 'ok' }
+    return { text: t('settings.update.none'), tone: 'muted' }
+  }
+
+  const current = status()
 
   return (
     <div className="space-y-6">
-      <section>
-        <SectionTitle>{t('settings.about.title')}</SectionTitle>
-        <p className="text-[12px] leading-relaxed text-muted">{t('settings.about.body')}</p>
-        <div className="mt-3 space-y-1 text-[11.5px]">
-          <div className="flex justify-between">
-            <span className="text-faint">AriaDM</span>
-            <span className="text-fg">{window.api.version}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-faint">{t('settings.about.engine')}</span>
-            <span className="text-fg">{version || toolkits?.aria2.version || t('common.dash')}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-faint">{t('settings.about.platform')}</span>
-            <span className="text-fg">{window.api.platform}</span>
+      {/* Identity, one version, and the two facts that explain most of the rest
+          of the app: is the engine up, and how is this copy installed. */}
+      <section className="rounded-xl border border-line bg-elevated/30 p-4">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand/15 text-brand">
+            <Download size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-[15px] font-semibold text-fg">AriaDM</h2>
+              <Badge tone="brand">v{window.api.version}</Badge>
+              <Badge tone={engineRunning ? 'ok' : 'muted'} dot>
+                {engineRunning ? t('settings.about.engineRunning') : t('settings.about.engineStopped')}
+              </Badge>
+            </div>
+            <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">{t('settings.about.tagline')}</p>
           </div>
         </div>
-      </section>
 
-      <section>
-        <SectionTitle>{t('settings.about.paths')}</SectionTitle>
-        <div className="space-y-1">
-          {paths &&
-            Object.entries(paths).map(([key, value]) => (
-              <div key={key} className="flex items-start justify-between gap-4 text-[11px]">
-                <span className="shrink-0 text-faint">{key}</span>
-                <span className="break-all text-right font-mono text-muted" data-selectable>
-                  {value}
-                </span>
-              </div>
-            ))}
+        <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1 border-t border-line pt-3 text-[11.5px]">
+          <ComponentRow
+            label={t('settings.about.engine')}
+            value={version || toolkits?.aria2.version || t('common.dash')}
+            ok={Boolean(version || toolkits?.aria2.present)}
+          />
+          <ComponentRow
+            label="yt-dlp"
+            value={toolkits?.ytdlp.version || t('common.dash')}
+            ok={Boolean(toolkits?.ytdlp.present)}
+          />
+          <ComponentRow
+            label="ffmpeg"
+            value={toolkits?.ffmpeg.version || t('common.dash')}
+            ok={Boolean(toolkits?.ffmpeg.present)}
+          />
+          <ComponentRow label={t('settings.about.electron')} value={window.api.runtime.electron || t('common.dash')} ok />
+          <ComponentRow label={t('settings.about.platform')} value={window.api.platform} ok />
+          <ComponentRow label={t('settings.about.installKind')} value={installKindLabel} ok />
         </div>
+
+        {update?.installKind === 'machine' && (
+          <p className="mt-3 flex items-start gap-2 border-t border-line pt-3 text-[11px] leading-relaxed text-warn">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            {t('settings.about.installKind.machineHint')}
+          </p>
+        )}
       </section>
 
+      {/* Update: the one actionable thing on this tab, so it comes first. */}
       <section>
         <SectionTitle
           action={
@@ -1305,7 +1510,7 @@ function AboutTab(): JSX.Element {
               variant="ghost"
               size="sm"
               icon={<RefreshCw size={13} className={cn(checking && 'animate-spin')} />}
-              disabled={checking}
+              disabled={checking || installing}
               onClick={() => void checkForUpdates()}
             >
               {t('settings.update.check')}
@@ -1315,88 +1520,153 @@ function AboutTab(): JSX.Element {
           {t('settings.update.title')}
         </SectionTitle>
 
-        <div className="divide-y divide-line rounded-lg border border-line bg-elevated/30 px-3">
-          <Row label={t('settings.update.current')}>
-            <span className="font-mono text-[12px] text-fg">{window.api.version}</span>
-          </Row>
-        </div>
-
-        {updateMessage() && (
-          <p className="mt-2 text-[11.5px] leading-relaxed text-muted">{updateMessage()}</p>
-        )}
-
-        {progress && (progress.phase === 'downloading' || progress.phase === 'ready') && (
-          <div className="mt-3">
-            <div className="flex items-center justify-between text-[11px] text-muted">
-              <span>
-                {progress.phase === 'ready'
-                  ? t('settings.update.downloaded')
-                  : t('settings.update.downloading')}
-              </span>
-              <span className="font-mono text-tabular">
-                {progress.percent >= 0 ? `${progress.percent}%` : formatSpeed(progress.received)}
-              </span>
-            </div>
-            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-elevated">
-              <div
-                className={cn(
-                  'h-full rounded-full bg-brand transition-all',
-                  progress.percent < 0 && 'animate-pulse'
-                )}
-                style={{ width: progress.percent >= 0 ? `${progress.percent}%` : '100%' }}
-              />
+        <div className="rounded-xl border border-line bg-elevated/30 p-3">
+          <div className="flex items-start gap-2.5">
+            <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', TONE_DOT[current.tone])} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[12.5px] leading-relaxed text-fg">{current.text}</p>
+              {update?.available && update.needsElevation && (
+                <p className="mt-1 text-[11px] leading-relaxed text-warn">
+                  {t('settings.update.permissionRequired')}
+                </p>
+              )}
+              {notice && <p className="mt-1 text-[11px] leading-relaxed text-ok">{notice}</p>}
             </div>
           </div>
-        )}
 
-        {failure && (
-          <p className="mt-2 text-[11.5px] leading-relaxed text-danger">
-            {t('settings.update.installFailed', { error: failure })}
-          </p>
-        )}
-
-        {update?.available &&
-          (update.canInstall ? (
-            <Button
-              variant="primary"
-              size="sm"
-              className="mt-3"
-              icon={
-                installing ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />
-              }
-              disabled={installing}
-              onClick={() => void downloadAndInstall()}
-            >
-              {installing ? t('settings.update.installing') : t('settings.update.install')}
-            </Button>
-          ) : (
+          {(progress?.phase === 'downloading' || progress?.phase === 'ready') && (
             <div className="mt-3">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-elevated">
+                <div
+                  className={cn(
+                    'h-full rounded-full bg-brand transition-all',
+                    progress.percent < 0 && 'animate-pulse'
+                  )}
+                  style={{ width: progress.percent >= 0 ? `${progress.percent}%` : '100%' }}
+                />
+              </div>
+              {progress.percent < 0 && (
+                <p className="mt-1 text-right font-mono text-[10.5px] text-faint">
+                  {formatSpeed(progress.received)}
+                </p>
+              )}
+            </div>
+          )}
+
+          {failure && (
+            <p className="mt-2 text-[11.5px] leading-relaxed text-danger">
+              {t('settings.update.installFailed', { error: failure })}
+            </p>
+          )}
+          {failure && update?.pendingInstaller && (
+            <p className="mt-1 text-[11px] leading-relaxed text-faint">
+              {t('settings.update.installFailedHint')}
+            </p>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {update?.available && update.canInstall && (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={installing ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                disabled={installing}
+                onClick={() => void downloadAndInstall()}
+              >
+                {installing
+                  ? t('settings.update.installing')
+                  : update.pendingInstaller
+                    ? t('settings.update.retryInstall')
+                    : t('settings.update.install')}
+              </Button>
+            )}
+
+            {update?.available && !update.canInstall && (
               <Button
                 variant="primary"
                 size="sm"
                 icon={<Download size={13} />}
-                onClick={() =>
-                  void window.api.app.openExternal(update.downloadUrl ?? update.releaseUrl ?? '')
-                }
+                onClick={() => void window.api.app.openExternal(update.downloadUrl ?? update.releaseUrl ?? '')}
               >
                 {t('settings.update.download')}
               </Button>
-              <p className="mt-2 text-[11px] leading-relaxed text-faint">
-                {t('settings.update.manualHint')}
-              </p>
-            </div>
-          ))}
+            )}
+
+            {/* A verified installer already on disk: the way back from a refused
+                permission prompt, without downloading 197 MB again. */}
+            {update?.pendingInstaller && (
+              <Button
+                variant={update.available && update.canInstall ? 'ghost' : 'primary'}
+                size="sm"
+                icon={<FolderOpen size={13} />}
+                onClick={() => void openInstaller()}
+              >
+                {t('settings.update.openInstaller')}
+              </Button>
+            )}
+
+            <Button variant="ghost" size="sm" onClick={openUpdateLog}>
+              {t('settings.update.openLog')}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => void copyDiagnostics()}>
+              {t('settings.update.copyDiagnostics')}
+            </Button>
+          </div>
+
+          {update?.available && !update.canInstall && (
+            <p className="mt-2 text-[11px] leading-relaxed text-faint">{t('settings.update.manualHint')}</p>
+          )}
+        </div>
       </section>
 
+      {/* Locations: labels people recognise instead of the raw object keys, and
+          each one openable in the file manager. */}
       <section>
-        <SectionTitle>{t('settings.about.limitations')}</SectionTitle>
-        <ul className="space-y-1.5 text-[11.5px] leading-relaxed text-muted">
-          <li>• {t('settings.about.limit1')}</li>
-          <li>• {t('settings.about.limit2')}</li>
-          <li>• {t('settings.about.limit3')}</li>
-          <li>• {t('settings.about.limit4')}</li>
-          <li>• {t('settings.about.limit5')}</li>
-        </ul>
+        <SectionTitle>{t('settings.about.paths')}</SectionTitle>
+        <p className="mb-2 text-[11px] text-faint">{t('settings.about.pathsHint')}</p>
+        <div className="overflow-hidden rounded-xl border border-line">
+          {pathEntries.map(({ key, value }) => (
+            <div key={key} className="flex items-center gap-3 border-b border-line px-3 py-2 last:border-b-0">
+              <span className="w-[104px] shrink-0 text-[11.5px] text-muted">{t(PATH_LABEL_KEYS[key])}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint" title={value} data-selectable>
+                {value}
+              </span>
+              <IconButton
+                label={t('common.open')}
+                icon={<FolderOpen size={13} />}
+                onClick={() => void window.api.app.reveal(value)}
+              />
+            </div>
+          ))}
+        </div>
+        <Button variant="ghost" size="sm" className="mt-2" onClick={() => setShowAllPaths((open) => !open)}>
+          {showAllPaths ? t('settings.about.pathsLess') : t('settings.about.pathsMore')}
+        </Button>
+      </section>
+
+      {/* Five bullets used to outweigh the single thing this tab can actually do,
+          so they collapse behind a count. */}
+      <section>
+        <button
+          type="button"
+          onClick={() => setShowLimitations((open) => !open)}
+          className="flex w-full items-center justify-between rounded-xl border border-line bg-elevated/30 px-3 py-2 text-left text-[12px] text-muted transition-colors hover:text-fg"
+        >
+          <span className="inline-flex items-center gap-2">
+            <CheckCircle2 size={13} className="text-faint" />
+            {t('settings.about.limitationsCount', { count: LIMITATION_KEYS.length })}
+          </span>
+          <span className="text-faint">
+            {showLimitations ? t('common.showLess') : t('common.showMore')}
+          </span>
+        </button>
+        {showLimitations && (
+          <ul className="mt-2 space-y-1.5 text-[11.5px] leading-relaxed text-muted">
+            {LIMITATION_KEYS.map((key) => (
+              <li key={key}>• {t(key)}</li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   )

@@ -19,6 +19,9 @@ import type { MediaFormatInfo } from '@shared/settings'
 interface RawFormat {
   format_id?: string
   ext?: string
+  /** The stream's own URL, and how yt-dlp says it should be fetched. */
+  url?: string
+  protocol?: string
   resolution?: string
   width?: number
   height?: number
@@ -34,6 +37,8 @@ interface RawFormat {
 interface RawProbe {
   title?: string
   id?: string
+  /** yt-dlp's extractor name, e.g. 'generic' or 'youtube'. */
+  extractor?: string
   duration?: number
   thumbnail?: string
   webpage_url?: string
@@ -50,6 +55,18 @@ export interface MediaProbe {
   formats: MediaFormatInfo[]
   /** True when this looked like a playlist rather than a single item. */
   isPlaylist: boolean
+  /** yt-dlp's extractor name, e.g. 'generic' or 'youtube'. */
+  extractor: string
+  /**
+   * The file URL when the probe found nothing but a plain HTTP(S) payload.
+   *
+   * Empty for anything that is really a media page. Set means the link was a
+   * file all along — possibly a page whose only media is that file — and aria2
+   * should fetch it instead of yt-dlp: one connection plus a per-run startup and
+   * an extraction pass is tens of times slower on a bare payload, and yt-dlp
+   * reports no size for it, so the row's speed and ETA come out as noise.
+   */
+  directUrl: string
 }
 
 export interface YtDlpProgress {
@@ -64,6 +81,26 @@ function humanResolution(format: RawFormat): string {
   if (format.width && format.height) return `${format.width}x${format.height}`
   if (format.height) return `${format.height}p`
   return ''
+}
+
+/**
+ * The direct file URL behind a probe, when there is exactly one plain payload.
+ *
+ * The generic extractor is yt-dlp saying "I did not recognise this site; here is
+ * the one thing that looked downloadable". A single HTTP(S) format from it is a
+ * file, not a stream: HLS and DASH report protocols like `m3u8_native` and
+ * `http_dash_segments`, which must stay with yt-dlp. Anything with several
+ * formats is a real media page and is left alone too.
+ */
+function directPayloadUrl(primary: RawProbe, extractor: string, isPlaylist: boolean): string {
+  if (extractor !== 'generic' || isPlaylist) return ''
+  const raw = primary.formats ?? []
+  if (raw.length !== 1) return ''
+
+  const format = raw[0]!
+  const protocol = (format.protocol ?? '').toLowerCase()
+  if (protocol !== 'http' && protocol !== 'https') return ''
+  return format.url ?? ''
 }
 
 /**
@@ -252,6 +289,8 @@ export async function probeFormats(
       const isPlaylist = Array.isArray(payload.entries)
       const primary: RawProbe = isPlaylist && payload.entries?.[0] ? payload.entries[0]! : payload
 
+      const extractor = primary.extractor ?? payload.extractor ?? ''
+
       resolve({
         url,
         title: primary.title ?? payload.title ?? url,
@@ -259,7 +298,9 @@ export async function probeFormats(
         durationSeconds: primary.duration ?? 0,
         thumbnail: primary.thumbnail ?? '',
         formats: parseFormats(primary, options.hasFfmpeg),
-        isPlaylist
+        isPlaylist,
+        extractor,
+        directUrl: directPayloadUrl(primary, extractor, isPlaylist)
       })
     })
   })

@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+
 import { clipboard, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 
 import type { AppPaths, CategoryRule, DeepPartial, ScheduleRule, Settings, SpeedProfile } from '@shared/settings'
@@ -10,6 +12,7 @@ import {
   type SystemPowerAction,
   type UriListClassification
 } from '@shared/ipc'
+import { classifyMediaError, type MediaErrorKind } from '@shared/media-errors'
 import { classifyUriList, isSupportedUri } from '@shared/uri'
 
 import type { Aria2Supervisor } from '../aria2/supervisor'
@@ -37,6 +40,15 @@ export interface HandlerContext {
   /** The auto-pairing listener an extension discovers AriaDM through. */
   getRendezvous(): HandoffServer | null
   getClipboard(): ClipboardWatcher | null
+  /**
+   * A live session the browser extension offered for this URL's host, or ''.
+   *
+   * The paste path has no capture to carry a session along, so it borrows one the
+   * extension saw recently (see media/cookie-vault).
+   */
+  getExtensionCookies(url: string): string
+  /** Tell the extension that this host needs a session, so it can be asked. */
+  noteCookieNeed(url: string): void
   /** The IDM-style popup an intercepted browser download lands in. */
   catcher: DownloadCatcher
   /** In-app update: release check, download, and silent install. */
@@ -50,6 +62,38 @@ export interface HandlerContext {
   requestSystemPower(action: SystemPowerAction): Promise<void>
   runPostActionFor(item: DownloadItem): Promise<void>
   log(line: string): void
+}
+
+/** Failures a browser session would plausibly fix. */
+const COOKIE_ERROR_KINDS = new Set<MediaErrorKind>([
+  'cookies-missing',
+  'cookies-locked',
+  'cookies-undecryptable',
+  'bot-check',
+  'auth'
+])
+
+/**
+ * Probe a media URL with whatever session the extension offered, and record that
+ * the host needs one when the failure is a login problem.
+ *
+ * The recording is what makes the fix discoverable: the extension asks AriaDM
+ * whether anything is waiting (see `/cookie-request`), and without a note here
+ * nothing ever told it to.
+ */
+async function withExtensionCookies<T>(
+  context: HandlerContext,
+  url: string,
+  run: (cookieHeader: string) => Promise<T>
+): Promise<T> {
+  const cookieHeader = context.getExtensionCookies(url)
+  try {
+    return await run(cookieHeader)
+  } catch (error) {
+    const kind = classifyMediaError((error as Error).message).kind
+    if (COOKIE_ERROR_KINDS.has(kind)) context.noteCookieNeed(url)
+    throw error
+  }
 }
 
 /** Split a gid list into aria2-owned and yt-dlp-owned subsets. */
@@ -320,13 +364,21 @@ export function registerIpcHandlers(context: HandlerContext): void {
 
   ipcMain.handle(IPC.integrationsGetMediaFormats, async (_event, url: string) => {
     if (!settingsStore.get().ytdlpEnabled) throw new Error('影音下載功能已停用。')
-    const probe = await mediaJobs.probe(url)
-    return probe.formats
+    return withExtensionCookies(context, url, async (cookieHeader) => {
+      const probe = await mediaJobs.probe(url, { cookieHeader })
+      return probe.formats
+    })
   })
 
   ipcMain.handle(IPC.integrationsAddMedia, async (_event, input) => {
-    const probe = await mediaJobs.probe(input.url)
-    const { gid } = await mediaJobs.add(input, probe)
+    const probe = await withExtensionCookies(context, input.url, (cookieHeader) =>
+      mediaJobs.probe(input.url, { cookieHeader })
+    )
+    // The session travels with the job, so a resume sends the same credentials as
+    // the first attempt did.
+    const { gid } = await mediaJobs.add(input, probe, {
+      cookieHeader: context.getExtensionCookies(input.url)
+    })
     return { gids: [gid] }
   })
 
@@ -364,15 +416,40 @@ export function registerIpcHandlers(context: HandlerContext): void {
     await shell.openExternal(url)
   })
 
+  ipcMain.handle(IPC.appReveal, async (_event, target: string) => {
+    if (typeof target !== 'string' || !target) throw new Error('缺少要開啟的路徑。')
+    if (!fs.existsSync(target)) throw new Error('路徑不存在。')
+    // A folder is opened; a file is shown *selected* in its folder, which is what
+    // "show me this log file" should do.
+    if (fs.statSync(target).isDirectory()) {
+      const error = await shell.openPath(target)
+      if (error) throw new Error(error)
+      return
+    }
+    shell.showItemInFolder(target)
+  })
+
   // ---- updates ---------------------------------------------------------------
 
   ipcMain.handle(IPC.updateCheck, () => context.update.check())
   ipcMain.handle(IPC.updateDownload, () => context.update.download())
   ipcMain.handle(IPC.updateCancel, () => context.update.cancel())
 
-  // Returns as soon as the shutdown is queued; the installer runs during it and
-  // the app is relaunched by the installer itself.
+  // Rejects when the installer could not be confirmed running, in which case the
+  // app is deliberately still open so the user can run it by hand.
   ipcMain.handle(IPC.updateInstall, () => context.update.install())
+
+  // The manual escape hatch: run a verified installer with its normal window.
+  ipcMain.handle(IPC.updateOpenInstaller, async (_event, file: string) => {
+    if (typeof file !== 'string' || !/\.exe$/i.test(file)) {
+      throw new Error('僅允許開啟更新安裝程式。')
+    }
+    if (!fs.existsSync(file)) throw new Error('安裝程式已不存在，請重新下載。')
+    const error = await shell.openPath(file)
+    if (error) throw new Error(error)
+  })
+
+  ipcMain.handle(IPC.updateDiagnostics, () => context.update.diagnostics())
 
   // ---- catch popup -----------------------------------------------------------
 

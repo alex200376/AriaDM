@@ -18,7 +18,7 @@ const projectRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const extensionRoot = path.join(projectRoot, 'resources', 'extension')
 const srcDir = path.join(extensionRoot, 'src')
 
-const SHARED_FILES = ['background.js', 'pairing.js', 'popup.html', 'popup.js', 'content.js', 'content.css', 'media-sites.json']
+const SHARED_FILES = ['background.js', 'pairing.js', 'request.js', 'popup.html', 'popup.js', 'content.js', 'content.css', 'media-sites.json']
 
 /**
  * The two manifests.
@@ -76,9 +76,9 @@ function buildManifests() {
     permissions: ['contextMenus', 'storage', 'cookies', 'downloads', 'notifications', 'scripting', 'activeTab', 'tabs', 'alarms'],
     host_permissions: ['http://127.0.0.1/*', 'http://localhost/*', '<all_urls>'],
     // Firefox implements MV3 with an event page; it does not run a service
-    // worker. Scripts share one global scope and load in order, so pairing.js
-    // defines AriaDmPairing before background.js runs.
-    background: { scripts: ['pairing.js', 'background.js'] },
+    // worker. Scripts share one global scope and load in order, so request.js and
+    // pairing.js define their globals before background.js runs.
+    background: { scripts: ['request.js', 'pairing.js', 'background.js'] },
     action: { default_popup: 'popup.html', default_title: 'AriaDM' },
     content_scripts: contentScripts,
     icons: { 16: 'icon16.png', 48: 'icon48.png', 128: 'icon128.png' },

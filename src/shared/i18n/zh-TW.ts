@@ -30,6 +30,10 @@ export const zhTW = {
   'common.name': '名稱',
   'common.advanced.show': '顯示進階選項',
   'common.advanced.hide': '收起進階選項',
+  'common.copy': '複製',
+  'common.open': '開啟',
+  'common.showMore': '顯示更多',
+  'common.showLess': '收起',
 
   'app.name': 'AriaDM',
   'app.starting': '正在啟動 AriaDM…',
@@ -480,6 +484,7 @@ export const zhTW = {
   'settings.browser.catchPopup': '顯示下載確認視窗',
   'settings.browser.catchPopupHint':
     '擴充套件抓到連結時，用像 IDM 的小視窗詢問是否開始下載；關閉時仍會保留為稍後下載。',
+  'settings.browser.lastError': '瀏覽器整合發生問題：{message}',
   'settings.browser.running': '運作中 :{port}',
   'settings.browser.stopped': '未運作',
   'settings.browser.discovery': '自動配對 :{port}',
@@ -543,14 +548,13 @@ export const zhTW = {
     '支援 %f 完整路徑、%d 資料夾、%n 檔名。以 execFile 傳參數執行，不經過 shell。',
   'settings.postAction.commandPlaceholder': '例如 "C:\\Program Files\\7-Zip\\7z.exe" x %f',
   'settings.about.title': '關於 AriaDM',
-  'settings.about.body':
-    '以 aria2 為下載引擎的桌面下載管理器。前端為 Electron + React，主程序負責監督 aria2 子程序、透過 JSON-RPC 控制下載，事件則走 WebSocket 通知搭配每秒一次的狀態輪詢。',
   'settings.about.engine': 'aria2 引擎',
   'settings.about.ytdlp': 'yt-dlp',
   'settings.about.platform': '平台',
   'settings.about.paths': '資料位置',
   'settings.about.limitations': '已知限制',
-  'settings.about.limit1': '安裝檔未經程式碼簽章，Windows SmartScreen 會顯示警告。',
+  'settings.about.limit1':
+    '安裝檔尚未簽章（或剛開始簽章），在使用者數量累積出信譽前，Windows SmartScreen 仍會顯示警告。',
   'settings.about.limit2': 'aria2 上游自 1.37.0（2023 年）後未再發布穩定版，本程式釘選該版本並驗證雜湊。',
   'settings.about.limit3': '安裝檔內建 aria2、yt-dlp 與 ffmpeg，因此體積較大；要更新這三個工具就得重新安裝新版。',
   'settings.about.limit4': 'yt-dlp 沒有暫停功能，暫停實際上是終止程序，繼續時由 .part 檔接續。',
@@ -572,6 +576,54 @@ export const zhTW = {
   'settings.update.downloaded': '下載完成，準備安裝',
   'settings.update.installFailed': '更新失敗：{error}',
   'settings.update.manualHint': '這個版本無法自動安裝，請下載後手動執行安裝檔。',
+
+  // -- about tab: header, components, install kind --------------------------
+  'settings.media.extensionCookies': '由擴充功能提供登入狀態',
+  'settings.media.extensionCookiesHint':
+    '在瀏覽器裡按一下 AriaDM 擴充功能，該頁面的 Cookie 就會交給 AriaDM。只保留在記憶體中、不會寫入紀錄，並在短時間內自動清除。Comet 等 yt-dlp 讀不到 Cookie 的瀏覽器只能靠這個方式。',
+  'settings.about.tagline': '以 aria2 為引擎的桌面下載管理器，內建 yt-dlp 與 ffmpeg。',
+  'settings.about.engineRunning': '引擎運作中',
+  'settings.about.engineStopped': '引擎已停止',
+  'settings.about.versions': '元件版本',
+  'settings.about.electron': 'Electron',
+  'settings.about.installKind': '安裝方式',
+  'settings.about.installKind.machine': '系統安裝（Program Files）',
+  'settings.about.installKind.user': '使用者安裝',
+  'settings.about.installKind.portable': '可攜版',
+  'settings.about.installKind.dev': '開發模式',
+  'settings.about.installKind.machineHint':
+    '更新時 Windows 會顯示 UAC 提示，請在該視窗選擇「是」，否則安裝程式會直接結束。',
+
+  // -- about tab: data locations -------------------------------------------
+  'settings.about.pathsHint': '點一下右側圖示可在檔案總管中開啟。',
+  'settings.about.pathsMore': '顯示其他位置',
+  'settings.about.pathsLess': '收起其他位置',
+  'settings.paths.downloads': '下載資料夾',
+  'settings.paths.userData': '應用程式資料',
+  'settings.paths.bin': '引擎與工具',
+  'settings.paths.logs': '記錄資料夾',
+  'settings.paths.settings': '設定檔',
+  'settings.paths.updateLog': '更新記錄',
+  'settings.paths.appLog': '應用程式記錄',
+  'settings.paths.history': '下載紀錄',
+  'settings.paths.session': '工作階段檔',
+  'settings.paths.aria2Log': 'aria2 記錄',
+  'settings.paths.extensions': '瀏覽器擴充功能',
+
+  // -- about tab: update card ---------------------------------------------
+  'settings.about.limitationsCount': '已知限制（{count}）',
+  'settings.update.installStarted': '安裝程式已啟動，AriaDM 即將關閉…',
+  'settings.update.waitingPermission': '等待 Windows 權限確認，請在提示視窗選擇「是」…',
+  'settings.update.permissionRequired':
+    '這次更新需要系統管理員權限，Windows 會顯示 UAC 提示，請選擇「是」。',
+  'settings.update.retryInstall': '重試安裝',
+  'settings.update.openInstaller': '開啟安裝程式',
+  'settings.update.openLog': '開啟更新記錄',
+  'settings.update.copyDiagnostics': '複製診斷資訊',
+  'settings.update.diagnosticsCopied': '診斷資訊已複製。',
+  'settings.update.pendingReady': '先前下載的更新檔還在，可以直接安裝，不必重新下載。',
+  'settings.update.installFailedHint':
+    'AriaDM 仍在執行。請按「開啟安裝程式」手動完成更新，或再試一次。',
 
   // -- weekdays (numeric day index 0 = Sunday) -----------------------------
   'weekday.sun': '日',

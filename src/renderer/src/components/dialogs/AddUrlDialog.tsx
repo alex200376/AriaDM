@@ -516,7 +516,11 @@ export function AddUrlDialog(): JSX.Element | null {
             {mediaError && !probing && (
               <div className="mt-2.5 flex flex-wrap items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2">
                 <span className="text-[11.5px] leading-relaxed text-danger">{mediaError.message}</span>
-                {(mediaError.kind === 'bot-check' || mediaError.kind === 'auth' || mediaError.kind === 'cookies-missing') && (
+                {(mediaError.kind === 'bot-check' ||
+                  mediaError.kind === 'auth' ||
+                  mediaError.kind === 'cookies-missing' ||
+                  mediaError.kind === 'cookies-locked' ||
+                  mediaError.kind === 'cookies-undecryptable') && (
                   <span className="text-[11px] leading-relaxed text-muted">
                     也可以在「設定 → 整合與工具 → 影音下載」指定要用哪個瀏覽器的 Cookie。
                   </span>

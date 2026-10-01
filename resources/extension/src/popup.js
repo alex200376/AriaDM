@@ -2,20 +2,23 @@
  * The toolbar popup.
  *
  * Deliberately has almost no configuration: the extension pairs itself
- * (pairing.js), so this is a status readout plus two manual actions. The port
- * and token fields only exist for the rare case where the discovery port is
- * taken by something else.
+ * (pairing.js), so this is a status readout, the two things the user came for
+ * ("download this video" and "hand over my login"), and a single settings switch.
+ * The port and token fields only exist for the rare case where the discovery
+ * port is taken by something else, and they hide behind a disclosure.
  */
 
 const dot = document.getElementById('dot')
 const status = document.getElementById('status')
 const currentUrl = document.getElementById('currentUrl')
+const pageState = document.getElementById('pageState')
 const portInput = document.getElementById('port')
 const tokenInput = document.getElementById('token')
 const autoIntercept = document.getElementById('autoIntercept')
 const result = document.getElementById('result')
 const sendVideoButton = document.getElementById('sendVideo')
 const sendLinksButton = document.getElementById('sendLinks')
+const sendCookiesButton = document.getElementById('sendCookies')
 
 let activeTab = null
 let busy = false
@@ -25,6 +28,29 @@ const send = (message) => chrome.runtime.sendMessage(message)
 function setStatus(state, text) {
   dot.className = `dot ${state}`
   status.textContent = text
+}
+
+function setBusy(next) {
+  busy = next
+  sendVideoButton.disabled = next || !downloadableTab()
+  sendLinksButton.disabled = next || !downloadableTab()
+  sendCookiesButton.disabled = next || !downloadableTab()
+}
+
+function downloadableTab() {
+  return Boolean(activeTab?.url) && /^https?:/i.test(activeTab.url ?? '')
+}
+
+/**
+ * How a failure reads in the result line.
+ *
+ * The extension's transport failures now arrive as whole sentences ("無法連線到
+ * AriaDM：…"), so they are shown as they are rather than behind a second label;
+ * a bare code or an identifier still gets one, so it is clear what the line is.
+ */
+function failureText(error) {
+  const message = error || '未知錯誤'
+  return /^[A-Za-z]/.test(message) ? `失敗：${message}` : message
 }
 
 /**
@@ -40,7 +66,6 @@ async function refreshStatus() {
   if (response?.ok) {
     const via = response.discoveryPort ? ` · 自動配對 :${response.discoveryPort}` : ''
     setStatus('ok', `已連線 · ${response.active ?? 0} 進行中${via}`)
-    if (!result.textContent) result.textContent = '已自動設定完成，不需要填寫任何連線資訊。'
     return response
   }
 
@@ -56,13 +81,39 @@ async function loadConfig() {
   return config
 }
 
+/**
+ * Show the current page and say what can be done with it.
+ *
+ * The state line exists because the two buttons look equally applicable on every
+ * page, and only one of them usually is.
+ */
 async function activeTabUrl() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   activeTab = tab ?? null
   currentUrl.textContent = tab?.url ?? '—'
-  const downloadable = Boolean(tab?.url) && /^https?:/i.test(tab.url)
-  sendVideoButton.disabled = !downloadable || busy
-  sendLinksButton.disabled = !downloadable || busy
+
+  if (!downloadableTab()) {
+    pageState.textContent = '這個頁面無法下載（僅支援 http/https）。'
+    pageState.className = 'page-state blocked'
+    setBusy(false)
+    return
+  }
+
+  const { sites } = (await send({ type: 'mediaSites' })) ?? {}
+  const host = (() => {
+    try {
+      return new URL(activeTab.url).hostname.toLowerCase()
+    } catch {
+      return ''
+    }
+  })()
+  const isMedia = (sites ?? []).some((site) => host === site || host.endsWith(`.${site}`))
+
+  pageState.textContent = isMedia
+    ? '偵測到影音網站，可直接下載這部影片。'
+    : '沒偵測到影音網站；仍可嘗試下載，或傳送頁面連結。'
+  pageState.className = `page-state ${isMedia ? 'ready' : ''}`
+  setBusy(false)
 }
 
 /**
@@ -76,23 +127,20 @@ async function activeTabUrl() {
  */
 sendVideoButton.addEventListener('click', async () => {
   if (!activeTab?.url) return
-  busy = true
-  await activeTabUrl()
+  setBusy(true)
   result.textContent = '正在取得影片…'
   const response = await send({
     type: 'handoff',
     payload: { urls: [activeTab.url], referer: activeTab.url, media: true }
   })
-  result.textContent = response?.ok ? '已加入影片下載' : `失敗：${response?.error ?? '未知錯誤'}`
-  busy = false
-  await activeTabUrl()
+  result.textContent = response?.ok ? '已加入影片下載' : failureText(response?.error)
+  setBusy(false)
   await refreshStatus()
 })
 
 sendLinksButton.addEventListener('click', async () => {
   if (!activeTab?.id) return
-  busy = true
-  await activeTabUrl()
+  setBusy(true)
   result.textContent = '收集連結中…'
 
   let urls = []
@@ -107,33 +155,49 @@ sendLinksButton.addEventListener('click', async () => {
     urls = [...new Set(injection?.result ?? [])]
   } catch (error) {
     result.textContent = `無法讀取頁面連結：${error.message}`
-    busy = false
-    await activeTabUrl()
+    setBusy(false)
     return
   }
 
   if (urls.length === 0) {
     result.textContent = '此頁面沒有可下載的連結'
-    busy = false
-    await activeTabUrl()
+    setBusy(false)
     return
   }
 
   const response = await send({ type: 'handoff', payload: { urls, referer: activeTab.url } })
-  result.textContent = response?.ok ? `已送出 ${response.gids?.length ?? 0} 個項目` : `失敗：${response?.error ?? '未知錯誤'}`
-  busy = false
-  await activeTabUrl()
+  result.textContent = response?.ok ? `已送出 ${response.gids?.length ?? 0} 個項目` : failureText(response?.error)
+  setBusy(false)
   await refreshStatus()
+})
+
+/**
+ * Hand this site's login to AriaDM by hand.
+ *
+ * Automatic where it can be (the background worker answers AriaDM's requests on
+ * its own), but a browser whose cookie store yt-dlp cannot read — Perplexity's
+ * Comet, for instance — needs this to be one click away from the page itself.
+ */
+sendCookiesButton.addEventListener('click', async () => {
+  if (!activeTab?.url) return
+  setBusy(true)
+  result.textContent = '正在傳送登入狀態…'
+  const response = await send({ type: 'offerCookies', url: activeTab.url })
+  result.textContent = response?.ok
+    ? response.accepted
+      ? '已把登入狀態傳給 AriaDM'
+      : 'AriaDM 目前不接受登入狀態（請在設定中開啟）'
+    : failureText(response?.error)
+  setBusy(false)
 })
 
 autoIntercept.addEventListener('change', async () => {
   await chrome.storage.local.set({ autoIntercept: autoIntercept.checked })
 })
 
-document.getElementById('pair').addEventListener('click', async () => {
+document.getElementById('reconnect').addEventListener('click', async () => {
   result.textContent = '正在尋找 AriaDM…'
-  const response = await send({ type: 'unpair' })
-  void response
+  await send({ type: 'unpair' })
   const paired = await send({ type: 'pair' })
   result.textContent = paired?.ok
     ? `已連線到連接埠 ${paired.port}（自動配對 :${paired.discoveryPort ?? '?'}）`
@@ -165,6 +229,16 @@ async function start() {
   await loadConfig()
   await activeTabUrl()
   const response = await refreshStatus()
+
+  // Opening the popup is also the fastest way to answer a download that is stuck
+  // waiting for a login, so ask and serve before the user has to.
+  if (response?.ok) {
+    const served = await send({ type: 'serveCookieRequest' })
+    if (served?.sent) {
+      result.textContent = `已把 ${served.url ? new URL(served.url).host : '這個網站'} 的登入狀態傳給 AriaDM。`
+    }
+  }
+
   if (response?.ok === false) {
     result.textContent = response.pairError
       ? `未連線：${response.pairError}`
