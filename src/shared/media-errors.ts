@@ -98,7 +98,8 @@ const RULES: Rule[] = [
   {
     kind: 'cookies-missing',
     patterns: [/could not find .*cookies/i, /cookies database/i, /failed to decrypt/i, /could not copy .*cookie/i],
-    message: '讀不到瀏覽器的 Cookie 資料庫。請確認該瀏覽器已安裝，並完全關閉後再試一次，或改用其他瀏覽器。',
+    message:
+      '讀不到瀏覽器的 Cookie 資料庫。請在「設定 → 整合與工具 → 影音下載」改用你平常登入這個網站的那個瀏覽器；Chromium 系（Chrome、Edge）必須完全關閉，Cookie 才讀得到。',
     action: 'enable-cookies',
     actionLabel: '更換瀏覽器'
   },

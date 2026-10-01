@@ -118,6 +118,8 @@ export interface CookieEnvironment {
   env: NodeJS.ProcessEnv
   /** Injected so detection is testable without touching the real disk. */
   exists?: (filePath: string) => boolean
+  /** Modification time of a candidate path, or null when it cannot be read. */
+  stat?: (filePath: string) => { mtimeMs: number } | null
 }
 
 function plausibleFiles(candidate: CookieCandidate, environment: CookieEnvironment): string[] {
@@ -125,13 +127,46 @@ function plausibleFiles(candidate: CookieCandidate, environment: CookieEnvironme
   return entries.map((entry) => expand(entry, environment.env)).filter(Boolean)
 }
 
-/** The first installed browser, in the order listed above. */
+/**
+ * The browser to read cookies from.
+ *
+ * "Installed" is not the same as "in use": a machine commonly has several
+ * Chromium browsers, and the one that merely has a cookie file on disk may hold
+ * a session from months ago. Picking the first match in a fixed list is how a
+ * stale Chrome profile got chosen over the Edge profile the user was actually
+ * signed in to, after which yt-dlp reported that it could not find usable
+ * cookies for a video the browser could play fine.
+ *
+ * So the newest cookie store wins, and the list order only breaks ties — which
+ * keeps the result stable when the timestamps cannot be read.
+ */
 export function detectCookieSource(environment: CookieEnvironment): CookieCandidate | null {
   const exists = environment.exists ?? ((value: string) => fs.existsSync(value))
+  const stat =
+    environment.stat ??
+    ((value: string): { mtimeMs: number } | null => {
+      try {
+        return { mtimeMs: fs.statSync(value).mtimeMs }
+      } catch {
+        return null
+      }
+    })
+
+  let best: CookieCandidate | null = null
+  let bestTime = -1
+
   for (const candidate of COOKIE_CANDIDATES) {
-    if (plausibleFiles(candidate, environment).some((file) => exists(file))) return candidate
+    const files = plausibleFiles(candidate, environment).filter((file) => exists(file))
+    if (files.length === 0) continue
+
+    const newest = files.reduce((time, file) => Math.max(time, stat(file)?.mtimeMs ?? -1), -1)
+    if (best === null || newest > bestTime) {
+      best = candidate
+      bestTime = newest
+    }
   }
-  return null
+
+  return best
 }
 
 export function cookieCandidateFor(
