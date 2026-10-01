@@ -11,6 +11,7 @@ import type {
   CategoryRule,
   SpeedProfile
 } from './settings'
+import type { Locale } from './i18n'
 import type {
   ClipboardDetected,
   DownloadFileEntry,
@@ -90,12 +91,16 @@ export const IPC = {
   appOpenExternal: 'app:openExternal',
   updateCheck: 'update:check',
 
+  catcherGet: 'catcher:get',
+  catcherResolve: 'catcher:resolve',
+
   // main -> renderer
   eventTick: 'event:tick',
   eventEngineStatus: 'event:engineStatus',
   eventClipboardDetected: 'event:clipboardDetected',
   eventToast: 'event:toast',
-  eventNavigate: 'event:navigate'
+  eventNavigate: 'event:navigate',
+  eventCatcher: 'event:catcherUpdate'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
@@ -122,6 +127,33 @@ export const HANDOFF_DISCOVERY_PORTS = [7070, 7071, 7072, 7073, 7074] as const
 export const HANDOFF_DISCOVERY_PORT = HANDOFF_DISCOVERY_PORTS[0]
 
 export type SystemPowerAction = 'shutdown' | 'sleep' | 'hibernate' | 'exit' | 'cancel'
+
+/**
+ * What the IDM-style catch popup can do with the downloads it is showing.
+ *
+ * `later` is also what closing the window means: the capture was already added
+ * paused, so the only way to lose it is to say so explicitly with `cancel`.
+ */
+export type CatcherAction = 'start' | 'later' | 'cancel'
+
+/** Everything the catch popup window needs to render itself. */
+export interface CatcherInfo {
+  /** Downloads this capture produced. All of them are resolved together. */
+  gids: string[]
+  /** Best available name: the extension's filename, else the URL's last segment. */
+  title: string
+  /** Host of the first URL, or empty when it cannot be derived. */
+  host: string
+  /** How many downloads the capture will create. */
+  count: number
+  /**
+   * Resolved language and appearance, so the popup matches the main window
+   * instead of falling back to this module's defaults.
+   */
+  locale: Locale
+  theme: 'dark' | 'light' | 'system'
+  accent: string
+}
 
 /**
  * The repository the in-app updater asks for new releases.
@@ -263,12 +295,21 @@ export interface AriaDmApi {
     check(): Promise<UpdateInfo>
   }
 
+  /** Only meaningful inside the catch popup window. */
+  catcher: {
+    /** The capture this window was opened for, or null once it is resolved. */
+    get(): Promise<CatcherInfo | null>
+    resolve(action: CatcherAction): Promise<void>
+  }
+
   on: {
     tick(handler: (payload: TickPayload) => void): () => void
     engineStatus(handler: (status: EngineStatus) => void): () => void
     clipboardDetected(handler: (payload: ClipboardDetected) => void): () => void
     toast(handler: (payload: ToastPayload) => void): () => void
     navigate(handler: (payload: NavigationPayload) => void): () => void
+    /** Fired when a second capture arrives while the popup is already open. */
+    catcherUpdate(handler: (info: CatcherInfo) => void): () => void
   }
 }
 

@@ -18,8 +18,10 @@ import type { DownloadItem, ToastPayload } from '@shared/download'
 import { HANDOFF_DISCOVERY_PORTS, IPC, type NavigationPayload, type SystemPowerAction } from '@shared/ipc'
 import type { DeepPartial, Settings } from '@shared/settings'
 import { formatSpeed } from '@shared/format'
+import { localeFromSetting } from '@shared/i18n'
 
 import { locateAria2 } from './aria2/locate'
+import { DownloadCatcher } from './catcher'
 import { Aria2Supervisor } from './aria2/supervisor'
 import { findCategory } from './downloads/categorizer'
 import { EngineRouter } from './downloads/engine-router'
@@ -35,7 +37,7 @@ import { defaultDownloadDir, resolvePaths } from './paths'
 import { SettingsStore } from './settings/store'
 import { ToolkitManager } from './toolkit'
 import { resolveCookieArgs } from './media/browser-cookies'
-import { createMainWindow } from './window'
+import { BACKGROUND, createMainWindow, resolvePreloadPath, resolveRendererPage } from './window'
 
 const PROTOCOL = 'ariadm'
 
@@ -55,6 +57,7 @@ let history: HistoryStore
 let toolkit: ToolkitManager
 let mediaJobs: MediaJobs
 let engineRouter: EngineRouter
+let catcher: DownloadCatcher | null = null
 let clipboardWatcher: ClipboardWatcher | null = null
 let handoff: HandoffServer | null = null
 /** Fixed-port listener whose only job is to answer extension pairing. */
@@ -395,6 +398,29 @@ function ensureClipboardWatcher(): ClipboardWatcher {
   return clipboardWatcher
 }
 
+/** Best-effort display name for the catch popup: the extension's filename first. */
+function catcherTitle(payload: { filename?: string; urls?: string[] }): string {
+  if (payload.filename) return payload.filename
+  const first = payload.urls?.[0]
+  if (!first) return ''
+  try {
+    const parsed = new URL(first)
+    const last = parsed.pathname.split('/').filter(Boolean).pop()
+    return last ? decodeURIComponent(last) : parsed.host
+  } catch {
+    // A magnet link has no parseable path, so the raw URI is the honest answer.
+    return first
+  }
+}
+
+function catcherHost(urls: string[]): string {
+  try {
+    return new URL(urls[0] ?? '').host
+  } catch {
+    return ''
+  }
+}
+
 async function restartHandoff(): Promise<void> {
   const settings = settingsStore.get()
   if (rendezvousRetry) {
@@ -421,6 +447,12 @@ async function restartHandoff(): Promise<void> {
       return { version: app.getVersion(), active: global.numActive, waiting: global.numWaiting }
     },
     onAdd: async (payload) => {
+      const settings = settingsStore.get()
+      // Hold the capture for confirmation when the popup is on. It goes in
+      // paused, so the extension still gets its HTTP response immediately and the
+      // popup can wait for the user for as long as it takes.
+      const hold = settings.handoffEnabled && settings.showCatchPopup
+
       const input = {
         ...baseInput(payload.urls ?? [], 'browser'),
         out: payload.filename ?? '',
@@ -430,13 +462,31 @@ async function restartHandoff(): Promise<void> {
         userAgent: payload.userAgent ?? '',
         cookieHeader: payload.cookies ?? '',
         headers: payload.headers ?? [],
-        paused: payload.paused ?? false,
+        paused: hold || (payload.paused ?? false),
         torrentBase64: payload.torrentBase64 ?? null,
         // The extension's button is an explicit "this is a video" signal, which
         // is stronger evidence than our own host list.
         engine: payload.engine ?? (payload.media ? 'ytdlp' : 'auto')
       }
       const result = await engineRouter.add(input)
+
+      // Only an *intercepted* file download is worth asking about. A yt-dlp
+      // capture came from the user clicking the extension's download button on a
+      // video, which is already a deliberate act — and the media engine has no
+      // way to queue without starting, so it would be asked about too late.
+      const routedToMedia = result.gids.some((gid) => isMediaGid(gid))
+      if (hold && !routedToMedia && result.gids.length > 0) {
+        catcher?.show({
+          gids: result.gids,
+          title: catcherTitle(payload),
+          host: catcherHost(payload.urls ?? []),
+          count: result.gids.length,
+          locale: localeFromSetting(settings.language, app.getLocale()),
+          theme: settings.theme,
+          accent: settings.accent
+        })
+      }
+
       return { gids: result.gids, duplicates: result.duplicates, warnings: result.warnings }
     }
   })
@@ -654,6 +704,10 @@ async function shutdownAndQuit(): Promise<void> {
   quitting = true
   manager.stop()
   scheduler.stop()
+  // Anything the popup was holding stays paused, which is exactly what leaving
+  // it unanswered means. `destroy` instead of a plain close so the window's own
+  // close handler does not race this.
+  catcher?.destroy()
   clipboardWatcher?.stop()
   mediaJobs.killAll()
   if (rendezvousRetry) {
@@ -767,6 +821,32 @@ async function bootstrap(): Promise<void> {
     log
   })
 
+  // The IDM-style catch popup. Built here rather than at launch because acting on
+  // a capture needs both engines: what the extension intercepted may have gone
+  // to aria2 or to yt-dlp.
+  catcher = new DownloadCatcher({
+    page: () => resolveRendererPage('catcher'),
+    preloadPath: resolvePreloadPath(),
+    iconPath: path.join(resourcesRoot, 'icons', 'app.png'),
+    backgroundColor: BACKGROUND,
+    log,
+    onResolve: (info, action) => {
+      // The capture was added paused, so "later" is already done.
+      if (action === 'later') return
+
+      const media = info.gids.filter((gid) => isMediaGid(gid))
+      const aria2 = info.gids.filter((gid) => !isMediaGid(gid))
+
+      if (action === 'start') {
+        if (aria2.length > 0) void manager.resume(aria2)
+        for (const gid of media) void mediaJobs.resume(gid)
+      } else {
+        if (aria2.length > 0) void manager.remove(aria2, false)
+        for (const gid of media) void mediaJobs.remove(gid, false)
+      }
+    }
+  })
+
   mediaJobs.on('completed', (item: DownloadItem) => void handleCompleted(item))
   mediaJobs.on('failed', (item: DownloadItem) => handleFailed(item))
   mediaJobs.on('change', () => void manager.tick())
@@ -819,6 +899,10 @@ async function bootstrap(): Promise<void> {
     getHandoff: () => handoff,
     getRendezvous: () => rendezvous,
     getClipboard: () => clipboardWatcher,
+    get catcher(): DownloadCatcher {
+      if (!catcher) throw new Error('catch popup is not available yet')
+      return catcher
+    },
     paths,
     extensionDir: path.join(resourcesRoot, 'extension'),
     applyProfile,

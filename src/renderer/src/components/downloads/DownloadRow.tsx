@@ -188,8 +188,10 @@ function DownloadRowImpl({ item, selected, onSelect, onOpenDetail, onAction }: D
         {item.connections > 0 ? item.connections : '—'}
       </div>
 
-      {/* Status */}
-      <div className="flex justify-start">
+      {/* Status. `overflow-hidden` is a backstop: the column is sized for the
+          longest label, and if a translation ever outgrows it the badge clips
+          instead of painting over the action buttons beside it. */}
+      <div className="flex min-w-0 justify-start overflow-hidden">
         <StatusBadge item={item} />
       </div>
 
@@ -214,12 +216,16 @@ function DownloadRowImpl({ item, selected, onSelect, onOpenDetail, onAction }: D
         )}
         {canOpen && (
           <>
-            <IconButton
-              label={t('table.openFile')}
-              icon={<ExternalLink size={14} />}
-              disabled={!isComplete}
-              onClick={() => onAction('open', item.gid)}
-            />
+            {/* Only once there is a file to open. Rendering this disabled for an
+                unfinished download added a fifth button to an errored row, which
+                is what used to overflow the column. */}
+            {isComplete && (
+              <IconButton
+                label={t('table.openFile')}
+                icon={<ExternalLink size={14} />}
+                onClick={() => onAction('open', item.gid)}
+              />
+            )}
             <IconButton
               label={t('table.openFolder')}
               icon={<FolderOpen size={14} />}

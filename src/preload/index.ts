@@ -103,12 +103,18 @@ const api: AriaDmApi = {
     check: () => invoke(IPC.updateCheck)
   },
 
+  catcher: {
+    get: () => invoke(IPC.catcherGet),
+    resolve: (action) => invoke(IPC.catcherResolve, action)
+  },
+
   on: {
     tick: (handler) => subscribe(IPC.eventTick, handler),
     engineStatus: (handler) => subscribe(IPC.eventEngineStatus, handler),
     clipboardDetected: (handler) => subscribe(IPC.eventClipboardDetected, handler),
     toast: (handler) => subscribe(IPC.eventToast, handler),
-    navigate: (handler) => subscribe(IPC.eventNavigate, handler)
+    navigate: (handler) => subscribe(IPC.eventNavigate, handler),
+    catcherUpdate: (handler) => subscribe(IPC.eventCatcher, handler)
   }
 }
 

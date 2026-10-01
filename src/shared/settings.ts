@@ -89,6 +89,16 @@ export interface WindowBounds {
   maximised: boolean
 }
 
+/**
+ * What to do about IPv6 when talking to aria2.
+ *
+ * `auto` disables IPv6 only when the machine has no globally routable address,
+ * which is the case that produces a bare "unreachable network" failure on hosts
+ * that publish AAAA records. `on` forces the flag for a machine whose IPv6 looks
+ * routable but does not work; `off` never sets it.
+ */
+export type Ipv6Mode = 'auto' | 'on' | 'off'
+
 export interface Settings {
   downloadDir: string
   connectionsPreset: ConnectionsPreset
@@ -118,6 +128,8 @@ export interface Settings {
   handoffEnabled: boolean
   handoffPort: number
   handoffToken: string
+  /** Show the IDM-style confirmation window when the extension catches a download. */
+  showCatchPopup: boolean
 
   ytdlpEnabled: boolean
   ytdlpDetectSites: boolean
@@ -126,6 +138,7 @@ export interface Settings {
 
   aria2Path: string
   aria2RpcPort: number
+  disableIpv6: Ipv6Mode
   autoSaveInterval: number
   maxTries: number
   retryWait: number

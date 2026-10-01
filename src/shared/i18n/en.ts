@@ -418,6 +418,12 @@ export const en = {
   'settings.proxy': 'Proxy',
   'settings.proxyHint': 'For example http://127.0.0.1:8080; leave empty for none',
   'settings.userAgent': 'User-Agent',
+  'settings.ipv6Mode': 'IPv6',
+  'settings.ipv6ModeHint':
+    'Some networks have no working IPv6 route, but sites still publish IPv6 addresses, so aria2 tries IPv6 first and fails outright (it reports an unreachable network). Automatic disables it only when this computer has no routable IPv6 address.',
+  'settings.ipv6Mode.auto': 'Detect automatically (recommended)',
+  'settings.ipv6Mode.on': 'Always disable IPv6',
+  'settings.ipv6Mode.off': 'Never apply this',
   'settings.bittorrent': 'BitTorrent seeding',
   'settings.seedRatio': 'Share ratio',
   'settings.seedRatioHint': '0 together with a time of 0 means do not seed at all',
@@ -477,6 +483,9 @@ export const en = {
   'settings.browser': 'Browser integration',
   'settings.browser.enable': 'Enable browser integration',
   'settings.browser.enableHint': 'Lets the extension take over browser downloads and adds the button on media sites',
+  'settings.browser.catchPopup': 'Show a confirmation window when a download is caught',
+  'settings.browser.catchPopupHint':
+    'Asks before starting what the extension caught, in an IDM-style window. Closing it keeps the download for later.',
   'settings.browser.running': 'Running :{port}',
   'settings.browser.stopped': 'Not running',
   'settings.browser.discovery': 'Auto-pairing :{port}',
@@ -573,6 +582,14 @@ export const en = {
   'weekday.thu': 'Th',
   'weekday.fri': 'Fr',
   'weekday.sat': 'Sa',
+
+  // -- catch popup ---------------------------------------------------------
+  'catcher.title': 'Download caught',
+  'catcher.start': 'Start download',
+  'catcher.later': 'Download later',
+  'catcher.hint': 'Nothing starts until you choose Start download; closing this window keeps it for later.',
+  'catcher.count': '{count} items',
+  'catcher.unknownHost': 'Unknown source',
 
   // -- main process --------------------------------------------------------
   'main.notify.completeTitle': 'Download finished',

@@ -14,7 +14,7 @@ export interface CreateWindowOptions {
 }
 
 /** Matches the renderer's dark background so launch does not flash white. */
-const BACKGROUND = '#0b0d12'
+export const BACKGROUND = '#0b0d12'
 
 export function resolvePreloadPath(): string {
   // electron-vite emits the preload as CommonJS (.cjs) so it stays loadable under
@@ -22,11 +22,25 @@ export function resolvePreloadPath(): string {
   return path.join(__dirname, '../preload/index.cjs')
 }
 
-export function resolveRendererEntry(): { url: string | null; file: string | null } {
+/**
+ * Locate one of the renderer's HTML entries.
+ *
+ * The renderer is a multi-page build: `index.html` is the main window and
+ * `catcher.html` is the small catch popup, which has to be a separate document
+ * because it runs in its own BrowserWindow.
+ */
+export function resolveRendererPage(page: 'index' | 'catcher' = 'index'): { url: string | null; file: string | null } {
   // electron-vite injects ELECTRON_RENDERER_URL while running the dev server.
   const devUrl = process.env.ELECTRON_RENDERER_URL
-  if (devUrl) return { url: devUrl, file: null }
-  return { url: null, file: path.join(__dirname, '../renderer/index.html') }
+  // The dev server serves index.html at its root, so only the extra pages get a
+  // filename appended. Keeping the main entry byte-identical to before also
+  // keeps the `will-navigate` allow-list below matching.
+  if (devUrl) return { url: page === 'index' ? devUrl : `${devUrl}/${page}.html`, file: null }
+  return { url: null, file: path.join(__dirname, `../renderer/${page}.html`) }
+}
+
+export function resolveRendererEntry(): { url: string | null; file: string | null } {
+  return resolveRendererPage('index')
 }
 
 export function createMainWindow(options: CreateWindowOptions): BrowserWindow {

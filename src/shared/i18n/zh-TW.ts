@@ -412,6 +412,12 @@ export const zhTW = {
   'settings.proxy': '代理伺服器',
   'settings.proxyHint': '例如 http://127.0.0.1:8080，留空不使用',
   'settings.userAgent': 'User-Agent',
+  'settings.ipv6Mode': 'IPv6 連線',
+  'settings.ipv6ModeHint':
+    '有些網路沒有可用的 IPv6 路由，但網站同時提供 IPv6 位址，aria2 會先試 IPv6 而直接失敗（顯示「網路無法連線」）。自動偵測只有在這台電腦沒有可路由的 IPv6 位址時才停用。',
+  'settings.ipv6Mode.auto': '自動偵測（建議）',
+  'settings.ipv6Mode.on': '強制停用 IPv6',
+  'settings.ipv6Mode.off': '永不使用此選項',
   'settings.bittorrent': 'BitTorrent 做種',
   'settings.seedRatio': '分享率 (seed ratio)',
   'settings.seedRatioHint': '0 搭配時間 0 代表完全不做種',
@@ -471,6 +477,9 @@ export const zhTW = {
   'settings.browser': '瀏覽器整合',
   'settings.browser.enable': '啟用瀏覽器整合',
   'settings.browser.enableHint': '讓擴充套件接管瀏覽器下載，並在影音網站顯示下載鈕',
+  'settings.browser.catchPopup': '顯示下載確認視窗',
+  'settings.browser.catchPopupHint':
+    '擴充套件抓到連結時，用像 IDM 的小視窗詢問是否開始下載；關閉時仍會保留為稍後下載。',
   'settings.browser.running': '運作中 :{port}',
   'settings.browser.stopped': '未運作',
   'settings.browser.discovery': '自動配對 :{port}',
@@ -566,6 +575,14 @@ export const zhTW = {
   'weekday.thu': '四',
   'weekday.fri': '五',
   'weekday.sat': '六',
+
+  // -- catch popup ---------------------------------------------------------
+  'catcher.title': '找到下載項目',
+  'catcher.start': '開始下載',
+  'catcher.later': '稍後下載',
+  'catcher.hint': '要按下「開始下載」才會開始；直接關閉視窗等同「稍後下載」。',
+  'catcher.count': '{count} 個項目',
+  'catcher.unknownHost': '未知來源',
 
   // -- main process --------------------------------------------------------
   'main.notify.completeTitle': '下載完成',

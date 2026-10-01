@@ -3,11 +3,13 @@ import { randomBytes } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import fsp from 'node:fs/promises'
 import { createServer } from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 
 import type { EngineState, EngineStatus } from '@shared/download'
 import type { Settings } from '@shared/settings'
 
+import { resolveDisableIpv6 } from './ipv6'
 import { buildDaemonArgs, globalLimitOptions, type DaemonPaths } from './options'
 import { Aria2RpcClient } from './rpc-client'
 import { SessionFile } from './session'
@@ -190,7 +192,10 @@ export class Aria2Supervisor extends EventEmitter {
       settings: this.settings,
       paths: this.paths,
       port: this.port,
-      secret: this.secret
+      secret: this.secret,
+      // Re-read per launch: interfaces change when a VPN or cable is plugged in,
+      // and a restart is exactly when the answer is worth recomputing.
+      disableIpv6: resolveDisableIpv6(this.settings.disableIpv6, os.networkInterfaces())
     })
 
     this.pushLog(`spawning ${this.binaryPath}`)

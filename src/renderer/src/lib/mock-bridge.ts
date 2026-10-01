@@ -151,12 +151,14 @@ let settings: Settings = {
   handoffEnabled: true,
   handoffPort: 7069,
   handoffToken: 'demo-token-4f2a91c7',
+  showCatchPopup: true,
   ytdlpEnabled: true,
   mediaCookiesFromBrowser: 'auto',
   ytdlpDetectSites: true,
   ffmpegPath: '',
   aria2Path: "C:\\AriaDM\\resources\\bin\\aria2c.exe",
   aria2RpcPort: 6800,
+  disableIpv6: 'auto',
   autoSaveInterval: 30,
   maxTries: 5,
   retryWait: 5,
@@ -482,6 +484,22 @@ export function createMockApi(): AriaDmApi {
       })
     },
 
+    catcher: {
+      // In the browser-only dev server there is no popup window and no capture
+      // behind it. Returning a preview capture lets the popup's own document be
+      // reviewed by opening /catcher.html directly.
+      get: async () => ({
+        gids: ['mock-capture'],
+        title: 'ubuntu-24.04.1-desktop-amd64.iso',
+        host: 'mirror.example.net',
+        count: 1,
+        locale: 'zh-TW' as const,
+        theme: 'dark' as const,
+        accent: 'violet'
+      }),
+      resolve: async () => {}
+    },
+
     on: {
       tick: (handler) => {
         listeners.add(handler)
@@ -490,7 +508,8 @@ export function createMockApi(): AriaDmApi {
       engineStatus: () => () => {},
       clipboardDetected: () => () => {},
       toast: () => () => {},
-      navigate: () => () => {}
+      navigate: () => () => {},
+      catcherUpdate: () => () => {}
     }
   }
 }

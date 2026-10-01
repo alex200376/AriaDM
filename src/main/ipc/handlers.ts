@@ -5,6 +5,7 @@ import type { DownloadItem, GlobalStat } from '@shared/download'
 import {
   HANDOFF_DISCOVERY_PORTS,
   IPC,
+  type CatcherAction,
   type HandoffInfo,
   type SystemPowerAction,
   type UriListClassification
@@ -12,6 +13,7 @@ import {
 import { classifyUriList, isSupportedUri } from '@shared/uri'
 
 import type { Aria2Supervisor } from '../aria2/supervisor'
+import type { DownloadCatcher } from '../catcher'
 import type { EngineRouter } from '../downloads/engine-router'
 import type { DownloadManager } from '../downloads/manager'
 import type { HistoryStore } from '../downloads/history-store'
@@ -35,6 +37,8 @@ export interface HandlerContext {
   /** The auto-pairing listener an extension discovers AriaDM through. */
   getRendezvous(): HandoffServer | null
   getClipboard(): ClipboardWatcher | null
+  /** The IDM-style popup an intercepted browser download lands in. */
+  catcher: DownloadCatcher
   paths: AppPaths
   extensionDir: string
   applyProfile(id: string): Promise<Settings>
@@ -361,4 +365,16 @@ export function registerIpcHandlers(context: HandlerContext): void {
   // ---- updates ---------------------------------------------------------------
 
   ipcMain.handle(IPC.updateCheck, () => checkForUpdate(app.getVersion()))
+
+  // ---- catch popup -----------------------------------------------------------
+
+  // Reading is harmless: a caller with no popup open simply gets null.
+  ipcMain.handle(IPC.catcherGet, () => context.catcher.pending)
+
+  ipcMain.handle(IPC.catcherResolve, (_event, action: CatcherAction) => {
+    if (action !== 'start' && action !== 'later' && action !== 'cancel') {
+      throw new Error('invalid catcher action')
+    }
+    context.catcher.resolve(action)
+  })
 }

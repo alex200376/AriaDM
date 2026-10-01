@@ -198,14 +198,29 @@
    *
    * Columns are dropped by position, which is safe because the header and every
    * row render the same list in the same order.
+   *
+   * Two rules keep the row from lying about itself, and both were bugs before:
+   *  - every track has to be at least as wide as the widest thing that goes in
+   *    it. The actions column holds up to four 28px buttons (about 118px), and it
+   *    used to be 96px, so an errored row's icons painted straight over the status
+   *    badge next to them.
+   *  - the number of tracks has to equal the number of children left visible.
+   *    Dropping a column with `display: none` does not drop its track, so a
+   *    template that shrinks by one while two more children are hidden pushes the
+   *    last children onto an implicit row that overlaps the first.
+   *
+   * Column order, used by the positional rules below:
+   *   1 select · 2 name · 3 size · 4 progress · 5 speed · 6 eta · 7 connections
+   *   8 status · 9 actions
    */
   .queue-grid {
-    grid-template-columns: 34px minmax(180px, 1fr) 92px 180px 96px 78px 58px 108px 96px;
+    grid-template-columns: 34px minmax(170px, 1fr) 88px 170px 92px 72px 54px 128px 120px;
   }
 
-  @media (max-width: 1200px) {
+  /* eta and connections go first; both are single-transfer details. 7 visible. */
+  @media (max-width: 1280px) {
     .queue-grid {
-      grid-template-columns: 30px minmax(150px, 1fr) 86px 120px 88px 104px 88px;
+      grid-template-columns: 32px minmax(140px, 1fr) 84px 150px 88px 124px 120px;
     }
 
     .queue-grid > :nth-child(6),
@@ -214,11 +229,12 @@
     }
   }
 
-  /* Tuned so a window at the app's 720px minimum still fits without clipping;
-     the name column gets the rest and truncates with its tooltip intact. */
-  @media (max-width: 920px) {
+  /* Then size, leaving select, name, progress, speed, status and actions. Tuned
+     so a window at the app's 720px minimum still fits without clipping; the name
+     column gets the rest and truncates with its tooltip intact. */
+  @media (max-width: 1000px) {
     .queue-grid {
-      grid-template-columns: 28px minmax(88px, 1fr) 88px 68px 80px 88px;
+      grid-template-columns: 30px minmax(110px, 1fr) 130px 84px 120px 120px;
     }
 
     .queue-grid > :nth-child(3) {
@@ -235,7 +251,7 @@
    */
   @media (min-width: 1360px) and (max-width: 1600px) {
     [data-detail='open'] .queue-grid {
-      grid-template-columns: 30px minmax(120px, 1fr) 86px 112px 88px 100px 88px;
+      grid-template-columns: 30px minmax(130px, 1fr) 84px 112px 88px 124px 120px;
     }
 
     [data-detail='open'] .queue-grid > :nth-child(6),
@@ -248,6 +264,19 @@
 @layer utilities {
   .text-tabular {
     font-variant-numeric: tabular-nums;
+  }
+
+  /**
+   * The catch popup is frameless, so its whole card is the drag handle — except
+   * the controls, which would otherwise move the window instead of activating.
+   */
+  .catcher-shell {
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+
+  .catcher-shell button {
+    -webkit-app-region: no-drag;
   }
 
   .scrollbar-none::-webkit-scrollbar {

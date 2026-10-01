@@ -25,7 +25,7 @@ function fixture(): { settings: ReturnType<typeof createDefaultSettings>; paths:
 describe('buildDaemonArgs', () => {
   it('keeps the RPC control plane private to loopback and secret-protected', () => {
     const { settings, paths } = fixture()
-    const args = buildDaemonArgs({ settings, paths, port: 6800, secret: 's3cret' })
+    const args = buildDaemonArgs({ settings, paths, port: 6800, secret: 's3cret', disableIpv6: false })
 
     expect(args).toContain('--rpc-listen-all=false')
     expect(args).toContain('--rpc-allow-origin-all=false')
@@ -36,13 +36,13 @@ describe('buildDaemonArgs', () => {
 
   it('ignores any aria2.conf the machine happens to have', () => {
     const { settings, paths } = fixture()
-    const args = buildDaemonArgs({ settings, paths, port: 1, secret: 'x' })
+    const args = buildDaemonArgs({ settings, paths, port: 1, secret: 'x', disableIpv6: false })
     expect(args).toContain('--no-conf=true')
   })
 
   it('always points at the configured log file and download folder', () => {
     const { settings, paths } = fixture()
-    const args = buildDaemonArgs({ settings, paths, port: 1, secret: 'x' })
+    const args = buildDaemonArgs({ settings, paths, port: 1, secret: 'x', disableIpv6: false })
     expect(args).toContain(`--log=${paths.logFile}`)
     expect(args).toContain(`--dir=${paths.downloadDir}`)
     expect(args).toContain('--continue=true')
@@ -50,7 +50,7 @@ describe('buildDaemonArgs', () => {
 
   it('never persists or replays a session, so the queue starts empty every launch', () => {
     const { settings, paths } = fixture()
-    const args = buildDaemonArgs({ settings, paths, port: 1, secret: 'x' })
+    const args = buildDaemonArgs({ settings, paths, port: 1, secret: 'x', disableIpv6: false })
 
     expect(args.some((arg) => arg.startsWith('--input-file='))).toBe(false)
     expect(args.some((arg) => arg.startsWith('--save-session'))).toBe(false)
@@ -63,7 +63,8 @@ describe('buildDaemonArgs', () => {
       settings,
       paths: base.paths,
       port: 1,
-      secret: 'x'
+      secret: 'x',
+      disableIpv6: false
     })
 
     expect(args).toContain('--max-overall-download-limit=1048576')
@@ -77,7 +78,8 @@ describe('buildDaemonArgs', () => {
       settings: { ...base.settings, seedRatio: 0, seedTime: 0 },
       paths: base.paths,
       port: 1,
-      secret: 'x'
+      secret: 'x',
+      disableIpv6: false
     })
     expect(none).toContain('--seed-time=0')
     expect(none.some((arg) => arg.startsWith('--seed-ratio='))).toBe(false)
@@ -86,7 +88,8 @@ describe('buildDaemonArgs', () => {
       settings: { ...base.settings, seedRatio: 2, seedTime: 0 },
       paths: base.paths,
       port: 1,
-      secret: 'x'
+      secret: 'x',
+      disableIpv6: false
     })
     expect(seeded).toContain('--seed-ratio=2')
     expect(seeded).not.toContain('--seed-time=0')
@@ -98,7 +101,8 @@ describe('buildDaemonArgs', () => {
       settings: base.settings,
       paths: base.paths,
       port: 1,
-      secret: 'x'
+      secret: 'x',
+      disableIpv6: false
     })
     expect(plain.some((arg) => arg.startsWith('--all-proxy='))).toBe(false)
 
@@ -106,7 +110,8 @@ describe('buildDaemonArgs', () => {
       settings: { ...base.settings, proxy: 'http://127.0.0.1:8080' },
       paths: base.paths,
       port: 1,
-      secret: 'x'
+      secret: 'x',
+      disableIpv6: false
     })
     expect(proxied).toContain('--all-proxy=http://127.0.0.1:8080')
   })

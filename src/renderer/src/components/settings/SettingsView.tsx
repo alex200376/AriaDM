@@ -153,6 +153,12 @@ const SCHEDULE_ACTION_OPTIONS: LocalisableOption[] = [
   { value: 'pauseAll', labelKey: 'settings.schedules.action.pauseAll' }
 ]
 
+const IPV6_MODE_OPTIONS: LocalisableOption[] = [
+  { value: 'auto', labelKey: 'settings.ipv6Mode.auto' },
+  { value: 'on', labelKey: 'settings.ipv6Mode.on' },
+  { value: 'off', labelKey: 'settings.ipv6Mode.off' }
+]
+
 function GeneralTab(): JSX.Element {
   const settings = useApp((state) => state.settings)
   const patch = useApp((state) => state.patchSettings)
@@ -382,6 +388,17 @@ function NetworkTab(): JSX.Element {
             <Input value={settings.userAgent} onChange={(event) => void patch({ userAgent: event.target.value })} />
           </Field>
         </div>
+
+        {/* Not a checkbox: "auto" is the right answer for almost everyone, and
+            the two forced values exist for the cases detection cannot see. */}
+        <SelectField
+          className="mt-3"
+          label={t('settings.ipv6Mode')}
+          hint={t('settings.ipv6ModeHint')}
+          value={settings.disableIpv6}
+          options={localiseOptions(IPV6_MODE_OPTIONS)}
+          onValueChange={(value) => void patch({ disableIpv6: value as never })}
+        />
       </section>
 
       <section>
@@ -874,6 +891,14 @@ function IntegrationsTab(): JSX.Element {
               checked={settings.handoffEnabled}
               onChange={(v) => void patch({ handoffEnabled: v })}
               label={t('settings.browser.enable')}
+            />
+          </Row>
+          <Row label={t('settings.browser.catchPopup')} hint={t('settings.browser.catchPopupHint')}>
+            <Toggle
+              checked={settings.showCatchPopup}
+              onChange={(v) => void patch({ showCatchPopup: v })}
+              label={t('settings.browser.catchPopup')}
+              disabled={!settings.handoffEnabled}
             />
           </Row>
         </div>

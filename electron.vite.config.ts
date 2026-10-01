@@ -49,7 +49,15 @@ export default defineConfig({
     plugins: [react()],
     css: { postcss },
     build: {
-      rollupOptions: { input: { index: resolve(projectRoot, 'src/renderer/index.html') } }
+      rollupOptions: {
+        // Multi-page: `index.html` is the main window and `catcher.html` is the
+        // catch popup, which runs in its own BrowserWindow and so needs its own
+        // document rather than a route.
+        input: {
+          index: resolve(projectRoot, 'src/renderer/index.html'),
+          catcher: resolve(projectRoot, 'src/renderer/catcher.html')
+        }
+      }
     }
   }
 })

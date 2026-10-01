@@ -11,6 +11,11 @@ export interface DaemonArgOptions {
   paths: DaemonPaths
   port: number
   secret: string
+  /**
+   * Tell aria2 to ignore IPv6 entirely. Resolved by the caller from the machine's
+   * interfaces plus the user's setting; see `aria2/ipv6.ts`.
+   */
+  disableIpv6: boolean
 }
 
 function limit(value: number): string {
@@ -65,7 +70,7 @@ export function clampMaxConcurrentDownloads(value: number): number {
  *  - `--summary-interval=0` silences the console readout, which nobody sees.
  */
 export function buildDaemonArgs(options: DaemonArgOptions): string[] {
-  const { settings, paths, port, secret } = options
+  const { settings, paths, port, secret, disableIpv6 } = options
 
   const args: string[] = [
     // Isolation and RPC control plane.
@@ -138,6 +143,15 @@ export function buildDaemonArgs(options: DaemonArgOptions): string[] {
   } else if (settings.seedTime <= 0) {
     args.push('--seed-time=0')
   }
+
+  // Only ever emitted when true: aria2's own default is false, and passing
+  // `--disable-ipv6=false` explicitly would fight a user's aria2.conf... except
+  // we pass `--no-conf=true`, so this is simply the smaller argument list.
+  //
+  // Without this, aria2 picks an AAAA record on a machine with no IPv6 route and
+  // fails with "a socket operation was attempted to an unreachable network" even
+  // though the same host downloads fine over IPv4.
+  if (disableIpv6) args.push('--disable-ipv6=true')
 
   if (settings.proxy) args.push(`--all-proxy=${settings.proxy}`)
 

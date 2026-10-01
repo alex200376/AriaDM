@@ -43,6 +43,9 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     handoffEnabled: true,
     handoffPort: 7069,
     handoffToken: randomBytes(16).toString('hex'),
+    // On by default: it is the whole point of the browser integration, and it is
+    // silent when the extension is not installed.
+    showCatchPopup: true,
 
     ytdlpEnabled: true,
     ytdlpDetectSites: true,
@@ -53,6 +56,9 @@ export function createDefaultSettings(paths: AppPaths): Settings {
 
     aria2Path: '',
     aria2RpcPort: 6800,
+    // Most home networks have no usable IPv6 route while the sites people
+    // download from do publish AAAA records, so this fixes more than it breaks.
+    disableIpv6: 'auto',
     autoSaveInterval: 30,
     maxTries: 5,
     retryWait: 5,
