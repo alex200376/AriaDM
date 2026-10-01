@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * Fetch the optional ffmpeg media pack into resources/bin/.
+ * Fetch the ffmpeg media pack into resources/bin/.
  *
- * ffmpeg is NOT bundled by default: the static Windows build adds roughly 80MB
- * compressed to the installer, and it is only needed when yt-dlp has to merge
- * separate video and audio streams. AriaDM offers it as an on-demand download.
+ * Since 0.1.2 this is part of the normal build: electron-builder packages
+ * resources/bin into the installer, so running this script is what makes
+ * `npm run dist` produce a self-contained installer. Expect roughly 336MB of
+ * binaries here (ffmpeg.exe + ffprobe.exe, BtbN's static GPL build), which is
+ * why the installer is large.
  *
  * Usage:
  *   node scripts/fetch-ffmpeg.mjs [--force]

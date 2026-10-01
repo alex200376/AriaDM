@@ -268,8 +268,11 @@ export class ToolkitManager {
   }
 
   /**
-   * ffmpeg is roughly an 80MB download and is only needed to mux separate video
-   * and audio streams, so it is fetched on demand rather than bundled.
+   * ffmpeg ships inside the installer (a static Windows build, roughly 336MB
+   * across ffmpeg.exe and ffprobe.exe). This path exists for the "download
+   * again" action and for platforms where the bundle is not present, and it
+   * installs into the user's data directory, which takes precedence over the
+   * bundled copy.
    */
   private async fetchFfmpeg(): Promise<void> {
     if (process.platform !== 'win32') {

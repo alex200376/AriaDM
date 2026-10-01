@@ -20,18 +20,18 @@
     }
   },
   "ytdlp": {
-    "version": "latest",
+    "version": "2026.08.19",
     "binary": "yt-dlp.exe",
-    "url": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
-    "sumsUrl": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
-    "sha256": null,
-    "note": "yt-dlp publishes SHA2-256SUMS; the fetcher prefers that and falls back to pinning locally."
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+    "sumsUrl": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/SHA2-256SUMS",
+    "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+    "note": "Pinned to an explicit release, not `latest`: this build ships inside the installer, so its digest has to stay meaningful. yt-dlp publishes SHA2-256SUMS; the fetcher prefers that and falls back to pinning locally."
   },
   "ffmpeg": {
     "version": "latest",
     "binary": "ffmpeg.exe",
     "url": "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
-    "sha256": null,
-    "note": "Optional media pack. Large (about 80MB compressed), downloaded on demand only."
+    "sha256": "c0d7aae4c127e1662fcd5b802e66ac599bf629cf317035c5f440dfe4c14c0769",
+    "note": "Shipped inside the installer since 0.1.2 (ffmpeg.exe + ffprobe.exe, about 336MB uncompressed). The URL is only used by the optional \"download again\" action and by npm run fetch:media."
   }
 }

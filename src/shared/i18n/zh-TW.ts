@@ -543,7 +543,7 @@ export const zhTW = {
   'settings.about.limitations': '已知限制',
   'settings.about.limit1': '安裝檔未經程式碼簽章，Windows SmartScreen 會顯示警告。',
   'settings.about.limit2': 'aria2 上游自 1.37.0（2023 年）後未再發布穩定版，本程式釘選該版本並驗證雜湊。',
-  'settings.about.limit3': 'ffmpeg 未內建，需合併影音時會另外下載（約 80 MB）。',
+  'settings.about.limit3': '安裝檔內建 aria2、yt-dlp 與 ffmpeg，因此體積較大；要更新這三個工具就得重新安裝新版。',
   'settings.about.limit4': 'yt-dlp 沒有暫停功能，暫停實際上是終止程序，繼續時由 .part 檔接續。',
   'settings.about.limit5': '伺服器若不支援分段下載（Accept-Ranges），aria2 會退回單一連線。',
 

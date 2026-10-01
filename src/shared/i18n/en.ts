@@ -550,7 +550,7 @@ export const en = {
   'settings.about.limitations': 'Known limitations',
   'settings.about.limit1': 'The installer is not code signed, so Windows SmartScreen warns about it.',
   'settings.about.limit2': 'aria2 upstream has had no stable release since 1.37.0 (2023); this app pins that build and verifies its hash.',
-  'settings.about.limit3': 'ffmpeg is not bundled; muxing downloads it separately (about 80 MB).',
+  'settings.about.limit3': 'The installer bundles aria2, yt-dlp and ffmpeg, so it is large; updating those tools means reinstalling.',
   'settings.about.limit4': 'yt-dlp cannot pause — pausing ends the process, and resuming continues from the .part file.',
   'settings.about.limit5': 'When a server does not support ranges (Accept-Ranges), aria2 falls back to a single connection.',
 

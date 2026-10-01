@@ -92,7 +92,7 @@ aria2 的 `onDownload*` 通知只走 WebSocket，HTTP JSON-RPC 完全沒有通�
 
 - **瀏覽器擴充功能**（Chrome／Edge／Firefox）：右鍵下載、接管瀏覽器下載、
   一次送出整頁連結，並附上 cookie／referer／user-agent
-- **影音下載**：內建 yt-dlp，可選格式（需要合併音軌時按需下載 ffmpeg）
+- **影音下載**：內建 yt-dlp 與 ffmpeg，可選格式並自動合併音軌
 - **剪貼簿監看**：複製到連結就提示加入
 - **排程**：依星期與時段套用不同的速度設定檔
 - **完成後動作**：開檔、開資料夾、通知、自訂指令（`%f` `%d` `%n`，以 execFile 傳參數執行）
@@ -106,8 +106,13 @@ aria2 的 `onDownload*` 通知只走 WebSocket，HTTP JSON-RPC 完全沒有通�
 | 工具 | 取得方式 | 備註 |
 | --- | --- | --- |
 | `aria2c` | 首次啟動或 `npm run fetch:aria2` | **版本釘選並驗證 SHA-256** |
-| `yt-dlp` | 設定 → 工具與引擎 → 下載 | 驗證上游 `SHA2-256SUMS` |
-| `ffmpeg` | 同上（約 80 MB，按需） | 只在需要合併影音時才用 |
+| `yt-dlp` | 內建於安裝檔 | 版本釘選，驗證上游 `SHA2-256SUMS` |
+| `ffmpeg` | 內建於安裝檔（`ffmpeg.exe` + `ffprobe.exe`） | 用於合併影音 |
+
+三個工具都內建在安裝檔裡，所以裝好即可用，不必先下載任何東西。
+建置時由 `npm run fetch:aria2`、`fetch:ytdlp`、`fetch:media` 放進 `resources/bin/`，
+electron-builder 再把它們打包進去；這也正是安裝檔偏大的原因（ffmpeg 的靜態建置就占了約 336 MB）。
+「設定 → 工具與引擎」的重新下載只用於換成較新的版本，會安裝到使用者資料夾並覆蓋內建版本。
 
 aria2 的雜湊必須由我們自己釘選：GitHub release API 對這個資產回報 `digest: null`，
 上游沒有公布可驗證的值。第一次抓取時算出並寫進 `scripts/aria2-manifest.json`，
@@ -166,11 +171,14 @@ UI 可以在瀏覽器裡獨立跑，不需要引擎：`npm run dev:ui` 會啟動
 - **aria2 版本固定在 1.37.0**：升級需要手動更新 manifest 中的版本與雜湊。
 - **擴充功能未上架**：目前以「載入未封裝項目」方式安裝，見
   [resources/extension/README.md](resources/extension/README.md)。
-- **ffmpeg 未內建**：安裝檔因此少了約 80 MB，代價是首次合併影音要多一次下載。
+- **安裝檔偏大**：aria2、yt-dlp、ffmpeg 都內建，其中 ffmpeg 的靜態建置就約 336 MB。
+  要更新這三個工具只能重新安裝新版。
 - **Playwright E2E 尚未撰寫**：`test:e2e` 已接好，測試案例待補。
 
 ---
 
 ## 授權
 
-MIT。aria2、yt-dlp、ffmpeg 各自為獨立專案，版權與授權見其原始碼庫。
+MIT。aria2、yt-dlp、ffmpeg 各自為獨立專案，版權與授權見其原始碼庫；
+AriaDM 隨附的是它們的官方發行檔，因此安裝檔同時散布這些第三方二進位檔，
+個別授權與版本詳見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
