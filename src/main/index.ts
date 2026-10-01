@@ -33,6 +33,7 @@ import { DownloadManager } from './downloads/manager'
 import { registerIpcHandlers } from './ipc/handlers'
 import { ClipboardWatcher, looksLikeDirectFile } from './integrations/clipboard-watch'
 import { HandoffServer } from './integrations/handoff-api'
+import { formatChoices, defaultFormatId } from '@shared/media-formats'
 import { resolveHandoffEngine } from '@shared/media-sites'
 import { runPostAction, type PostActionDeps } from './integrations/post-actions'
 import { Scheduler } from './integrations/scheduler'
@@ -558,6 +559,18 @@ async function restartHandoff(): Promise<void> {
       return { accepted }
     },
     cookieRequest: () => cookieVault.nextNeed(),
+    onProbe: async ({ url, cookies }) => {
+      const settings = settingsStore.get()
+      if (!settings.ytdlpEnabled) throw new Error('影音下載功能已停用。')
+      // The session the browser is looking at the page with, so the qualities
+      // offered are the ones this visitor can actually get.
+      const probe = await mediaJobs.probe(url, { cookieHeader: cookies ?? '' })
+      return {
+        title: probe.title,
+        defaultFormatId: defaultFormatId(probe.formats, mediaJobs.hasFfmpeg),
+        formats: formatChoices(probe.formats, { hasFfmpeg: mediaJobs.hasFfmpeg })
+      }
+    },
     onAdd: async (payload) => {
       const settings = settingsStore.get()
       // Hold the capture for confirmation when the popup is on. It goes in
@@ -573,6 +586,8 @@ async function restartHandoff(): Promise<void> {
         referer: payload.referer ?? '',
         userAgent: payload.userAgent ?? '',
         cookieHeader: payload.cookies ?? '',
+        // Absent unless the user picked a quality from the extension's menu.
+        mediaFormatId: payload.formatId ?? '',
         headers: payload.headers ?? [],
         paused: hold || (payload.paused ?? false),
         torrentBase64: payload.torrentBase64 ?? null,

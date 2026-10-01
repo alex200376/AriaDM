@@ -23,6 +23,7 @@ const SHARED_FILES = [
   'pairing.js',
   'request.js',
   'urls.js',
+  'formats.js',
   'popup.html',
   'popup.js',
   'content.js',
@@ -55,7 +56,8 @@ function buildManifests() {
        * not widen what the extension is allowed to access.
        */
       matches: ['<all_urls>'],
-      js: ['content.js'],
+      // formats.js first: the panel builds its menu rows with it.
+      js: ['formats.js', 'content.js'],
       css: ['content.css'],
       run_at: 'document_idle',
       // Each frame looks for its own player.

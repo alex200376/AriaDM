@@ -34,6 +34,8 @@ export type MediaErrorKind =
    */
   | 'session'
   | 'extractor'
+  /** The file could not be written: a read-only folder, or a full disk. */
+  | 'fs'
   | 'format'
   | 'unsupported'
   | 'network'
@@ -165,6 +167,29 @@ const RULES: Rule[] = [
       '網站不接受目前的登入狀態，回傳了無法播放的頁面（YouTube 對已登入的 Cookie 常見此狀況）。已改用未登入身分重試仍失敗，請更新 yt-dlp 或在設定中改用其他瀏覽器的 Cookie。',
     action: 'update-ytdlp',
     actionLabel: '更新 yt-dlp'
+  },
+  {
+    /**
+     * The download could not be written. Listed after the cookie rules on
+     * purpose: yt-dlp reports an unreadable Chrome cookie database as a
+     * PermissionError too, and that one has its own better answer.
+     *
+     * This is what a handoff used to produce — an installed AriaDM has no output
+     * directory to fall back on, so yt-dlp wrote beside its own executable, in
+     * Program Files, and reported it as `[Errno 13] Permission denied` on a
+     * `.part` file with no explanation.
+     */
+    kind: 'fs',
+    patterns: [
+      /unable to open for writing/i,
+      /\[errno 13\] permission denied/i,
+      /\[errno 28\]/i,
+      /no space left on device/i,
+      /is not writable/i,
+      /access is denied/i
+    ],
+    message:
+      '無法寫入儲存資料夾（權限不足或磁碟已滿）。請在設定中更換儲存位置，或確認該資料夾可以寫入。'
   },
   {
     kind: 'auth',

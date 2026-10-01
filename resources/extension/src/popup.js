@@ -16,6 +16,8 @@ const portInput = document.getElementById('port')
 const tokenInput = document.getElementById('token')
 const autoIntercept = document.getElementById('autoIntercept')
 const result = document.getElementById('result')
+const formats = document.getElementById('formats')
+const formatsTitle = document.getElementById('formatsTitle')
 const sendVideoButton = document.getElementById('sendVideo')
 const sendLinksButton = document.getElementById('sendLinks')
 const sendCookiesButton = document.getElementById('sendCookies')
@@ -35,6 +37,7 @@ function setBusy(next) {
   sendVideoButton.disabled = next || !downloadableTab()
   sendLinksButton.disabled = next || !downloadableTab()
   sendCookiesButton.disabled = next || !downloadableTab()
+  if (next) hideFormats()
 }
 
 function downloadableTab() {
@@ -119,27 +122,80 @@ async function activeTabUrl() {
   setBusy(false)
 }
 
+function hideFormats() {
+  formats.hidden = true
+  formats.textContent = ''
+  formats.appendChild(formatsTitle)
+}
+
 /**
- * Hand the current page to the media engine.
+ * Offer the qualities the app says this page has.
  *
- * `media: true` is the whole point: without it the app treats the URL as an
- * ordinary file and downloads the page itself, which is why "grab this video"
- * kept saving an HTML file. The flag means "resolve this as a video with
- * yt-dlp", and it works on any site yt-dlp supports, not just the ones the
- * on-page panel recognises.
+ * The list is the app's, not ours: only it knows whether ffmpeg is installed and
+ * what this session can fetch, and only it can spend a yt-dlp run working it out.
  */
-sendVideoButton.addEventListener('click', async () => {
+function renderFormats(response) {
+  formats.textContent = ''
+  formatsTitle.textContent = response.title || '選擇畫質'
+  formats.appendChild(formatsTitle)
+
+  for (const option of self.AriaDmFormats.menuFor(response)) {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'format'
+
+    const name = document.createElement('span')
+    name.className = 'format-name'
+    name.textContent = option.label
+    item.appendChild(name)
+
+    if (option.note) {
+      const note = document.createElement('span')
+      note.className = 'format-note'
+      note.textContent = option.note
+      item.appendChild(note)
+    }
+
+    item.addEventListener('click', () => void downloadVideo(option.formatId))
+    formats.appendChild(item)
+  }
+
+  formats.hidden = false
+}
+
+/**
+ * Hand the current page to the media engine, at a chosen quality.
+ *
+ * With no `formatId` the background worker asks the app what the page offers and
+ * answers either "sent" or with a menu — "media: true" on the payload is what
+ * tells the app to resolve the URL as a video rather than download the page
+ * itself, which is why "grab this video" used to save an HTML file.
+ */
+async function downloadVideo(formatId = '') {
   if (!activeTab?.url) return
   setBusy(true)
-  result.textContent = '正在取得影片…'
+  result.textContent = formatId ? '正在加入下載…' : '正在取得影片…'
+
   const response = await send({
-    type: 'handoff',
-    payload: { urls: [activeTab.url], referer: activeTab.url, media: true }
+    type: 'downloadVideo',
+    url: activeTab.url,
+    referer: activeTab.url,
+    formatId
   })
+
+  if (response?.ok && response.mode === 'choose') {
+    result.textContent = '選擇要下載的畫質：'
+    setBusy(false)
+    renderFormats(response)
+    return
+  }
+
   result.textContent = response?.ok ? '已加入影片下載' : failureText(response?.error)
   setBusy(false)
   await refreshStatus()
-})
+}
+
+sendVideoButton.addEventListener('click', () => void downloadVideo())
 
 sendLinksButton.addEventListener('click', async () => {
   if (!activeTab?.id) return
@@ -229,6 +285,7 @@ document.getElementById('save').addEventListener('click', async () => {
 })
 
 async function start() {
+  hideFormats()
   await loadConfig()
   await activeTabUrl()
   const response = await refreshStatus()

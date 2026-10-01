@@ -12,6 +12,8 @@
  * Behaviour that matters:
  *  - it is *hover* driven, so it is out of the way until the pointer is over the
  *    player, and it stays put while the pointer is on the panel itself;
+ *  - clicking it asks the app what the page offers and opens a quality menu when
+ *    there is a choice to make, rather than always taking the app's default;
  *  - it survives single-page navigation, where the player element is replaced;
  *  - it runs in every frame, because a great many sites embed their player in
  *    an iframe.
@@ -38,14 +40,17 @@
 
   const TEXT = {
     idle: LABEL,
-    busy: '正在交給 AriaDM…',
+    busy: '正在取得畫質…',
     done: '已加入 AriaDM',
-    error: '無法加入，請見通知'
+    error: '無法加入，請見通知',
+    choose: '選擇畫質'
   }
 
   let panel = null
+  let mainButton = null
   let label = null
   let glyph = null
+  let menu = null
   let state = 'idle'
   let resetTimer = 0
   let hideTimer = 0
@@ -90,12 +95,15 @@
   function ensurePanel() {
     if (panel && panel.isConnected) return panel
 
-    panel = document.createElement('button')
+    panel = document.createElement('div')
     panel.id = PANEL_ID
-    panel.type = 'button'
     panel.dataset.state = 'idle'
     panel.dataset.visible = 'false'
-    panel.setAttribute('aria-label', `${LABEL} — 送到 AriaDM`)
+
+    mainButton = document.createElement('button')
+    mainButton.type = 'button'
+    mainButton.className = 'ariadm-main'
+    mainButton.setAttribute('aria-label', `${LABEL} — 送到 AriaDM`)
 
     glyph = document.createElement('span')
     glyph.className = 'ariadm-glyph'
@@ -105,8 +113,14 @@
     label.className = 'ariadm-label'
     label.textContent = LABEL
 
-    panel.append(glyph, label)
-    panel.addEventListener('click', onClick, true)
+    mainButton.append(glyph, label)
+
+    menu = document.createElement('div')
+    menu.className = 'ariadm-menu'
+    menu.hidden = true
+
+    panel.append(mainButton, menu)
+    mainButton.addEventListener('click', onMainClick, true)
     document.documentElement.appendChild(panel)
     return panel
   }
@@ -115,12 +129,129 @@
     state = next
     if (!panel) return
     panel.dataset.state = next
-    glyph.innerHTML = next === 'idle' ? ICONS.download : ICONS[next]
+    glyph.innerHTML = next === 'idle' || next === 'choose' ? ICONS.download : ICONS[next]
     label.textContent = TEXT[next] ?? LABEL
+    if (next !== 'choose') closeMenu()
     window.clearTimeout(resetTimer)
     if (next === 'done' || next === 'error') {
       resetTimer = window.setTimeout(() => setState('idle'), 2600)
     }
+  }
+
+  function closeMenu() {
+    if (menu) menu.hidden = true
+    window.clearTimeout(resetTimer)
+  }
+
+  /**
+   * Build the quality menu from the app's answer.
+   *
+   * The first entry is the download the button would have made on its own, so
+   * opening the menu never costs the user the one-click path they had before.
+   */
+  function openMenu(result) {
+    const element = ensurePanel()
+    menu.textContent = ''
+
+    const caption = document.createElement('div')
+    caption.className = 'ariadm-menu-title'
+    caption.textContent = result.title || '選擇畫質'
+    menu.appendChild(caption)
+
+    for (const option of self.AriaDmFormats.menuFor(result)) {
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.className = 'ariadm-option'
+      item.dataset.formatId = option.formatId
+
+      const name = document.createElement('span')
+      name.className = 'ariadm-option-label'
+      name.textContent = option.label
+      item.appendChild(name)
+
+      if (option.note) {
+        const note = document.createElement('span')
+        note.className = 'ariadm-option-note'
+        note.textContent = option.note
+        item.appendChild(note)
+      }
+
+      item.addEventListener('click', onOptionClick, true)
+      menu.appendChild(item)
+    }
+
+    menu.hidden = false
+    setState('choose')
+    show(true)
+    element.dataset.open = 'true'
+  }
+
+  /** Sends the handoff for one chosen quality (or for the app's default). */
+  async function send(formatId) {
+    setState('busy')
+    show(true)
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'downloadVideo',
+        url: location.href,
+        referer: location.href,
+        formatId: formatId || ''
+      })
+      setState(response && response.ok ? 'done' : 'error')
+      panel.title = response && !response.ok && response.error ? `AriaDM：${response.error}` : ''
+    } catch {
+      setState('error')
+    }
+  }
+
+  async function onMainClick(event) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (state === 'busy') return
+    if (state === 'choose') {
+      // Second click on the pill closes the menu again.
+      closeMenu()
+      setState('idle')
+      return
+    }
+
+    setState('busy')
+    show(true)
+    panel.title = ''
+
+    let response = null
+    try {
+      response = await chrome.runtime.sendMessage({
+        type: 'downloadVideo',
+        url: location.href,
+        referer: location.href
+      })
+    } catch {
+      response = null
+    }
+
+    if (response?.ok && response.mode === 'choose') {
+      openMenu(response)
+      return
+    }
+    setState(response && response.ok ? 'done' : 'error')
+    if (response && !response.ok && response.error) panel.title = `AriaDM：${response.error}`
+  }
+
+  function onOptionClick(event) {
+    event.preventDefault()
+    event.stopPropagation()
+    const formatId = event.currentTarget?.dataset?.formatId ?? ''
+    closeMenu()
+    void send(formatId)
+  }
+
+  /** A click anywhere else puts the menu away, like any other menu. */
+  function onDocumentPointerDown(event) {
+    if (!menu || menu.hidden) return
+    if (inside(panel, event)) return
+    closeMenu()
+    setState('idle')
   }
 
   function show(force) {
@@ -133,7 +264,7 @@
   }
 
   function hideSoon() {
-    // A finished handoff keeps its message on screen; hide after the reset timer.
+    // A finished handoff or an open menu keeps its message on screen.
     if (state !== 'idle') return
     window.clearTimeout(hideTimer)
     hideTimer = window.setTimeout(() => {
@@ -204,34 +335,6 @@
     else hideSoon()
   }
 
-  async function onClick(event) {
-    event.preventDefault()
-    event.stopPropagation()
-    if (state === 'busy') return
-
-    setState('busy')
-    show(true)
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'handoff',
-        payload: {
-          // The page, not the stream: see the note at the top of this file.
-          urls: [location.href],
-          referer: location.href,
-          media: true
-        }
-      })
-      setState(response && response.ok ? 'done' : 'error')
-      if (response && !response.ok && response.error) {
-        panel.title = `AriaDM：${response.error}`
-      } else {
-        panel.title = ''
-      }
-    } catch {
-      setState('error')
-    }
-  }
-
   /**
    * Watch for the player being replaced.
    *
@@ -256,6 +359,7 @@
     place()
     observe()
     document.addEventListener('pointermove', onPointerMove, { passive: true, capture: true })
+    document.addEventListener('pointerdown', onDocumentPointerDown, { passive: true, capture: true })
     window.addEventListener('scroll', schedule, { passive: true, capture: true })
     window.addEventListener('resize', schedule, { passive: true })
     // Sites that resize the player without touching the DOM (theatre mode,

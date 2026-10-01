@@ -4,6 +4,7 @@ import type { MediaFormatInfo } from '../../src/shared/settings'
 import { cleanIpcError, classifyMediaError } from '../../src/shared/media-errors'
 import { defaultFormatId } from '../../src/shared/media-formats'
 import { resolveCookieArgs } from '../../src/main/media/browser-cookies'
+import { buildDownloadArgs } from '../../src/main/media/ytdlp'
 
 /**
  * These cover the three things that made "download this video" fail on a machine
@@ -118,6 +119,30 @@ describe('media error reporting', () => {
       'session'
     )
   })
+
+  it('says which folder is at fault instead of repeating a Python errno', () => {
+    // A browser handoff used to reach yt-dlp with no output directory, so it
+    // wrote beside its own executable — inside Program Files — and the whole
+    // explanation the user got was "[Errno 13] Permission denied".
+    const info = classifyMediaError(
+      "ERROR: unable to open for writing: [Errno 13] Permission denied: " +
+        "'Defqwop - Heart Afire (ft. Strix) [hsXeFqj5p7Q].f399-sr.mp4.part'"
+    )
+
+    expect(info.kind).toBe('fs')
+    expect(info.message).toContain('儲存')
+    expect(info.message).not.toContain('Errno')
+  })
+
+  it('still reads an unreadable cookie store as the browser holding it open', () => {
+    // yt-dlp reports that one as a PermissionError too. Telling the user their
+    // disk is full would send them looking in the wrong place entirely.
+    const info = classifyMediaError(
+      'ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info'
+    )
+
+    expect(info.kind).toBe('cookies-locked')
+  })
 })
 
 describe('browser cookie resolution', () => {
@@ -219,5 +244,32 @@ describe('default format choice', () => {
   it('still returns something usable for an empty or muxed-only list', () => {
     expect(defaultFormatId([], false)).toBe('bestvideo+bestaudio/best')
     expect(defaultFormatId([audio], false)).toBe(audio.formatId)
+  })
+})
+
+describe('yt-dlp command line', () => {
+  const run = {
+    binaryPath: 'yt-dlp.exe',
+    url: 'https://www.youtube.com/watch?v=abc',
+    formatId: '137',
+    dir: 'C:/Users/me/Downloads/AriaDM',
+    ffmpegDir: '',
+    audioOnly: false,
+    playlist: false,
+    overwrite: false
+  }
+
+  it('names the output file\u2019s directory', () => {
+    const args = buildDownloadArgs(run)
+
+    expect(args[args.indexOf('--paths') + 1]).toBe('C:/Users/me/Downloads/AriaDM')
+  })
+
+  it('never passes an empty --paths', () => {
+    // An empty value is not "the default": yt-dlp resolves it against the
+    // process's working directory, which for an installed app is Program Files.
+    const args = buildDownloadArgs({ ...run, dir: '' })
+
+    expect(args).not.toContain('--paths')
   })
 })

@@ -351,7 +351,10 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
   }
 
   args.push('-o', '%(title).150B [%(id)s].%(ext)s')
-  args.push('--paths', options.dir)
+  // Only when there is one. An empty value is not "the default": yt-dlp would
+  // resolve it against the process's working directory, which for a packaged app
+  // is its own installation folder.
+  if (options.dir) args.push('--paths', options.dir)
 
   if (options.ffmpegDir) args.push('--ffmpeg-location', options.ffmpegDir)
 

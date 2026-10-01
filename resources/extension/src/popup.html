@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <title>AriaDM</title>
     <style>
+      /*
+       * The popup is a status line, one page, and two buttons.
+       *
+       * It used to be five stacked boxes of near-equal weight — a login card, a
+       * capture card, a discovery card — which made a two-button tool look like a
+       * settings page. Anything that is not part of the common path now sits in
+       * the footer or behind the disclosure.
+       */
       :root {
         color-scheme: dark;
         --bg: #14161c;
@@ -32,8 +40,6 @@
       .dot.bad { background: var(--danger); }
       .status { margin-left: auto; font-size: 11px; color: var(--muted); }
 
-      /* One card style for every block: the popup used to be five differently
-         shaped boxes, which read as five unrelated things to configure. */
       .card {
         background: var(--surface);
         border: 1px solid var(--line);
@@ -55,7 +61,7 @@
       }
       .page-state { margin-top: 5px; font-size: 11px; color: var(--faint); }
       .page-state.ready { color: var(--ok); }
-      .page-state.blocked { color: var(--warn, #e0b34f); }
+      .page-state.blocked { color: #e0b34f; }
 
       .actions { display: flex; gap: 8px; margin-bottom: 8px; }
       button {
@@ -65,13 +71,52 @@
         font-weight: 600;
         cursor: pointer;
         padding: 0 10px;
-        height: 30px;
+        height: 32px;
       }
       button:disabled { opacity: 0.4; cursor: default; }
       .primary { background: var(--brand); color: #fff; flex: 2; }
       .secondary { background: var(--line); color: var(--fg); flex: 1; }
-      .ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); height: 26px; font-weight: 500; }
+      .ghost {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        height: 28px;
+        font-weight: 500;
+        flex: 1;
+      }
       .ghost:hover { color: var(--fg); }
+
+      /* The quality menu, only shown when the page offers more than one. */
+      /* Capped so a long list cannot push the buttons off the popup. */
+      .formats {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 5px;
+        margin-bottom: 8px;
+        max-height: 236px;
+        overflow-y: auto;
+      }
+      .formats[hidden] { display: none; }
+      .formats-title {
+        font-size: 10.5px;
+        color: var(--faint);
+        padding: 3px 6px 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .format {
+        display: block;
+        width: 100%;
+        height: auto;
+        padding: 5px 6px;
+        text-align: left;
+        background: transparent;
+        border-radius: 7px;
+      }
+      .format:hover { background: rgba(124, 108, 245, 0.22); }
+      .format-name { display: block; font-size: 12px; font-weight: 600; }
+      .format-note { display: block; font-size: 10.5px; font-weight: 400; color: var(--faint); }
 
       .switch { position: relative; width: 34px; height: 19px; flex: none; }
       .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
@@ -97,8 +142,7 @@
       .switch input:checked + span { background: var(--brand); }
       .switch input:checked + span::after { transform: translateX(15px); }
 
-      .footer { display: flex; gap: 8px; }
-      .footer button { flex: 1; }
+      .footer { display: flex; gap: 6px; }
       .result { min-height: 15px; margin-top: 8px; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
 
       .advanced { margin-top: 8px; }
@@ -135,14 +179,8 @@
       <button id="sendLinks" class="secondary">傳送所有連結</button>
     </div>
 
-    <div class="card">
-      <div class="card-row">
-        <div>
-          <div class="card-title">登入狀態</div>
-          <div class="hint">把這個網站的 Cookie 交給 AriaDM，需要登入的影片才下載得動。只存在記憶體中，不會寫入紀錄。</div>
-        </div>
-        <button id="sendCookies" class="ghost">傳送</button>
-      </div>
+    <div class="formats" id="formats" hidden>
+      <div class="formats-title" id="formatsTitle">選擇畫質</div>
     </div>
 
     <div class="card">
@@ -159,6 +197,7 @@
     </div>
 
     <div class="footer">
+      <button id="sendCookies" class="ghost" title="把這個網站的 Cookie 交給 AriaDM，需要登入的影片才下載得動">傳送登入狀態</button>
       <button id="reconnect" class="ghost">重新連線</button>
       <button id="openApp" class="ghost">開啟設定</button>
     </div>
@@ -177,6 +216,7 @@
 
     <script src="pairing.js"></script>
     <script src="urls.js"></script>
+    <script src="formats.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

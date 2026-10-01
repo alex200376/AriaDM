@@ -226,6 +226,14 @@ export interface AddDownloadInput {
   metalinkBase64: string | null
   /** Skip the "already in the list" check. */
   allowDuplicate: boolean
+  /**
+   * The yt-dlp format a media download should use.
+   *
+   * Set when the user picked one — from the download dialog, or from the browser
+   * extension's quality menu (see the handoff `/probe` route). Left unset, the
+   * engine chooses, which is the common case.
+   */
+  mediaFormatId?: string
   /** Force this item through a specific engine. */
   engine: 'auto' | 'aria2' | 'ytdlp'
 }

@@ -30,3 +30,55 @@ export function defaultFormatId(formats: MediaFormatInfo[], hasFfmpeg: boolean):
 export function needsFfmpegForAnything(formats: MediaFormatInfo[]): boolean {
   return formats.length > 0 && formats.every((format) => format.needsFfmpeg)
 }
+
+/** Pixel height from a resolution string: `1080p`, `1920x1080`, `278x480`. */
+function heightOf(resolution: string): number {
+  const tall = /(\d{2,4})p$/i.exec(resolution)
+  if (tall) return Number(tall[1])
+  const box = /^(\d{2,5})x(\d{2,5})$/i.exec(resolution)
+  if (box) return Math.min(Number(box[1]), Number(box[2]))
+  return 0
+}
+
+/**
+ * The formats worth putting in a menu.
+ *
+ * The download dialog shows the extractor's own list, which on YouTube is dozens
+ * of entries — the same picture again in another codec, container or HDR flavour.
+ * That is fine when every line has room to explain itself and wrong for a picker
+ * next to a video, so this keeps one entry per resolution (highest first,
+ * preferring the one that needs no merging) plus a single audio-only option, and
+ * leaves "just pick something good" to `defaultFormatId`.
+ */
+export function formatChoices(
+  formats: MediaFormatInfo[],
+  options: { hasFfmpeg: boolean; limit?: number }
+): MediaFormatInfo[] {
+  const limit = Math.max(1, options.limit ?? 5)
+
+  const best = new Map<number, MediaFormatInfo>()
+  for (const format of formats) {
+    if (format.resolution === 'audio') continue
+    // The synthetic "best" entry is a request, not a stream: it is what the
+    // caller gets when it names no format at all, so it does not belong in a
+    // list of things to choose between.
+    if (format.formatId === 'bestvideo+bestaudio/best') continue
+    // Without ffmpeg a video-only stream cannot be made into a file at all.
+    if (format.needsFfmpeg && !options.hasFfmpeg) continue
+
+    const height = heightOf(format.resolution)
+    const existing = best.get(height)
+    // Same picture, different codec: the single-file stream is the more useful
+    // of the two, because it plays without anything installed.
+    if (!existing || (existing.needsFfmpeg && !format.needsFfmpeg)) best.set(height, format)
+  }
+
+  const tiers = [...best.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .slice(0, limit)
+    .map(([, format]) => format)
+
+  if (tiers.length >= limit) return tiers
+  const audio = formats.find((format) => format.formatId === 'bestaudio/best')
+  return audio ? [...tiers, audio] : tiers
+}

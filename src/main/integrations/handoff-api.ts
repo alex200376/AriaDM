@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes } from 'node:crypto'
 import type { Socket } from 'node:net'
 
+import type { MediaFormatInfo } from '@shared/settings'
+
 import { hostOf } from '../media/cookie-vault'
 
 /**
@@ -34,6 +36,22 @@ export interface  HandoffPayload {
    */
   engine?: 'auto' | 'aria2' | 'ytdlp'
   media?: boolean
+  /** A quality the user chose from the extension's menu. See `onProbe`. */
+  formatId?: string
+}
+
+/**
+ * What the extension needs to offer a quality menu.
+ *
+ * A short list on purpose: the browser has a panel the size of a video corner to
+ * render it in, so it gets one entry per resolution rather than the extractor's
+ * full catalogue (see `formatChoices`). `defaultFormatId` is what a click with no
+ * choice makes, and the menu labels it as such.
+ */
+export interface HandoffProbeResult {
+  title: string
+  defaultFormatId: string
+  formats: MediaFormatInfo[]
 }
 
 export interface DiscoverResponse {
@@ -72,6 +90,14 @@ export interface HandoffServerOptions {
    * service worker suspension would silently drop.
    */
   cookieRequest?(): string
+  /**
+   * Resolve a page a browser is looking at, so the user can pick a quality
+   * before anything is downloaded.
+   *
+   * Same trust level as `/add`, which already runs yt-dlp on the extension's
+   * say-so: the listener is loopback-only, token-gated and origin-checked.
+   */
+  onProbe?(payload: { url: string; cookies?: string }): Promise<HandoffProbeResult>
   log(line: string): void
   version?: string
   /**
@@ -375,6 +401,28 @@ export class HandoffServer {
         const accepted = this.options.onCookies?.({ url: parsed.url, cookies: parsed.cookies })?.accepted ?? false
         this.options.log(`handoff cookies ${accepted ? 'accepted' : 'ignored'} for ${hostOf(parsed.url) || 'unknown host'}`)
         send(200, { ok: true, accepted })
+        return
+      }
+
+      /**
+       * "What can this page be downloaded as?"
+       *
+       * The extension asks before showing its menu, so the qualities it offers
+       * are the ones this site actually serves to this session.
+       */
+      if (request.method === 'POST' && url.pathname === '/probe') {
+        const parsed = JSON.parse((await readBody(request)) || '{}') as { url?: string; cookies?: string }
+        if (typeof parsed.url !== 'string' || !parsed.url) {
+          send(400, { ok: false, error: 'url required' })
+          return
+        }
+        if (!this.options.onProbe) {
+          send(404, { ok: false, error: 'not found' })
+          return
+        }
+        const result = await this.options.onProbe({ url: parsed.url, cookies: parsed.cookies })
+        this.options.log(`handoff probe ${hostOf(parsed.url) || 'unknown host'}: ${result.formats.length} choice(s)`)
+        send(200, { ok: true, ...result })
         return
       }
 

@@ -34,6 +34,17 @@ function probeResult(directUrl = ''): MediaProbe {
         acodec: 'auto',
         note: '',
         needsFfmpeg: true
+      },
+      {
+        formatId: '137',
+        label: '1080p · mp4',
+        ext: 'mp4',
+        resolution: '1080p',
+        filesize: null,
+        vcodec: 'avc1',
+        acodec: 'none',
+        note: '',
+        needsFfmpeg: true
       }
     ],
     isPlaylist: false,
@@ -63,7 +74,7 @@ function makeRouter(options: { failProbe?: boolean; directUrl?: string; ytdlpAva
       probe,
       add: addMedia
     } as never,
-    getSettings: () => ({ ytdlpEnabled: true, ytdlpDetectSites: true }) as never,
+    getSettings: () => ({ ytdlpEnabled: true, ytdlpDetectSites: true, downloadDir: 'C:/downloads' }) as never,
     log: () => {}
   })
 
@@ -106,6 +117,44 @@ describe('EngineRouter', () => {
 
     expect(add).toHaveBeenCalledWith(expect.objectContaining({ engine: 'aria2' }))
     expect(result.warnings.join()).toMatch(/yt-dlp/)
+  })
+
+  it('gives a browser capture the app\u2019s download folder', async () => {
+    // A handoff carries no directory, and aria2 hides that: it falls back to the
+    // engine's own --dir. yt-dlp is told where to write per run, so an empty
+    // value meant `--paths ''` and the file went next to the app's executable —
+    // inside Program Files, reported as "[Errno 13] Permission denied".
+    const { router, addMedia } = makeRouter()
+
+    await router.add(input({ engine: 'ytdlp', dir: '' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ dir: 'C:/downloads' })
+  })
+
+  it('keeps the directory a request did ask for', async () => {
+    const { router, addMedia } = makeRouter()
+
+    await router.add(input({ engine: 'ytdlp', dir: 'D:/videos' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ dir: 'D:/videos' })
+  })
+
+  it('downloads the quality the caller picked', async () => {
+    const { router, addMedia } = makeRouter()
+
+    await router.add(input({ engine: 'ytdlp', mediaFormatId: '137' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ formatId: '137' })
+  })
+
+  it('ignores a quality this probe never offered', async () => {
+    // A menu can be clicked seconds after it was built, and the page may have
+    // changed under it; the fallback is the default, not a failed download.
+    const { router, addMedia } = makeRouter()
+
+    await router.add(input({ engine: 'ytdlp', mediaFormatId: 'no-such-format' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ formatId: 'bestvideo+bestaudio/best' })
   })
 
   it('hands a bare file to aria2 instead of yt-dlp when the probe resolves one', async () => {

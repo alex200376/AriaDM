@@ -91,14 +91,27 @@ export class EngineRouter {
         return await this.options.manager.add({ ...input, engine: 'aria2', uris: [probe.directUrl] })
       }
 
+      // A requested format is honoured only when the probe actually offered it:
+      // a stale picker, or a link that changed between the menu and the click,
+      // must not turn into "Requested format is not available".
+      const requested = probe.formats.some((format) => format.formatId === input.mediaFormatId)
+        ? input.mediaFormatId!
+        : ''
+
       const { gid } = await this.options.mediaJobs.add(
         {
           url,
           // Not `formats[0]`: on a machine without ffmpeg the best entry cannot
           // be produced at all, and this path is the extension's "download this
           // video" — it has to just work.
-          formatId: defaultFormatId(probe.formats, this.options.mediaJobs.hasFfmpeg),
-          dir: input.dir,
+          formatId: requested || defaultFormatId(probe.formats, this.options.mediaJobs.hasFfmpeg),
+          // A browser capture carries no directory, and aria2 hides that: it
+          // falls back to the engine's own --dir, so plain handoffs landed in the
+          // right place. yt-dlp is told where to write per run, so an empty value
+          // became `--paths ''` and the file went next to the app instead —
+          // inside Program Files for an installed build, which is where the
+          // "[Errno 13] Permission denied" on a .part file came from.
+          dir: input.dir || settings.downloadDir,
           audioOnly: false,
           playlist: false,
           maxConcurrent: 0

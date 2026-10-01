@@ -243,6 +243,89 @@ function notify(title, message) {
   })
 }
 
+/**
+ * Ask the app what a page can be downloaded as.
+ *
+ * The extension cannot answer this itself: only the app knows whether ffmpeg is
+ * installed, and only it can spend a yt-dlp run on resolving the page. So the
+ * menu it renders is always the app's answer for this exact page and session.
+ */
+async function probeFormats(url) {
+  const config = await getConfig()
+  if (!config.port || !config.token) return { ok: false, error: 'not-paired' }
+
+  const cookies = await cookieHeaderFor(url)
+  try {
+    const response = await self.AriaDmRequest.requestWithRepair(requestDeps(), config, '/probe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url, ...(cookies ? { cookies } : {}) })
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      return { ok: false, error: body.error || `HTTP ${response.status}` }
+    }
+    const body = await response.json().catch(() => ({}))
+    return {
+      ok: true,
+      title: body.title ?? '',
+      defaultFormatId: body.defaultFormatId ?? '',
+      formats: Array.isArray(body.formats) ? body.formats : []
+    }
+  } catch (error) {
+    return { ok: false, error: self.AriaDmRequest.describeError(error) }
+  }
+}
+
+/** Long enough for a slow site, short enough that a busy button is not a hang. */
+const PROBE_BUDGET_MS = 20_000
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(null), ms))
+  ])
+}
+
+/**
+ * The single "download this video" path, shared by the toolbar popup and the
+ * on-page panel.
+ *
+ * With no `formatId` it asks the app what the page offers and returns either the
+ * finished handoff or a menu for the caller to render. Anything that gets in the
+ * way of that — a page yt-dlp cannot enumerate, an app that is not answering, a
+ * probe that is taking too long — falls through to the plain handoff, so the
+ * button behaves exactly as it did before the menu existed rather than refusing.
+ */
+async function downloadVideo(message) {
+  const url = message.url
+  if (!url || !/^https?:/i.test(url)) return { ok: false, error: '這個頁面無法下載' }
+
+  if (!message.formatId) {
+    const probe = await withTimeout(probeFormats(url), PROBE_BUDGET_MS)
+    // One choice is not a choice — but anything else gets a menu.
+    if (probe?.ok && probe.formats.length > 1) {
+      return {
+        ok: true,
+        mode: 'choose',
+        title: probe.title,
+        defaultFormatId: probe.defaultFormatId,
+        formats: probe.formats
+      }
+    }
+  }
+
+  const payload = { urls: [url], media: true }
+  if (message.referer) payload.referer = message.referer
+  if (message.formatId) payload.formatId = message.formatId
+  payload.userAgent = navigator.userAgent
+  const cookies = await cookieHeaderFor(url)
+  if (cookies) payload.cookies = cookies
+
+  const result = await handoff(payload)
+  return result.ok ? { ...result, mode: 'sent' } : result
+}
+
 async function handoff(payload) {
   let config = await getConfig()
   if (!config.port || !config.token) {
@@ -432,6 +515,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'handoff') {
     handoff(message.payload).then(sendResponse)
+    return true
+  }
+  if (message?.type === 'downloadVideo') {
+    downloadVideo(message).then(sendResponse)
     return true
   }
   if (message?.type === 'offerCookies') {
