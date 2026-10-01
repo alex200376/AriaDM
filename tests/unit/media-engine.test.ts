@@ -96,6 +96,28 @@ describe('media error reporting', () => {
     expect(info.kind).toBe('rate-limit')
     expect(info.action).toBe('retry')
   })
+
+  it('hides the deprecation notice yt-dlp prints ahead of the real error', () => {
+    // Passing a Cookie header makes yt-dlp warn first, and the warning used to be
+    // reported to the user as the failure: "Deprecated Feature: Passing cookies
+    // as a header is a potential security risk; they will be scoped to the domain
+    // of the downloaded urls..." — with the actual error buried at the end of it.
+    const info = classifyMediaError(
+      'Deprecated Feature: Passing cookies as a header is a potential security risk; they will be ' +
+        'scoped to the domain of the downloaded urls. Please consider loading cookies from a file or ' +
+        'browser instead. ERROR: [youtube] MSGt9jJAD-Q: The page needs to be reloaded.'
+    )
+    expect(info.kind).toBe('session')
+    expect(info.message).not.toContain('Deprecated')
+    expect(info.message).not.toContain('security risk')
+    expect(info.message).toContain('無法播放的頁面')
+  })
+
+  it('reads an unplayable page as a session problem, not as broken extraction', () => {
+    expect(classifyMediaError('ERROR: [youtube] abc: The page needs to be reloaded.').kind).toBe(
+      'session'
+    )
+  })
 })
 
 describe('browser cookie resolution', () => {

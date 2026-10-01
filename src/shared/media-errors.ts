@@ -25,6 +25,14 @@ export type MediaErrorKind =
   | 'cookies-locked'
   /** The cookies are encrypted with a scheme yt-dlp cannot read. */
   | 'cookies-undecryptable'
+  /**
+   * The site answered with a page it will not let this session play.
+   *
+   * YouTube's "The page needs to be reloaded" is the usual spelling, and a
+   * logged-in cookie jar is a known trigger — the same video downloads fine
+   * signed out. Worth one retry without credentials rather than a dead end.
+   */
+  | 'session'
   | 'extractor'
   | 'format'
   | 'unsupported'
@@ -144,6 +152,21 @@ const RULES: Rule[] = [
     actionLabel: '更換瀏覽器'
   },
   {
+    /**
+     * The site served a page this session cannot play — "The page needs to be
+     * reloaded" on YouTube, most often because a logged-in cookie jar makes
+     * YouTube hand back an unplayable player response. The advice is therefore
+     * not "log in": it is the opposite, and AriaDM already tries that
+     * automatically, so this text is what remains when that also failed.
+     */
+    kind: 'session',
+    patterns: [/page needs to be reloaded/i, /precondition check failed/i, /tv_downgraded/i],
+    message:
+      '網站不接受目前的登入狀態，回傳了無法播放的頁面（YouTube 對已登入的 Cookie 常見此狀況）。已改用未登入身分重試仍失敗，請更新 yt-dlp 或在設定中改用其他瀏覽器的 Cookie。',
+    action: 'update-ytdlp',
+    actionLabel: '更新 yt-dlp'
+  },
+  {
     kind: 'auth',
     patterns: [/login required/i, /requires authentication/i, /not authorized/i, /private (video|tweet)/i, /only available to/i],
     message: '這個內容需要登入才能取得。請啟用「使用瀏覽器 Cookie」，或確認你在瀏覽器中已登入。',
@@ -261,13 +284,35 @@ const RULES: Rule[] = [
 ]
 
 /**
+ * yt-dlp notices that are not the failure, removed before anything is matched.
+ *
+ * Passing a Cookie header makes yt-dlp print a deprecation notice *ahead of* the
+ * real error, and both arrived as one sentence: the user's failure was reported
+ * as "Deprecated Feature: Passing cookies as a header is a potential security
+ * risk…". The notice is yt-dlp's business with whoever built the command line,
+ * not the download's problem.
+ */
+const TOOL_NOTICES = [
+  /Deprecated Feature: Passing cookies as a header.*?instead\./gi,
+  /WARNING: Falling back on generic information extractor\.?/gi
+]
+
+export function stripToolNotices(message: string): string {
+  let text = message
+  for (const notice of TOOL_NOTICES) text = text.replace(notice, '')
+  return text.replace(/\s{2,}/g, ' ').trim()
+}
+
+/**
  * Describe a yt-dlp (or toolchain) failure.
  *
  * `version` is appended for extractor breakage because "yt-dlp is outdated" is
  * only actionable if you can see how old it is.
  */
 export function classifyMediaError(rawMessage: string, options: { ytdlpVersion?: string } = {}): MediaErrorInfo {
-  const message = cleanIpcError(rawMessage)
+  // Removing a notice from the front can expose the `ERROR:` that the wrapper
+  // stripping would otherwise have taken, so the cleanup runs around it.
+  const message = cleanIpcError(stripToolNotices(cleanIpcError(rawMessage)))
   if (!message) return { kind: 'unknown', message: '影音下載失敗。', action: 'retry', actionLabel: '重試' }
 
   for (const rule of RULES) {

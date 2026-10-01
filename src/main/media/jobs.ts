@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 
 import type { DownloadItem } from '@shared/download'
-import { classifyMediaError } from '@shared/media-errors'
+import { classifyMediaError, type MediaErrorKind } from '@shared/media-errors'
 import type { AddMediaInput, MediaFormatInfo } from '@shared/settings'
 import { extensionOf } from '@shared/uri'
 
@@ -26,6 +26,47 @@ export const MEDIA_GID_PREFIX = 'ytdlp:'
 
 export function isMediaGid(gid: string): boolean {
   return gid.startsWith(MEDIA_GID_PREFIX)
+}
+
+/**
+ * Failures that mean "the cookie store could not be read".
+ *
+ * yt-dlp treats an unreadable cookie database as fatal — a Chromium that is
+ * merely running, or one that encrypts its cookies with an app-bound key (issue
+ * 10927), fails the whole run — even though most videos need no session at all.
+ * The store is only ever read when no Cookie header was supplied, so blaming it
+ * here is safe.
+ */
+const STORE_FAILURES = new Set<MediaErrorKind>([
+  'cookies-locked',
+  'cookies-undecryptable',
+  'cookies-missing'
+])
+
+/**
+ * Failures that mean "the site refused the session it was given".
+ *
+ * YouTube answers a logged-in cookie jar with "The page needs to be reloaded",
+ * and the very same video downloads fine signed out, so the session is what is
+ * in the way. The opposite failure — a site that says it *needs* a login — is
+ * deliberately not retried: dropping credentials there just fails again, and the
+ * message already asks for the session the site wanted.
+ */
+const SESSION_FAILURES = new Set<MediaErrorKind>(['session'])
+
+/**
+ * What a probe proved about the credentials it was given.
+ *
+ * Remembered by URL rather than by job because a probe is always followed
+ * directly by the download it was made for, and keying on the URL keeps a stale
+ * verdict from ever being applied to a different link.
+ */
+interface CredentialVerdict {
+  url: string
+  /** The session the caller handed over is what failed, so do not send it. */
+  skipSession: boolean
+  /** The on-disk browser store is what failed, so do not read it again. */
+  skipStore: boolean
 }
 
 interface MediaJob {
@@ -52,6 +93,13 @@ interface MediaJob {
   runner: YtDlpRunner | null
   /** Browser context, kept so a resume sends the same cookies as the first try. */
   http: HttpContext
+  /** `--cookies-from-browser` arguments this job runs with, resolved once. */
+  cookieArgs: string[]
+  /**
+   * True when this job runs without browser credentials, because a probe already
+   * proved them unusable or a launch had to give up on them.
+   */
+  cookiesRetried: boolean
 }
 
 export interface MediaJobsOptions {
@@ -74,6 +122,15 @@ export class MediaJobs extends EventEmitter {
   private readonly jobs = new Map<string, MediaJob>()
   private readonly options: MediaJobsOptions
 
+  /**
+   * The credentials the last probe gave up on, if any.
+   *
+   * Every download is probed immediately before it starts, so this is refreshed
+   * per download: the launch can skip what the probe already proved unusable
+   * rather than paying for the same failure a second time.
+   */
+  private verdict: CredentialVerdict = { url: '', skipSession: false, skipStore: false }
+
   constructor(options: MediaJobsOptions) {
     super()
     this.options = options
@@ -92,15 +149,23 @@ export class MediaJobs extends EventEmitter {
   }
 
   /**
-   * Cookies for one run.
+   * Cookies for one run, once the last probe's verdict has been applied.
    *
    * A Cookie header from the extension is that page's live session, so when the
    * caller supplies one the on-disk browser store is deliberately not read: two
-   * cookie sources for the same request would send conflicting sessions.
+   * cookie sources for the same request would send conflicting sessions. That is
+   * also why a store failure and a session failure are never retried together —
+   * whichever one was in use is the one that gets dropped.
    */
-  private credentialsFor(context: HttpContext): string[] {
-    if (context.cookieHeader) return []
-    return this.options.getCookieArgs?.() ?? []
+  private resolveCredentials(
+    url: string,
+    context: HttpContext
+  ): { http: HttpContext; cookieArgs: string[] } {
+    const skip = this.verdict.url === url ? this.verdict : { skipSession: false, skipStore: false }
+    const cookieArgs =
+      context.cookieHeader || skip.skipStore ? [] : this.options.getCookieArgs?.() ?? []
+    const http = skip.skipSession ? { ...context, cookieHeader: '' } : context
+    return { http, cookieArgs }
   }
 
   /**
@@ -113,20 +178,62 @@ export class MediaJobs extends EventEmitter {
     return classifyMediaError(message, { ytdlpVersion: this.options.getYtdlpVersion?.() ?? '' }).message
   }
 
+  /**
+   * Ask yt-dlp what a link contains.
+   *
+   * A failure that names the credentials is retried once without them, because
+   * most videos need no session at all: an unreadable cookie store, or a session
+   * the site refuses, must not make every download in the app impossible. The
+   * retried attempt's message is the one reported when that fails too, since it
+   * is what remains once the credentials are out of the picture.
+   */
   async probe(url: string, context: HttpContext = {}): Promise<MediaProbe> {
     const binary = this.options.getBinaryPath()
     if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
+
+    this.verdict = { url, skipSession: false, skipStore: false }
+    const { http, cookieArgs } = this.resolveCredentials(url, context)
+    const supplied = Boolean(context.cookieHeader) || cookieArgs.length > 0
+
     try {
-      return await probeFormats(binary, url, {
-        hasFfmpeg: this.hasFfmpeg,
-        ...context,
-        cookieArgs: this.credentialsFor(context)
-      })
+      return await this.probeOnce(binary, url, http, cookieArgs)
     } catch (error) {
-      const described = this.describe((error as Error).message)
-      this.options.log(`yt-dlp probe failed: ${(error as Error).message}`)
-      throw new Error(described)
+      const message = (error as Error).message
+      const kind = classifyMediaError(message).kind
+      this.options.log(`yt-dlp probe failed: ${message}`)
+      if (!supplied || (!STORE_FAILURES.has(kind) && !SESSION_FAILURES.has(kind))) {
+        throw new Error(this.describe(message))
+      }
+
+      /*
+       * Which credential to blame follows from what was in use, not from the
+       * failure's name: a store failure can only have come from the store, but
+       * "the site refused this session" is just as possible from a logged-in
+       * cookie store as from a header. Exactly one of the two is ever sent, so
+       * the absent header means the store was the one at fault.
+       */
+      const skipStore = STORE_FAILURES.has(kind) || !http.cookieHeader
+      const dropped = skipStore ? 'cookies' : 'session'
+      this.options.log(`yt-dlp probe failed with ${kind}; retrying without ${dropped}`)
+      this.verdict = { url, skipSession: !skipStore, skipStore }
+
+      try {
+        return await this.probeOnce(binary, url, this.resolveCredentials(url, context).http, [])
+      } catch (retryError) {
+        const retryMessage = (retryError as Error).message
+        this.options.log(`yt-dlp probe failed again without credentials: ${retryMessage}`)
+        throw new Error(this.describe(retryMessage))
+      }
     }
+  }
+
+  private probeOnce(
+    binary: string,
+    url: string,
+    context: HttpContext,
+    cookieArgs: string[]
+  ): Promise<MediaProbe> {
+    return probeFormats(binary, url, { hasFfmpeg: this.hasFfmpeg, ...context, cookieArgs })
   }
 
   findFormat(probe: MediaProbe, formatId: string): MediaFormatInfo | undefined {
@@ -144,6 +251,11 @@ export class MediaJobs extends EventEmitter {
       // button (see the ffmpeg rule in shared/media-errors).
       throw new Error('這個格式需要合併音訊與視訊，請先安裝 ffmpeg 媒體包，或改選單檔畫質。')
     }
+
+    // Credentials are resolved here, once, from the probe that was just made for
+    // this link: the download must not repeat a credential the probe already
+    // proved unusable, and a resume must send what the first attempt sent.
+    const credentials = this.resolveCredentials(input.url, http)
 
     const gid = `${MEDIA_GID_PREFIX}${randomUUID()}`
     const job: MediaJob = {
@@ -168,7 +280,9 @@ export class MediaJobs extends EventEmitter {
       notified: false,
       outputPaths: [],
       runner: null,
-      http
+      http: credentials.http,
+      cookieArgs: credentials.cookieArgs,
+      cookiesRetried: false
     }
 
     this.jobs.set(gid, job)
@@ -226,7 +340,8 @@ export class MediaJobs extends EventEmitter {
       audioOnly: job.audioOnly,
       playlist: job.playlist,
       overwrite: job.status === 'error',
-      ...job.http
+      ...job.http,
+      ...(job.cookiesRetried ? { cookieHeader: '', cookieArgs: [] } : { cookieArgs: job.cookieArgs })
     })
 
     runner.on('progress', (progress) => {
@@ -262,13 +377,34 @@ export class MediaJobs extends EventEmitter {
     })
 
     runner.on('failed', (message) => {
+      job.runner = null
+      const kind = classifyMediaError(message).kind
+
+      /*
+       * A download that failed on its credentials gets one more attempt without
+       * them. By now the format is chosen and the file is part-written, so the
+       * retry costs a process launch rather than another round of questions —
+       * and the alternative is a job that cannot be started at all while a
+       * browser cookie store stays unreadable or a stale session stays in the
+       * way. The message below is only reached once both attempts have failed.
+       */
+      const hadCredentials = job.cookieArgs.length > 0 || Boolean(job.http.cookieHeader)
+      const blamed = STORE_FAILURES.has(kind) || SESSION_FAILURES.has(kind)
+      if (!job.cookiesRetried && hadCredentials && blamed) {
+        job.cookiesRetried = true
+        job.speed = 0
+        this.options.log(`yt-dlp job ${job.gid} failed with ${kind}; relaunching without browser cookies`)
+        this.launch(job)
+        this.emit('change')
+        return
+      }
+
       job.status = 'error'
       job.speed = 0
       job.errorCode = 1
       // yt-dlp writes for its own maintainers; the row, the toast and the detail
       // view all show this text, so it is translated once, here.
       job.errorMessage = this.describe(message)
-      job.runner = null
       const stored = job.errorMessage
       this.history.patchDeferred(job.gid, { status: 'error', errorCode: 1, errorMessage: stored })
       this.emit('failed', this.toItem(job))
