@@ -76,7 +76,17 @@ export class EngineRouter {
       // (an age gate, a geo block, a site change). Falling back keeps the link
       // downloadable instead of failing the user's click.
       const message = (error as Error).message
-      this.options.log(`engine router: yt-dlp failed for ${url} (${message}); falling back to aria2`)
+      this.options.log(`engine router: yt-dlp failed for ${url} (${message})`)
+
+      // An explicit "this is a video" request must not quietly turn into an HTML
+      // page download. That fallback is how grabbing a video ended up saving the
+      // web page instead: yt-dlp could not resolve the link, aria2 happily
+      // fetched the page, and the user got a broken file with no explanation.
+      if (input.engine === 'ytdlp') throw new Error(`無法取得影片：${message}`)
+
+      // An auto-routed link is different: the user just wanted the file, so a
+      // fallback still gets them something useful.
+      this.options.log(`engine router: falling back to aria2 for ${url}`)
       const result = await this.options.manager.add(input)
       return { ...result, warnings: [...result.warnings, `yt-dlp 無法處理此連結，已改用一般下載：${message}`] }
     }

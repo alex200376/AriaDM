@@ -14,7 +14,7 @@ const portInput = document.getElementById('port')
 const tokenInput = document.getElementById('token')
 const autoIntercept = document.getElementById('autoIntercept')
 const result = document.getElementById('result')
-const sendButton = document.getElementById('send')
+const sendVideoButton = document.getElementById('sendVideo')
 const sendLinksButton = document.getElementById('sendLinks')
 
 let activeTab = null
@@ -61,17 +61,29 @@ async function activeTabUrl() {
   activeTab = tab ?? null
   currentUrl.textContent = tab?.url ?? '—'
   const downloadable = Boolean(tab?.url) && /^https?:/i.test(tab.url)
-  sendButton.disabled = !downloadable || busy
+  sendVideoButton.disabled = !downloadable || busy
   sendLinksButton.disabled = !downloadable || busy
 }
 
-sendButton.addEventListener('click', async () => {
+/**
+ * Hand the current page to the media engine.
+ *
+ * `media: true` is the whole point: without it the app treats the URL as an
+ * ordinary file and downloads the page itself, which is why "grab this video"
+ * kept saving an HTML file. The flag means "resolve this as a video with
+ * yt-dlp", and it works on any site yt-dlp supports, not just the ones the
+ * on-page panel recognises.
+ */
+sendVideoButton.addEventListener('click', async () => {
   if (!activeTab?.url) return
   busy = true
   await activeTabUrl()
-  result.textContent = '傳送中…'
-  const response = await send({ type: 'handoff', payload: { urls: [activeTab.url], referer: activeTab.url } })
-  result.textContent = response?.ok ? '已送出' : `失敗：${response?.error ?? '未知錯誤'}`
+  result.textContent = '正在取得影片…'
+  const response = await send({
+    type: 'handoff',
+    payload: { urls: [activeTab.url], referer: activeTab.url, media: true }
+  })
+  result.textContent = response?.ok ? '已加入影片下載' : `失敗：${response?.error ?? '未知錯誤'}`
   busy = false
   await activeTabUrl()
   await refreshStatus()

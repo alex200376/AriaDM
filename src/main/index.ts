@@ -109,10 +109,31 @@ function toast(payload: Omit<ToastPayload, 'id'>): void {
   send(IPC.eventToast, { ...payload, id: `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })
 }
 
+/**
+ * The app icon for a toast.
+ *
+ * A Windows 11 notification shows the sender's logo; without one it falls back
+ * to the generic Electron mark, which makes the toast look like a stray build
+ * rather than part of the app.
+ */
+function notificationIcon(): Electron.NativeImage | undefined {
+  const image = nativeImage.createFromPath(path.join(resourcesRoot, 'icons', 'app.png'))
+  return image.isEmpty() ? undefined : image
+}
+
+/**
+ * Show a system notification.
+ *
+ * Clicking it opens the main window, which is what a download manager's toast
+ * is implicitly promising. The icon and the AppUserModelID set at startup are
+ * what make the toast read as "AriaDM" instead of "electron.app.AriaDM".
+ */
 function notify(title: string, body: string): void {
   if (!Notification.isSupported()) return
   try {
-    new Notification({ title, body }).show()
+    const notification = new Notification({ title, body, icon: notificationIcon() })
+    notification.on('click', () => showWindow())
+    notification.show()
   } catch (error) {
     log(`notification failed: ${(error as Error).message}`)
   }

@@ -1,6 +1,6 @@
 {
   "name": "ariadm",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "AriaDM - a modern IDM-style download manager powered by aria2",
   "private": true,
   "type": "module",
