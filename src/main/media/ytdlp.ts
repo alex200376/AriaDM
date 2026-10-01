@@ -70,6 +70,15 @@ export interface MediaProbe {
 }
 
 export interface YtDlpProgress {
+  /**
+   * The file this update is about — one *stream* of the download, not the
+   * finished file.
+   *
+   * yt-dlp downloads a merged quality as two separate streams and restarts its
+   * counters for each, so without this a row would jump back to zero when the
+   * audio half began and its size would shrink to the audio file.
+   */
+  file: string
   downloadedBytes: number
   totalBytes: number
   speed: number
@@ -323,11 +332,28 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
   const args: string[] = [
     '--newline',
     '--no-colors',
-    // A machine readable progress line instead of parsing the human readout.
+    /*
+     * `--print` implies `--quiet`, and quiet is exactly what switches progress
+     * off. Asking for a progress template under `--quiet` therefore produced no
+     * progress at all: every media row sat on 0 B and then jumped straight to
+     * "completed". `--progress` is the documented way to show progress "even if
+     * in quiet mode".
+     */
+    '--progress',
+    /*
+     * A machine readable progress line instead of parsing the human readout.
+     *
+     * The leading `download:` is yt-dlp's type *selector*, and it is consumed
+     * rather than printed — so it has to be written twice: the second one is
+     * literal text that reaches stdout, which is what parseProgressLine reads.
+     *
+     * The filename comes first because it is the only thing that distinguishes
+     * the video stream from the audio one during a merge.
+     */
     '--progress-template',
-    'download:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s',
+    'download:download:%(progress.filename)j|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s',
     '--print',
-    'after_move:ariadm-file:%(filepath)s'
+    'after_move:ariadm-file:%(filepath)j'
   ]
 
   if (options.playlist) {
@@ -366,11 +392,48 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
   return args
 }
 
+/**
+ * A value printed with yt-dlp's `j` conversion, or the text exactly as it came.
+ *
+ * yt-dlp writes its stdout in the console code page — Big5 on a Chinese Windows,
+ * cp1251 on a Russian one — so a non-ASCII filename arrives as bytes that are not
+ * UTF-8, and decoding them as UTF-8 turns every Chinese character into a
+ * replacement character. That is not a display problem: the path recorded for the
+ * download is then one that no file can be opened, revealed or deleted by, and it
+ * is the name the row shows.
+ *
+ * `j` escapes every non-ASCII character to `\uXXXX`, so the whole line is ASCII
+ * and no code page can touch it.
+ */
+function decodeJsonField(raw: string): string {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed === 'string') return parsed
+  } catch {
+    // An older yt-dlp may not know the conversion; take what it printed.
+  }
+  return raw
+}
+
+/**
+ * The output path from one `ariadm-file:` line, or null for any other line.
+ *
+ * Used when `--print` runs *after* the final move, so this names the finished
+ * file — the merged one when a quality was assembled from two streams.
+ */
+export function parseFileLine(line: string): string | null {
+  if (!line.startsWith('ariadm-file:')) return null
+  return decodeJsonField(line.slice('ariadm-file:'.length))
+}
+
 /** Parse one `download:` progress line. Returns null for any other line. */
 export function parseProgressLine(line: string): YtDlpProgress | null {
   if (!line.startsWith('download:')) return null
   const parts = line.slice('download:'.length).trim().split('|')
-  if (parts.length < 4) return null
+  // filename, downloaded, total, speed, eta. Fewer means this is not one of our
+  // lines at all — a bare `download:1|2|3|4` would otherwise be read as a file
+  // named "1", which is worse than ignoring it.
+  if (parts.length < 5) return null
 
   const parse = (value: string): number => {
     if (!value || value === 'NA' || value === 'None') return 0
@@ -378,11 +441,17 @@ export function parseProgressLine(line: string): YtDlpProgress | null {
     return Number.isFinite(parsed) ? parsed : 0
   }
 
+  // The last four fields are numbers; anything before them is the filename. A
+  // filename cannot contain `|` on a platform we write to, but reading it this
+  // way means a separator inside one could never shift the numbers.
+  const split = parts.length - 4
+
   return {
-    downloadedBytes: parse(parts[0]!),
-    totalBytes: parse(parts[1]!),
-    speed: parse(parts[2]!),
-    eta: parse(parts[3]!)
+    file: decodeJsonField(parts.slice(0, split).join('|')),
+    downloadedBytes: parse(parts[split]!),
+    totalBytes: parse(parts[split + 1]!),
+    speed: parse(parts[split + 2]!),
+    eta: parse(parts[split + 3]!)
   }
 }
 
@@ -462,8 +531,9 @@ export class YtDlpRunner extends EventEmitter {
     const trimmed = line.trim()
     if (!trimmed) return
 
-    if (trimmed.startsWith('ariadm-file:')) {
-      this.emit('file', trimmed.slice('ariadm-file:'.length))
+    const file = parseFileLine(trimmed)
+    if (file !== null) {
+      this.emit('file', file)
       return
     }
 

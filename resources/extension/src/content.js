@@ -3,11 +3,12 @@
  * "download this video" bar.
  *
  * Only runs on media hosts (the manifest's match patterns come from
- * media-sites.json), and it hands the *page* URL to the app rather than the
- * element's `src`. That distinction is the whole reason this works on X: the src
- * of a video element there is a short-lived `.m3u8` fragment that only the page's
- * own session can fetch, whereas yt-dlp given the tweet URL resolves the real
- * formats itself.
+ * media-sites.json), and it hands the app a *page* URL rather than the element's
+ * `src`. That distinction is the whole reason this works on X: the src of a video
+ * element there is a short-lived `.m3u8` fragment that only the page's own
+ * session can fetch, whereas yt-dlp given the tweet URL resolves the real formats
+ * itself. The URL has to be the *video's* page though, not the timeline's — see
+ * `currentVideoUrl`.
  *
  * Behaviour that matters:
  *  - it is *hover* driven, so it is out of the way until the pointer is over the
@@ -90,6 +91,18 @@
       }
     }
     return best
+  }
+
+  /**
+   * The address of the video the panel is over.
+   *
+   * The rule itself lives in `urls.js`, where it can be tested: it decides which
+   * video gets downloaded, and on a timeline the page URL it used to send is a
+   * timeline (see `itemUrlNear`).
+   */
+  function currentVideoUrl() {
+    const video = anchor && anchor.isConnected ? anchor : findMainVideo()
+    return self.AriaDmUrls.itemUrlNear(video, location)
   }
 
   function ensurePanel() {
@@ -193,7 +206,9 @@
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'downloadVideo',
-        url: location.href,
+        url: currentVideoUrl(),
+        // The page is the right referer even when it is not the right address:
+        // it is what the site's own player would send.
         referer: location.href,
         formatId: formatId || ''
       })
@@ -223,7 +238,7 @@
     try {
       response = await chrome.runtime.sendMessage({
         type: 'downloadVideo',
-        url: location.href,
+        url: currentVideoUrl(),
         referer: location.href
       })
     } catch {

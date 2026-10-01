@@ -10,7 +10,7 @@ import { extensionOf } from '@shared/uri'
 
 import type { HistoryRecord, HistoryStore } from '../downloads/history-store'
 
-import { probeFormats, YtDlpRunner, type HttpContext, type MediaProbe } from './ytdlp'
+import { probeFormats, YtDlpRunner, type HttpContext, type MediaProbe, type YtDlpProgress } from './ytdlp'
 
 /**
  * yt-dlp jobs, presented as ordinary download items.
@@ -26,6 +26,47 @@ export const MEDIA_GID_PREFIX = 'ytdlp:'
 
 export function isMediaGid(gid: string): boolean {
   return gid.startsWith(MEDIA_GID_PREFIX)
+}
+
+/**
+ * How often a running media download may push state at the UI.
+ *
+ * yt-dlp reports progress once per network read, which on a fast connection is
+ * far more often than a row can be redrawn — and every notification costs a full
+ * poll of the aria2 queue plus a state push. The byte counts are always current;
+ * only the notification is paced.
+ */
+const PROGRESS_NOTIFY_MS = 150
+
+/** One stream of a download, as yt-dlp last reported it. */
+interface StreamProgress {
+  downloaded: number
+  total: number
+}
+
+/**
+ * Fold one stream update into a job's running totals.
+ *
+ * A merged quality is fetched as two streams, reported one after the other with
+ * a counter that restarts: the video stream's 100% would be followed by the
+ * audio stream's 0%, so a row reading the last line alone falls back to nothing
+ * mid-download and its size changes to the audio file's. Summing per file keeps
+ * both moving forward, and it ends at the size of the finished file rather than
+ * at whichever half finished last.
+ */
+export function mergeStreamProgress(
+  streams: Map<string, StreamProgress>,
+  progress: YtDlpProgress
+): { downloadedBytes: number; totalBytes: number } {
+  streams.set(progress.file, { downloaded: progress.downloadedBytes, total: progress.totalBytes })
+
+  let downloadedBytes = 0
+  let totalBytes = 0
+  for (const stream of streams.values()) {
+    downloadedBytes += stream.downloaded
+    totalBytes += stream.total
+  }
+  return { downloadedBytes, totalBytes }
 }
 
 /**
@@ -91,6 +132,13 @@ interface MediaJob {
   notified: boolean
   outputPaths: string[]
   runner: YtDlpRunner | null
+  /**
+   * Bytes per stream of this run, keyed by yt-dlp's filename.
+   *
+   * Cleared on every launch: a fresh process reports fresh counters, so the
+   * previous attempt's numbers would otherwise be added to the new one's.
+   */
+  streams: Map<string, StreamProgress>
   /** Browser context, kept so a resume sends the same cookies as the first try. */
   http: HttpContext
   /** `--cookies-from-browser` arguments this job runs with, resolved once. */
@@ -130,6 +178,10 @@ export class MediaJobs extends EventEmitter {
    * rather than paying for the same failure a second time.
    */
   private verdict: CredentialVerdict = { url: '', skipSession: false, skipStore: false }
+
+  /** Pending paced `change`, and when the last one was let through. */
+  private progressTimer: NodeJS.Timeout | null = null
+  private lastProgressAt = 0
 
   constructor(options: MediaJobsOptions) {
     super()
@@ -252,6 +304,24 @@ export class MediaJobs extends EventEmitter {
       throw new Error('這個格式需要合併音訊與視訊，請先安裝 ffmpeg 媒體包，或改選單檔畫質。')
     }
 
+    /*
+     * A video-only stream carries no soundtrack, and the quality menu is built
+     * from exactly those: its "1080p · webm" row is a picture, not a whole video.
+     * `-f 312` therefore produced a file that played silently — "the video has no
+     * sound" — even though the menu looked like it was offering a quality of the
+     * video. Asking for `<id>+bestaudio` merges the site's audio into the stream
+     * the user picked, within the same run, which is what the synthetic "best"
+     * entry has always done.
+     *
+     * Only a bare id is rewritten: a composed selector (`312+bestaudio`) is
+     * already a complete request, and asking for a stream that is already muxed
+     * needs nothing added.
+     */
+    const formatId =
+      format?.needsFfmpeg && this.hasFfmpeg && !input.formatId.includes('+')
+        ? `${input.formatId}+bestaudio`
+        : input.formatId
+
     // Credentials are resolved here, once, from the probe that was just made for
     // this link: the download must not repeat a credential the probe already
     // proved unusable, and a resume must send what the first attempt sent.
@@ -261,7 +331,7 @@ export class MediaJobs extends EventEmitter {
     const job: MediaJob = {
       gid,
       url: input.url,
-      formatId: input.formatId,
+      formatId,
       formatLabel: format?.label ?? input.formatId,
       dir: input.dir,
       audioOnly: input.audioOnly,
@@ -280,6 +350,7 @@ export class MediaJobs extends EventEmitter {
       notified: false,
       outputPaths: [],
       runner: null,
+      streams: new Map(),
       http: credentials.http,
       cookieArgs: credentials.cookieArgs,
       cookiesRetried: false
@@ -331,6 +402,11 @@ export class MediaJobs extends EventEmitter {
     const ffmpegPath = this.options.getFfmpegPath()
     const ffmpegDir = ffmpegPath ? path.dirname(ffmpegPath) : ''
 
+    // A new process reports its own counters from the start, so the previous
+    // attempt's are dropped rather than added to.
+    job.streams.clear()
+    this.cancelProgressNotify()
+
     const runner = new YtDlpRunner({
       binaryPath: binary,
       url: job.url,
@@ -345,14 +421,15 @@ export class MediaJobs extends EventEmitter {
     })
 
     runner.on('progress', (progress) => {
-      job.downloadedBytes = progress.downloadedBytes
-      job.totalBytes = progress.totalBytes
+      const totals = mergeStreamProgress(job.streams, progress)
+      job.downloadedBytes = totals.downloadedBytes
+      job.totalBytes = totals.totalBytes
       job.speed = progress.speed
       job.eta = progress.eta
-      if (progress.totalBytes > 0) {
-        this.history.patchDeferred(job.gid, { totalLength: progress.totalBytes })
+      if (job.totalBytes > 0) {
+        this.history.patchDeferred(job.gid, { totalLength: job.totalBytes })
       }
-      this.emit('change')
+      this.notifyProgress()
     })
 
     runner.on('file', (filePath) => {
@@ -365,19 +442,14 @@ export class MediaJobs extends EventEmitter {
       job.status = 'complete'
       job.completedAt = Date.now()
       job.speed = 0
-      if (job.totalBytes > 0) job.downloadedBytes = job.totalBytes
       job.runner = null
-      this.history.patchDeferred(job.gid, {
-        status: 'complete',
-        completedAt: job.completedAt,
-        totalLength: job.totalBytes
-      })
-      this.emit('completed', this.toItem(job))
-      this.emit('change')
+      this.cancelProgressNotify()
+      void this.finish(job)
     })
 
     runner.on('failed', (message) => {
       job.runner = null
+      this.cancelProgressNotify()
       const kind = classifyMediaError(message).kind
 
       /*
@@ -417,6 +489,64 @@ export class MediaJobs extends EventEmitter {
   }
 
   /**
+   * Ask the UI to redraw, at most once every PROGRESS_NOTIFY_MS.
+   *
+   * A trailing update is always scheduled, so the last bytes of a download are
+   * never the ones that got dropped.
+   */
+  private notifyProgress(): void {
+    const wait = this.lastProgressAt + PROGRESS_NOTIFY_MS - Date.now()
+    if (wait <= 0) {
+      this.lastProgressAt = Date.now()
+      this.emit('change')
+      return
+    }
+    if (this.progressTimer) return
+    this.progressTimer = setTimeout(() => {
+      this.progressTimer = null
+      this.lastProgressAt = Date.now()
+      this.emit('change')
+    }, wait)
+    this.progressTimer.unref?.()
+  }
+
+  /** Drop a paced update that has not fired yet, ahead of a terminal one. */
+  private cancelProgressNotify(): void {
+    if (!this.progressTimer) return
+    clearTimeout(this.progressTimer)
+    this.progressTimer = null
+  }
+
+  /**
+   * Settle a job whose process finished cleanly.
+   *
+   * The finished file's own size is read rather than keeping the sum of the
+   * streams it was built from: a merge wraps a container around both halves, and
+   * a download that produced no progress output at all would otherwise be
+   * recorded as zero bytes — the row read "Completed · 0 B" beside a full bar,
+   * which is what the missing progress looked like from the outside.
+   */
+  private async finish(job: MediaJob): Promise<void> {
+    if (job.outputPaths.length === 1) {
+      try {
+        const stats = await fsp.stat(job.outputPaths[0]!)
+        job.totalBytes = stats.size
+        job.downloadedBytes = stats.size
+      } catch (error) {
+        this.options.log(`could not read the finished file's size: ${(error as Error).message}`)
+      }
+    }
+
+    this.history.patchDeferred(job.gid, {
+      status: 'complete',
+      completedAt: job.completedAt,
+      totalLength: job.totalBytes
+    })
+    this.emit('completed', this.toItem(job))
+    this.emit('change')
+  }
+
+  /**
    * Terminate the process. yt-dlp has no pause of its own, so this is what
    * "pause" means here; the `.part` file on disk is what makes resume cheap.
    */
@@ -427,6 +557,7 @@ export class MediaJobs extends EventEmitter {
     job.runner = null
     job.status = 'paused'
     job.speed = 0
+    this.cancelProgressNotify()
     this.history.patchDeferred(gid, { status: 'paused' })
     this.options.log(`yt-dlp job ${gid} paused; resume will continue from the .part file`)
     this.emit('change')
@@ -453,6 +584,7 @@ export class MediaJobs extends EventEmitter {
     if (!job) return
 
     job.runner?.kill()
+    this.cancelProgressNotify()
 
     if (deleteFiles) {
       for (const target of job.outputPaths) {

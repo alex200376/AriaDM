@@ -56,8 +56,9 @@ function buildManifests() {
        * not widen what the extension is allowed to access.
        */
       matches: ['<all_urls>'],
-      // formats.js first: the panel builds its menu rows with it.
-      js: ['formats.js', 'content.js'],
+      // urls.js and formats.js first: the panel reads the site's item URL rules
+      // with the one and builds its menu rows with the other.
+      js: ['urls.js', 'formats.js', 'content.js'],
       css: ['content.css'],
       run_at: 'document_idle',
       // Each frame looks for its own player.
