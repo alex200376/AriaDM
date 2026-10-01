@@ -92,16 +92,26 @@ export interface EngineAvailability {
 /**
  * Pick the engine for one add request.
  *
- * Order matters: an explicit choice is never second-guessed, and a torrent or
- * metalink body is structurally impossible for yt-dlp, so both short-circuit
- * before detection is consulted.
+ * Order matters, and getting it wrong is what broke "download this video":
+ *
+ *  - A torrent or metalink body is structurally impossible for yt-dlp.
+ *  - An explicit choice is never second-guessed. This must come *before* the
+ *    自動辨識 switch, because that switch governs automatic detection only. When
+ *    it was consulted first, the extension's button — which asks for yt-dlp
+ *    outright — was downgraded to aria2 wherever auto-detection was off, and
+ *    aria2 then saved the YouTube *page* as the file.
+ *  - Turning yt-dlp off entirely still wins over an explicit request, or the
+ *    setting would mean nothing.
  */
 export function chooseEngine(request: EngineRequest, options: EngineAvailability): EngineChoice {
-  if (request.engine === 'aria2') return 'aria2'
   if (request.hasTorrent || request.hasMetalink) return 'aria2'
-  if (!options.ytdlpEnabled || !options.autoDetect) return 'aria2'
+  if (!options.ytdlpEnabled) return 'aria2'
 
   if (request.engine === 'ytdlp') return options.ytdlpAvailable ? 'ytdlp' : 'aria2'
+  if (request.engine === 'aria2') return 'aria2'
+
+  // Automatic detection from here on.
+  if (!options.autoDetect) return 'aria2'
 
   // Detection is only meaningful for a single link; a pasted list is a batch of
   // files, not a media page.
@@ -151,8 +161,14 @@ export function resolveHandoffEngine(request: HandoffEngineRequest): 'auto' | 'a
  * explain the fallback instead of silently doing something different.
  */
 export function shouldWarnAboutMissingYtDlp(request: EngineRequest, options: EngineAvailability): boolean {
-  if (options.ytdlpAvailable || !options.ytdlpEnabled || !options.autoDetect) return false
+  if (options.ytdlpAvailable || !options.ytdlpEnabled) return false
   if (request.hasTorrent || request.hasMetalink) return false
+
+  // A request that asked for yt-dlp outright deserves an explanation whenever it
+  // cannot be honoured; 自動辨識 has nothing to do with it.
+  if (request.engine === 'ytdlp') return true
+
+  if (!options.autoDetect) return false
   if (request.uris.length !== 1) return false
   return isMediaSiteUrl(request.uris[0]!)
 }

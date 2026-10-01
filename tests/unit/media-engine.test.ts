@@ -64,6 +64,38 @@ describe('media error reporting', () => {
   it('always returns something to show', () => {
     expect(classifyMediaError('').message.length).toBeGreaterThan(0)
   })
+
+  it('sends an Instagram login wall to the cookie setting', () => {
+    const info = classifyMediaError(
+      'ERROR: [Instagram] CxYzAbCdEf: Login required to view this content'
+    )
+    expect(info.kind).toBe('auth')
+    expect(info.action).toBe('enable-cookies')
+  })
+
+  it('explains a post that has no video instead of blaming the quality', () => {
+    // Instagram photo posts and image-only tweets reach yt-dlp the same way a
+    // broken format does, and the old message told the user their chosen quality
+    // no longer existed.
+    const post = classifyMediaError('ERROR: [Instagram] CxYzAbCdEf: There is no video in this post')
+    expect(post.kind).toBe('unsupported')
+    expect(post.message).toContain('圖片')
+    expect(post.message).not.toContain('畫質')
+
+    expect(classifyMediaError('ERROR: [Instagram] CxYzAbCdEf: No video formats found').kind).toBe(
+      'unsupported'
+    )
+    // A genuinely missing *format* still reads as one.
+    expect(classifyMediaError('ERROR: Requested format is not available').kind).toBe('format')
+  })
+
+  it('tells the user to wait when the site is throttling, not to check the network', () => {
+    const info = classifyMediaError(
+      'ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests'
+    )
+    expect(info.kind).toBe('rate-limit')
+    expect(info.action).toBe('retry')
+  })
 })
 
 describe('browser cookie resolution', () => {

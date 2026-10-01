@@ -42,7 +42,7 @@ function probeResult(directUrl = ''): MediaProbe {
   }
 }
 
-function makeRouter(options: { failProbe?: boolean; directUrl?: string } = {}): {
+function makeRouter(options: { failProbe?: boolean; directUrl?: string; ytdlpAvailable?: boolean } = {}): {
   router: EngineRouter
   add: ReturnType<typeof vi.fn>
   addMedia: ReturnType<typeof vi.fn>
@@ -57,7 +57,12 @@ function makeRouter(options: { failProbe?: boolean; directUrl?: string } = {}): 
 
   const router = new EngineRouter({
     manager: { add } as never,
-    mediaJobs: { binaryAvailable: true, hasFfmpeg: true, probe, add: addMedia } as never,
+    mediaJobs: {
+      binaryAvailable: options.ytdlpAvailable ?? true,
+      hasFfmpeg: true,
+      probe,
+      add: addMedia
+    } as never,
     getSettings: () => ({ ytdlpEnabled: true, ytdlpDetectSites: true }) as never,
     log: () => {}
   })
@@ -88,6 +93,18 @@ describe('EngineRouter', () => {
     const result = await router.add(input({ engine: 'auto' }))
 
     expect(add).toHaveBeenCalledOnce()
+    expect(result.warnings.join()).toMatch(/yt-dlp/)
+  })
+
+  it('does not label an aria2 fallback as a yt-dlp download', async () => {
+    // yt-dlp is missing, so the explicit video request cannot be honoured. The
+    // row must say aria2 — claiming yt-dlp is how a page-saved-as-a-file looked
+    // like a video download.
+    const { router, add } = makeRouter({ ytdlpAvailable: false })
+
+    const result = await router.add(input({ engine: 'ytdlp' }))
+
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ engine: 'aria2' }))
     expect(result.warnings.join()).toMatch(/yt-dlp/)
   })
 

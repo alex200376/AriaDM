@@ -17,6 +17,8 @@ export type MediaErrorKind =
   | 'bot-check'
   | 'age'
   | 'geo'
+  /** The site is throttling this client; Instagram does it quickly when signed out. */
+  | 'rate-limit'
   | 'ffmpeg'
   | 'cookies-missing'
   /** The cookie database exists but the browser is holding it open. */
@@ -149,6 +151,18 @@ const RULES: Rule[] = [
     actionLabel: '啟用瀏覽器 Cookie'
   },
   {
+    /**
+     * Throttling, which Instagram applies quickly to a signed-out client. Listed
+     * before the network rules because a 429 arrives wrapped in "Unable to
+     * download webpage", and waiting is the fix rather than checking the network.
+     */
+    kind: 'rate-limit',
+    patterns: [/rate[- ]limit/i, /too many requests/i, /http error 429/i],
+    message: '網站暫時限制了要求（次數過於頻繁）。請等幾分鐘再試，或啟用「使用瀏覽器 Cookie」以登入身分下載。',
+    action: 'retry',
+    actionLabel: '重試'
+  },
+  {
     kind: 'geo',
     patterns: [/not available in your country/i, /geo[- ]?restrict/i, /blocked in your/i],
     message: '這段影片在你所在的地區被封鎖。'
@@ -168,8 +182,23 @@ const RULES: Rule[] = [
     message: '這段影片已被刪除、設為私人，或作者關閉了存取。'
   },
   {
+    /**
+     * A post with no video in it: an Instagram photo or carousel, an X post of
+     * only images. yt-dlp phrases this like a broken format, so without its own
+     * rule the user was told their chosen quality no longer existed.
+     */
+    kind: 'unsupported',
+    patterns: [
+      /no video formats found/i,
+      /no video in this post/i,
+      /there is no video/i,
+      /does not contain a video/i
+    ],
+    message: '這則貼文裡沒有影片（可能是圖片或輪播），所以沒有可下載的影音。'
+  },
+  {
     kind: 'format',
-    patterns: [/requested format is not available/i, /no video formats found/i, /requested format not available/i],
+    patterns: [/requested format is not available/i, /requested format not available/i],
     message: '這個畫質格式已不存在，請重新偵測可用格式。',
     action: 'retry',
     actionLabel: '重新偵測'

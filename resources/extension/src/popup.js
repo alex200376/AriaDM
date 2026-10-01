@@ -108,11 +108,14 @@ async function activeTabUrl() {
     }
   })()
   const isMedia = (sites ?? []).some((site) => host === site || host.endsWith(`.${site}`))
+  const isItem = self.AriaDmUrls.looksLikeItemPage(activeTab.url)
 
-  pageState.textContent = isMedia
-    ? '偵測到影音網站，可直接下載這部影片。'
-    : '沒偵測到影音網站；仍可嘗試下載，或傳送頁面連結。'
-  pageState.className = `page-state ${isMedia ? 'ready' : ''}`
+  pageState.textContent = !isMedia
+    ? '沒偵測到影音網站；仍可嘗試下載，或傳送頁面連結。'
+    : isItem
+      ? '偵測到影音網站，可直接下載這部影片。'
+      : '這是列表頁，沒有可直接下載的影片；請先開啟那則貼文或影片頁面。'
+  pageState.className = `page-state ${isMedia && isItem ? 'ready' : ''}`
   setBusy(false)
 }
 

@@ -47,7 +47,10 @@ export class EngineRouter {
     })
 
     if (engine === 'aria2') {
-      const result = await this.options.manager.add(input)
+      // The engine is named rather than inherited: a request that asked for
+      // yt-dlp but could not have it would otherwise be recorded, and shown, as
+      // a yt-dlp download that aria2 actually performed.
+      const result = await this.options.manager.add({ ...input, engine: 'aria2' })
       if (shouldWarnAboutMissingYtDlp(request, {
         ytdlpEnabled: settings.ytdlpEnabled,
         autoDetect: settings.ytdlpDetectSites,

@@ -216,6 +216,11 @@ suite('aria2 engine end to end', () => {
     )
     const gid = gids[0]!
 
+    // `add` returns as soon as aria2 has accepted the URI, and the manager only
+    // knows the item once it has polled status. Reading it immediately raced the
+    // first poll, which made this assertion fail under a loaded test run.
+    await waitFor(() => manager.getItem(gid) !== undefined, { label: 'the queued download to appear' })
+
     const queued = manager.getItem(gid)
     expect(queued?.status).toBe('paused')
     expect(queued?.downloadSpeed).toBe(0)

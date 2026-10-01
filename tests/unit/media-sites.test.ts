@@ -64,6 +64,24 @@ describe('chooseEngine', () => {
     expect(chooseEngine({ uris: ['https://example.com/a.bin'], engine: 'ytdlp' }, AVAILABLE)).toBe('ytdlp')
   })
 
+  it('still honours an explicit video request with auto-detection switched off', () => {
+    // The regression this pins: 自動辨識 off used to downgrade this to aria2, so
+    // the extension's "download this video" saved the YouTube page instead.
+    const off = { ...AVAILABLE, autoDetect: false }
+    expect(chooseEngine({ uris: ['https://www.youtube.com/watch?v=1'], engine: 'ytdlp' }, off)).toBe('ytdlp')
+    // Automatic detection really is off — that is all the switch means.
+    expect(chooseEngine({ uris: ['https://www.youtube.com/watch?v=1'], engine: 'auto' }, off)).toBe('aria2')
+  })
+
+  it('lets yt-dlp being switched off win over an explicit request', () => {
+    expect(
+      chooseEngine(
+        { uris: ['https://www.youtube.com/watch?v=1'], engine: 'ytdlp' },
+        { ...AVAILABLE, ytdlpEnabled: false }
+      )
+    ).toBe('aria2')
+  })
+
   it('never sends a torrent or metalink body to yt-dlp', () => {
     expect(chooseEngine({ ...request, hasTorrent: true }, AVAILABLE)).toBe('aria2')
     expect(chooseEngine({ ...request, hasMetalink: true }, AVAILABLE)).toBe('aria2')
@@ -86,6 +104,15 @@ describe('chooseEngine', () => {
     expect(shouldWarnAboutMissingYtDlp(request, missing)).toBe(true)
     expect(shouldWarnAboutMissingYtDlp({ uris: ['https://example.com/a.zip'], engine: 'auto' }, missing)).toBe(false)
     expect(shouldWarnAboutMissingYtDlp(request, AVAILABLE)).toBe(false)
+
+    // An explicit request that cannot be honoured is explained even with
+    // auto-detection off, because nothing about it was automatic.
+    expect(
+      shouldWarnAboutMissingYtDlp(
+        { uris: ['https://www.youtube.com/watch?v=1'], engine: 'ytdlp' },
+        { ...missing, autoDetect: false }
+      )
+    ).toBe(true)
   })
 })
 

@@ -18,7 +18,17 @@ const projectRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const extensionRoot = path.join(projectRoot, 'resources', 'extension')
 const srcDir = path.join(extensionRoot, 'src')
 
-const SHARED_FILES = ['background.js', 'pairing.js', 'request.js', 'popup.html', 'popup.js', 'content.js', 'content.css', 'media-sites.json']
+const SHARED_FILES = [
+  'background.js',
+  'pairing.js',
+  'request.js',
+  'urls.js',
+  'popup.html',
+  'popup.js',
+  'content.js',
+  'content.css',
+  'media-sites.json'
+]
 
 /**
  * The two manifests.
