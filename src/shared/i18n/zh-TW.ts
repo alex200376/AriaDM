@@ -566,6 +566,12 @@ export const zhTW = {
   'settings.update.none': '找不到已發布的版本（或目前無法連線）。',
   'settings.update.failed': '檢查更新失敗：{error}',
   'settings.update.download': '下載新版本',
+  'settings.update.install': '下載並安裝',
+  'settings.update.installing': '正在安裝並重新啟動…',
+  'settings.update.downloading': '正在下載更新檔',
+  'settings.update.downloaded': '下載完成，準備安裝',
+  'settings.update.installFailed': '更新失敗：{error}',
+  'settings.update.manualHint': '這個版本無法自動安裝，請下載後手動執行安裝檔。',
 
   // -- weekdays (numeric day index 0 = Sunday) -----------------------------
   'weekday.sun': '日',

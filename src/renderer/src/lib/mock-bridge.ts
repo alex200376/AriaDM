@@ -1,4 +1,4 @@
-import type { AriaDmApi, HandoffInfo } from '@shared/ipc'
+import type { AriaDmApi, HandoffInfo, UpdateProgress } from '@shared/ipc'
 import type { CategoryRule, Settings, SpeedProfile } from '@shared/settings'
 import type { DownloadItem, GlobalStat, HistoryRow, TickPayload, ToolkitStatus } from '@shared/download'
 import { DEFAULT_CATEGORIES } from '@shared/settings'
@@ -234,6 +234,30 @@ function tick(): TickPayload {
 }
 
 const listeners = new Set<(payload: TickPayload) => void>()
+const updateListeners = new Set<(progress: UpdateProgress) => void>()
+
+/**
+ * Walk a fake download from 0 to 100% so the updater's progress bar can be
+ * reviewed in the browser. The real download streams a much larger file at
+ * whatever speed the network allows.
+ */
+async function mockUpdateDownload(): Promise<UpdateProgress> {
+  const total = 197_000_000
+  const steps = 30
+  for (let step = 0; step <= steps; step += 1) {
+    const received = Math.round((total * step) / steps)
+    const progress: UpdateProgress = {
+      phase: step === steps ? 'ready' : 'downloading',
+      received,
+      total,
+      percent: Math.round((step / steps) * 100),
+      error: ''
+    }
+    for (const listener of updateListeners) listener(progress)
+    await new Promise((resolve) => window.setTimeout(resolve, 55))
+  }
+  return { phase: 'ready', received: total, total, percent: 100, error: '' }
+}
 window.setInterval(() => {
   const payload = tick()
   for (const listener of listeners) listener(payload)
@@ -472,16 +496,21 @@ export function createMockApi(): AriaDmApi {
     },
 
     update: {
-      // The mock has no repository to ask, so it reports "up to date" to keep the
-      // browser-only dev server in a stable state.
+      // Reports an update so the whole download-and-install flow can be exercised
+      // in the browser-only dev server, where there is no installer to run.
       check: async () => ({
         current: '0.1.0-mock',
-        latest: '0.1.0-mock',
-        available: false,
-        releaseUrl: null,
-        downloadUrl: null,
+        latest: '9.9.9-mock',
+        available: true,
+        releaseUrl: 'https://github.com/alex200376/AriaDM/releases',
+        downloadUrl: 'https://example.test/AriaDM-9.9.9-setup.exe',
+        downloadSize: 197_000_000,
+        canInstall: true,
         error: ''
-      })
+      }),
+      download: mockUpdateDownload,
+      install: async () => {},
+      cancel: async () => {}
     },
 
     catcher: {
@@ -509,7 +538,11 @@ export function createMockApi(): AriaDmApi {
       clipboardDetected: () => () => {},
       toast: () => () => {},
       navigate: () => () => {},
-      catcherUpdate: () => () => {}
+      catcherUpdate: () => () => {},
+      updateProgress: (handler) => {
+        updateListeners.add(handler)
+        return () => updateListeners.delete(handler)
+      }
     }
   }
 }

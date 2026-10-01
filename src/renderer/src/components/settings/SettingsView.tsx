@@ -18,7 +18,7 @@ import {
 import { useEffect, useState, type ReactNode } from 'react'
 
 import type { CategoryRule, ScheduleRule, SpeedProfile } from '@shared/settings'
-import type { UpdateInfo } from '@shared/ipc'
+import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
 import { formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
 
@@ -1205,9 +1205,18 @@ function AboutTab(): JSX.Element {
   const version = useApp((state) => state.engine.version)
   const [update, setUpdate] = useState<UpdateInfo | null>(null)
   const [checking, setChecking] = useState(false)
+  const [progress, setProgress] = useState<UpdateProgress | null>(null)
+  const [installing, setInstalling] = useState(false)
+  const [failure, setFailure] = useState('')
+
+  // The main process reports download progress on its own channel, so the bar
+  // advances even while the button's own promise is still pending.
+  useEffect(() => window.api.on.updateProgress(setProgress), [])
 
   const checkForUpdates = async (): Promise<void> => {
     setChecking(true)
+    setFailure('')
+    setProgress(null)
     try {
       setUpdate(await window.api.update.check())
     } catch (error) {
@@ -1217,10 +1226,30 @@ function AboutTab(): JSX.Element {
         available: false,
         releaseUrl: null,
         downloadUrl: null,
+        downloadSize: 0,
+        canInstall: false,
         error: (error as Error).message
       })
     } finally {
       setChecking(false)
+    }
+  }
+
+  /**
+   * Download the installer and, once it is verified, hand off to the silent
+   * install. The app quits as part of that, so the `finally` is only reached
+   * when something went wrong.
+   */
+  const downloadAndInstall = async (): Promise<void> => {
+    setFailure('')
+    setInstalling(true)
+    try {
+      await window.api.update.download()
+      await window.api.update.install()
+    } catch (error) {
+      setFailure((error as Error).message)
+    } finally {
+      setInstalling(false)
     }
   }
 
@@ -1296,17 +1325,67 @@ function AboutTab(): JSX.Element {
           <p className="mt-2 text-[11.5px] leading-relaxed text-muted">{updateMessage()}</p>
         )}
 
-        {update?.available && (update.downloadUrl || update.releaseUrl) && (
-          <Button
-            variant="primary"
-            size="sm"
-            className="mt-2"
-            icon={<Download size={13} />}
-            onClick={() => void window.api.app.openExternal(update.downloadUrl ?? update.releaseUrl ?? '')}
-          >
-            {t('settings.update.download')}
-          </Button>
+        {progress && (progress.phase === 'downloading' || progress.phase === 'ready') && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between text-[11px] text-muted">
+              <span>
+                {progress.phase === 'ready'
+                  ? t('settings.update.downloaded')
+                  : t('settings.update.downloading')}
+              </span>
+              <span className="font-mono text-tabular">
+                {progress.percent >= 0 ? `${progress.percent}%` : formatSpeed(progress.received)}
+              </span>
+            </div>
+            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-elevated">
+              <div
+                className={cn(
+                  'h-full rounded-full bg-brand transition-all',
+                  progress.percent < 0 && 'animate-pulse'
+                )}
+                style={{ width: progress.percent >= 0 ? `${progress.percent}%` : '100%' }}
+              />
+            </div>
+          </div>
         )}
+
+        {failure && (
+          <p className="mt-2 text-[11.5px] leading-relaxed text-danger">
+            {t('settings.update.installFailed', { error: failure })}
+          </p>
+        )}
+
+        {update?.available &&
+          (update.canInstall ? (
+            <Button
+              variant="primary"
+              size="sm"
+              className="mt-3"
+              icon={
+                installing ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />
+              }
+              disabled={installing}
+              onClick={() => void downloadAndInstall()}
+            >
+              {installing ? t('settings.update.installing') : t('settings.update.install')}
+            </Button>
+          ) : (
+            <div className="mt-3">
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Download size={13} />}
+                onClick={() =>
+                  void window.api.app.openExternal(update.downloadUrl ?? update.releaseUrl ?? '')
+                }
+              >
+                {t('settings.update.download')}
+              </Button>
+              <p className="mt-2 text-[11px] leading-relaxed text-faint">
+                {t('settings.update.manualHint')}
+              </p>
+            </div>
+          ))}
       </section>
 
       <section>

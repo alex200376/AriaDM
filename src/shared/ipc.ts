@@ -90,6 +90,9 @@ export const IPC = {
 
   appOpenExternal: 'app:openExternal',
   updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  updateCancel: 'update:cancel',
 
   catcherGet: 'catcher:get',
   catcherResolve: 'catcher:resolve',
@@ -100,7 +103,8 @@ export const IPC = {
   eventClipboardDetected: 'event:clipboardDetected',
   eventToast: 'event:toast',
   eventNavigate: 'event:navigate',
-  eventCatcher: 'event:catcherUpdate'
+  eventCatcher: 'event:catcherUpdate',
+  eventUpdateProgress: 'event:updateProgress'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
@@ -175,7 +179,35 @@ export interface UpdateInfo {
   releaseUrl: string | null
   /** Direct installer asset, when the release carries one. */
   downloadUrl: string | null
+  /** Size of the installer asset in bytes, or 0 when the release did not say. */
+  downloadSize: number
+  /**
+   * True when this build can download and install an update itself.
+   *
+   * False for the portable build — running the NSIS installer would leave a
+   * second, installed copy behind — and for an unpackaged development run, where
+   * there is nothing to replace. Those builds keep the manual link.
+   */
+  canInstall: boolean
   /** Non-empty only when the check itself could not run. */
+  error: string
+}
+
+/**
+ * Live state of an in-app update download.
+ *
+ * `percent` is -1 when the size is unknown, so the UI can show an indeterminate
+ * bar instead of a bar stuck at 0.
+ */
+export interface UpdateProgress {
+  phase: 'idle' | 'downloading' | 'ready' | 'installing' | 'error'
+  /** Bytes written so far. */
+  received: number
+  /** Total bytes, or 0 when the server did not report a length. */
+  total: number
+  /** 0-100, or -1 while the total is unknown. */
+  percent: number
+  /** Non-empty only in the `error` phase. */
   error: string
 }
 
@@ -293,6 +325,12 @@ export interface AriaDmApi {
   update: {
     /** Ask GitHub Releases for the newest published version. */
     check(): Promise<UpdateInfo>
+    /** Download the newest installer into the app's temp folder. */
+    download(): Promise<UpdateProgress>
+    /** Run the downloaded installer silently and relaunch the app. */
+    install(): Promise<void>
+    /** Abort an in-flight download. */
+    cancel(): Promise<void>
   }
 
   /** Only meaningful inside the catch popup window. */
@@ -310,6 +348,8 @@ export interface AriaDmApi {
     navigate(handler: (payload: NavigationPayload) => void): () => void
     /** Fired when a second capture arrives while the popup is already open. */
     catcherUpdate(handler: (info: CatcherInfo) => void): () => void
+    /** Progress of an in-app update download. */
+    updateProgress(handler: (progress: UpdateProgress) => void): () => void
   }
 }
 

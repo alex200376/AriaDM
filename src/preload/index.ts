@@ -100,7 +100,10 @@ const api: AriaDmApi = {
   },
 
   update: {
-    check: () => invoke(IPC.updateCheck)
+    check: () => invoke(IPC.updateCheck),
+    download: () => invoke(IPC.updateDownload),
+    install: () => invoke(IPC.updateInstall),
+    cancel: () => invoke(IPC.updateCancel)
   },
 
   catcher: {
@@ -114,7 +117,8 @@ const api: AriaDmApi = {
     clipboardDetected: (handler) => subscribe(IPC.eventClipboardDetected, handler),
     toast: (handler) => subscribe(IPC.eventToast, handler),
     navigate: (handler) => subscribe(IPC.eventNavigate, handler),
-    catcherUpdate: (handler) => subscribe(IPC.eventCatcher, handler)
+    catcherUpdate: (handler) => subscribe(IPC.eventCatcher, handler),
+    updateProgress: (handler) => subscribe(IPC.eventUpdateProgress, handler)
   }
 }
 

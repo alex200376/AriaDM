@@ -30,6 +30,33 @@ async function getConfig() {
   return { ...DEFAULTS, ...stored }
 }
 
+/**
+ * The last known config, kept in memory so download interception can decide
+ * without awaiting.
+ *
+ * This is what fixes "it downloads twice". `getConfig()` is async, and the
+ * browser starts writing the file the moment the download is created; awaiting
+ * storage before cancelling gave a small file time to finish, leaving the
+ * browser's copy next to the one AriaDM was asked to make.
+ */
+let cachedConfig = { ...DEFAULTS }
+
+async function refreshConfig() {
+  cachedConfig = await getConfig()
+  return cachedConfig
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return
+  for (const [key, change] of Object.entries(changes)) {
+    if (key in DEFAULTS) cachedConfig[key] = change.newValue
+  }
+})
+
+// Warm the cache as soon as the worker wakes, so the first intercepted download
+// is not a special case.
+void refreshConfig()
+
 function endpoint(config, path) {
   return `http://127.0.0.1:${config.port}${path}`
 }
@@ -185,12 +212,12 @@ async function handoff(payload) {
       return { ok: false, error: message }
     }
 
-    const count = Array.isArray(body.gids) ? body.gids.length : 0
-    if (count > 0) {
-      notify('已送到 AriaDM', `已加入 ${count} 個下載項目。`)
-    } else if (body.duplicates && body.duplicates.length > 0) {
-      notify('已在下載中', '此連結已在 AriaDM 的佇列中。')
-    }
+    /*
+     * Success is deliberately silent. The on-page panel and the popup both show
+     * the result inline, and a toast for every handoff turned "send this page's
+     * 30 links" into 30 notifications. Only things the user cannot see there —
+     * warnings and failures — are worth a toast.
+     */
     for (const warning of body.warnings ?? []) notify('AriaDM 提示', warning)
     void updateBadge()
     return { ok: true, ...body }
@@ -256,6 +283,7 @@ chrome.runtime.onInstalled.addListener(() => {
       if (stored[key] === undefined) missing[key] = value
     }
     if (Object.keys(missing).length > 0) chrome.storage.local.set(missing)
+    cachedConfig = { ...DEFAULTS, ...stored, ...missing }
   })
   watchConnection()
   void autoPair()
@@ -294,21 +322,31 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
  * does, and it is why this is opt-in: cancelling a download the browser was
  * already handling is a visible side effect.
  */
-chrome.downloads.onCreated.addListener(async (item) => {
+chrome.downloads.onCreated.addListener((item) => {
+  // Nothing is awaited before the cancel: see the note on `cachedConfig`.
+  if (!cachedConfig.autoIntercept) return
   if (!item.url || item.url.startsWith('blob:') || item.url.startsWith('data:')) return
-  const config = await getConfig()
-  if (!config.autoIntercept) return
 
-  try {
-    await chrome.downloads.cancel(item.id)
-    await chrome.downloads.erase({ id: item.id })
-  } catch {
-    // Already gone; the handoff below is still worth attempting.
-  }
-
-  const payload = await payloadFor(item.url, undefined, false)
-  if (item.filename) payload.filename = item.filename.split(/[/\\]/).pop()
-  await handoff(payload)
+  /*
+   * Cancel first, then delete whatever the browser already wrote, then forget
+   * the record. `erase` on its own only removes the download *entry* and leaves
+   * the file on disk, which is the other half of the duplicate: the browser's
+   * copy stayed behind even when the handoff succeeded.
+   *
+   * `cancel` fails on a download that already finished and `removeFile` fails on
+   * one still in progress, so both are best-effort — between them every state is
+   * covered.
+   */
+  void chrome.downloads
+    .cancel(item.id)
+    .catch(() => {})
+    .then(() => chrome.downloads.removeFile(item.id).catch(() => {}))
+    .then(() => chrome.downloads.erase({ id: item.id }).catch(() => {}))
+    .then(async () => {
+      const payload = await payloadFor(item.url, undefined, false)
+      if (item.filename) payload.filename = item.filename.split(/[/\\]/).pop()
+      await handoff(payload)
+    })
 })
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

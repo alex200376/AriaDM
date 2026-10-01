@@ -36,6 +36,7 @@ import { isMediaGid, MediaJobs, mergeMediaItems } from './media/jobs'
 import { defaultDownloadDir, resolvePaths } from './paths'
 import { SettingsStore } from './settings/store'
 import { ToolkitManager } from './toolkit'
+import { UpdateManager } from './update/update-manager'
 import { resolveCookieArgs } from './media/browser-cookies'
 import { BACKGROUND, createMainWindow, resolvePreloadPath, resolveRendererPage } from './window'
 
@@ -58,6 +59,7 @@ let toolkit: ToolkitManager
 let mediaJobs: MediaJobs
 let engineRouter: EngineRouter
 let catcher: DownloadCatcher | null = null
+let updateManager: UpdateManager | null = null
 let clipboardWatcher: ClipboardWatcher | null = null
 let handoff: HandoffServer | null = null
 /** Fixed-port listener whose only job is to answer extension pairing. */
@@ -75,6 +77,21 @@ let paths: ReturnType<typeof resolvePaths>
 let resourcesRoot = ''
 
 const pendingIncoming: string[] = []
+
+/**
+ * Downloads that just finished, collected so a queue that drains all at once
+ * produces one notification instead of one per file.
+ *
+ * Notifying on every completion was the main source of notification spam: a
+ * batch of five files finishing together raised five toasts, and the "all
+ * finished" toast on top of them re-announced the whole queue on every dip to
+ * zero active downloads.
+ */
+let completionBatch: string[] = []
+let completionTimer: NodeJS.Timeout | null = null
+
+/** How long to gather completions before announcing them. */
+const COMPLETION_BATCH_MS = 1_200
 
 function log(line: string): void {
   // Main-process logging goes to the terminal in development and is otherwise
@@ -116,6 +133,11 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.setAsDefaultProtocolClient(PROTOCOL)
+
+// Windows attributes a toast to an AppUserModelID. Without this the app's own
+// notifications are labelled "electron.app.AriaDM" instead of "AriaDM", because
+// the default id does not match the shortcut the installer created.
+if (process.platform === 'win32') app.setAppUserModelId('app.ariadm')
 
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
@@ -672,6 +694,37 @@ async function runPostActionFor(item: DownloadItem): Promise<void> {
   }
 }
 
+/**
+ * Queue a completion notification, batching bursts into a single toast.
+ *
+ * The title reflects what the user actually cares about: whether the queue has
+ * drained (safe to shut down) or a file finished while others keep running.
+ */
+function queueCompletionNotice(name: string): void {
+  completionBatch.push(name)
+  if (completionTimer) return
+
+  completionTimer = setTimeout(() => {
+    completionTimer = null
+    const batch = completionBatch
+    completionBatch = []
+    if (batch.length === 0) return
+
+    const global = manager.getGlobalStat()
+    const drained = global.numActive === 0 && global.numWaiting === 0
+
+    // Only claim "all finished" when the queue really is empty; a burst that
+    // finished while more downloads are still running is just a completion.
+    const title = drained ? '全部下載完成' : '下載完成'
+    if (batch.length === 1) {
+      notify(title, batch[0]!)
+      return
+    }
+    notify(title, `共 ${batch.length} 個項目已完成。`)
+  }, COMPLETION_BATCH_MS)
+  completionTimer.unref?.()
+}
+
 async function handleCompleted(item: DownloadItem): Promise<void> {
   const settings = settingsStore.get()
 
@@ -686,7 +739,7 @@ async function handleCompleted(item: DownloadItem): Promise<void> {
   await runPostActionFor(item)
 
   if (settings.notifyOnComplete && !item.notified) {
-    notify('下載完成', item.name)
+    queueCompletionNotice(item.name)
     if (isMediaGid(item.gid)) mediaJobs.markNotified(item.gid)
     else manager.markCompletedHandled(item.gid)
   }
@@ -719,6 +772,9 @@ async function shutdownAndQuit(): Promise<void> {
   await supervisor.stop()
   await history.flush()
   await settingsStore.save()
+  // Everything is flushed, so the installer has no running app to report on and
+  // nothing left to kill. It relaunches AriaDM itself when it finishes.
+  updateManager?.launchInstaller()
   app.quit()
 }
 
@@ -801,14 +857,9 @@ async function bootstrap(): Promise<void> {
     hooks: {
       onCompleted: (item) => void handleCompleted(item),
       onFailed: (item) => handleFailed(item),
-      onQueueIdle: () => {
-        mainWindow?.setProgressBar(-1)
-        const settings = settingsStore.get()
-        if (settings.notifyOnComplete) {
-          const completed = manager.getItems().filter((entry) => entry.status === 'complete').length
-          if (completed > 0) notify('全部下載完成', `共 ${completed} 個項目已完成。`)
-        }
-      }
+      // The completion notification is raised by the batch below, which already
+      // knows whether the queue drained; there is nothing to announce here.
+      onQueueIdle: () => mainWindow?.setProgressBar(-1)
     }
   })
 
@@ -845,6 +896,17 @@ async function bootstrap(): Promise<void> {
         for (const gid of media) void mediaJobs.remove(gid, false)
       }
     }
+  })
+
+  // In-app update. `canInstall` is false for the portable build, whose only
+  // honest option is the manual download, and for an unpackaged dev run.
+  updateManager = new UpdateManager({
+    currentVersion: () => app.getVersion(),
+    installerDir: () => path.join(app.getPath('temp'), 'ariadm-update'),
+    canInstall: () => app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR,
+    onProgress: (progress) => send(IPC.eventUpdateProgress, progress),
+    requestQuit: () => void shutdownAndQuit(),
+    log
   })
 
   mediaJobs.on('completed', (item: DownloadItem) => void handleCompleted(item))
@@ -902,6 +964,10 @@ async function bootstrap(): Promise<void> {
     get catcher(): DownloadCatcher {
       if (!catcher) throw new Error('catch popup is not available yet')
       return catcher
+    },
+    get update(): UpdateManager {
+      if (!updateManager) throw new Error('the updater is not available yet')
+      return updateManager
     },
     paths,
     extensionDir: path.join(resourcesRoot, 'extension'),

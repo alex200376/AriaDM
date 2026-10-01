@@ -1,4 +1,4 @@
-import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
+import { clipboard, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
 
 import type { AppPaths, CategoryRule, DeepPartial, ScheduleRule, Settings, SpeedProfile } from '@shared/settings'
 import type { DownloadItem, GlobalStat } from '@shared/download'
@@ -22,7 +22,7 @@ import type { ClipboardWatcher } from '../integrations/clipboard-watch'
 import { isMediaGid, type MediaJobs } from '../media/jobs'
 import type { SettingsStore } from '../settings/store'
 import type { ToolkitManager } from '../toolkit'
-import { checkForUpdate } from '../update/update-checker'
+import type { UpdateManager } from '../update/update-manager'
 
 export interface HandlerContext {
   getWindow(): BrowserWindow | null
@@ -39,6 +39,8 @@ export interface HandlerContext {
   getClipboard(): ClipboardWatcher | null
   /** The IDM-style popup an intercepted browser download lands in. */
   catcher: DownloadCatcher
+  /** In-app update: release check, download, and silent install. */
+  update: UpdateManager
   paths: AppPaths
   extensionDir: string
   applyProfile(id: string): Promise<Settings>
@@ -364,7 +366,13 @@ export function registerIpcHandlers(context: HandlerContext): void {
 
   // ---- updates ---------------------------------------------------------------
 
-  ipcMain.handle(IPC.updateCheck, () => checkForUpdate(app.getVersion()))
+  ipcMain.handle(IPC.updateCheck, () => context.update.check())
+  ipcMain.handle(IPC.updateDownload, () => context.update.download())
+  ipcMain.handle(IPC.updateCancel, () => context.update.cancel())
+
+  // Returns as soon as the shutdown is queued; the installer runs during it and
+  // the app is relaunched by the installer itself.
+  ipcMain.handle(IPC.updateInstall, () => context.update.install())
 
   // ---- catch popup -----------------------------------------------------------
 

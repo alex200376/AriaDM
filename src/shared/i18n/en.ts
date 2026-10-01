@@ -573,6 +573,13 @@ export const en = {
   'settings.update.none': 'No published release found (or GitHub could not be reached).',
   'settings.update.failed': 'The update check failed: {error}',
   'settings.update.download': 'Download the new version',
+  'settings.update.install': 'Download and install',
+  'settings.update.installing': 'Installing and restarting…',
+  'settings.update.downloading': 'Downloading the update',
+  'settings.update.downloaded': 'Downloaded, ready to install',
+  'settings.update.installFailed': 'Update failed: {error}',
+  'settings.update.manualHint':
+    'This build cannot install updates itself. Download and run the installer manually.',
 
   // -- weekdays (numeric day index 0 = Sunday) -----------------------------
   'weekday.sun': 'Su',

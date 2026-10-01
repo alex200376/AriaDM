@@ -24,7 +24,7 @@ interface GithubRelease {
   html_url?: string
   draft?: boolean
   prerelease?: boolean
-  assets?: { name?: string; browser_download_url?: string }[]
+  assets?: { name?: string; browser_download_url?: string; size?: number }[]
 }
 
 /** Minimal slice of `fetch` this module uses, so tests can inject a stub. */
@@ -69,7 +69,18 @@ export function compareVersions(a: string, b: string): number {
 }
 
 function unavailable(current: string, error = ''): UpdateInfo {
-  return { current, latest: null, available: false, releaseUrl: null, downloadUrl: null, error }
+  return {
+    current,
+    latest: null,
+    available: false,
+    releaseUrl: null,
+    downloadUrl: null,
+    downloadSize: 0,
+    // Whether the running build can self-install is decided by the caller, which
+    // is the only place that knows the app is packaged and not portable.
+    canInstall: false,
+    error
+  }
 }
 
 /** Turn a GitHub release payload into an `UpdateInfo`. Exported for tests. */
@@ -92,6 +103,10 @@ export function parseRelease(json: unknown, current: string): UpdateInfo {
     available: compareVersions(latest, current) > 0,
     releaseUrl: typeof release.html_url === 'string' ? release.html_url : null,
     downloadUrl: installer?.browser_download_url ?? null,
+    // The size lets the download report real progress and reject a truncated
+    // file; the GitHub API reports it for every asset, but it is optional here.
+    downloadSize: typeof installer?.size === 'number' ? installer.size : 0,
+    canInstall: false,
     error: ''
   }
 }
