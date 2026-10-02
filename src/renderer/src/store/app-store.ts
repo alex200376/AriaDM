@@ -93,9 +93,9 @@ export interface AppState {
   setSearch(search: string): void
   toggleSort(field: SortField): void
   setSelection(gids: string[]): void
-  toggleSelected(gid: string, additive: boolean): void
+  toggleSelected(gid: string): void
   selectAll(gids: string[]): void
-  openDetail(gid: string | null, selectionBeforeClick?: string[]): void
+  openDetail(gid: string | null): void
   openDialog(dialog: DialogKind, seed?: string): void
   closeDialog(): void
 
@@ -279,12 +279,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({ selection: gids })
   },
 
-  toggleSelected(gid, additive) {
+  toggleSelected(gid) {
     const { selection } = get()
-    if (!additive) {
-      set({ selection: selection.length === 1 && selection[0] === gid ? [] : [gid] })
-      return
-    }
     set({
       selection: selection.includes(gid) ? selection.filter((entry) => entry !== gid) : [...selection, gid]
     })
@@ -294,14 +290,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({ selection: gids })
   },
 
-  openDetail(gid, selectionBeforeClick) {
-    // A row double-click arrives as two clicks, so by the time the row asks for
-    // the panel its first click has already moved the selection. Opening the
-    // details is not a selection gesture, so the row hands back what the
-    // selection was before those clicks and it is put back — without this,
-    // double-clicking a download to look at it flipped the row's checkbox
-    // (selected on the first click, toggled straight off by the second).
-    set(selectionBeforeClick ? { detailGid: gid, selection: selectionBeforeClick } : { detailGid: gid })
+  openDetail(gid) {
+    set({ detailGid: gid })
   },
 
   openDialog(dialog, seed = '') {

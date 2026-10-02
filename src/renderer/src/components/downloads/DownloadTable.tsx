@@ -209,7 +209,7 @@ export function DownloadTable({
                   <DownloadRow
                     item={item}
                     selected={selectedSet.has(item.gid)}
-                    onSelect={toggleSelected}
+                    onToggleSelected={toggleSelected}
                     onOpenDetail={openDetail}
                     onAction={handleAction}
                   />

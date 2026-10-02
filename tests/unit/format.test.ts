@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { setLocale } from '@shared/i18n'
 import {
   formatBytes,
   formatBytesPair,
@@ -119,5 +120,17 @@ describe('formatRelative', () => {
     expect(formatRelative(now - 5 * 60_000, now)).toBe('5 分鐘前')
     expect(formatRelative(now - 3 * 3_600_000, now)).toBe('3 小時前')
     expect(formatRelative(now - 2 * 86_400_000, now)).toBe('2 天前')
+  })
+
+  it('follows the app language rather than always answering in Chinese', () => {
+    setLocale('en')
+    try {
+      expect(formatRelative(now - 30_000, now)).toBe('just now')
+      expect(formatRelative(now - 5 * 60_000, now)).toBe('5m ago')
+      expect(formatRelative(now - 3 * 3_600_000, now)).toBe('3h ago')
+      expect(formatRelative(now - 2 * 86_400_000, now)).toBe('2d ago')
+    } finally {
+      setLocale('zh-TW')
+    }
   })
 })

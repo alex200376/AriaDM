@@ -2,7 +2,7 @@
  * Pure formatting helpers. Shared so the renderer and the main process agree,
  * and so they can be unit tested without a DOM.
  */
-import { getLocale, intlLocale } from './i18n'
+import { getLocale, intlLocale, t } from './i18n'
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'] as const
 
@@ -59,15 +59,20 @@ export function formatDateTime(ms: number | null): string {
   return new Date(ms).toLocaleString(intlLocale(getLocale()))
 }
 
-/** Compact "3m ago" style relative time. */
+/**
+ * Compact "3m ago" style relative time, in the app's language.
+ *
+ * Past a month it stops counting and gives the date, formatted with the same
+ * locale as `formatDateTime` so an English user does not get a Chinese date.
+ */
 export function formatRelative(ms: number | null, now = Date.now()): string {
   if (!ms) return '—'
   const diff = Math.max(0, now - ms)
-  if (diff < 60_000) return '剛剛'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分鐘前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小時前`
-  if (diff < 2_592_000_000) return `${Math.floor(diff / 86_400_000)} 天前`
-  return new Date(ms).toLocaleDateString()
+  if (diff < 60_000) return t('time.justNow')
+  if (diff < 3_600_000) return t('time.minutesAgo', { count: Math.floor(diff / 60_000) })
+  if (diff < 86_400_000) return t('time.hoursAgo', { count: Math.floor(diff / 3_600_000) })
+  if (diff < 2_592_000_000) return t('time.daysAgo', { count: Math.floor(diff / 86_400_000) })
+  return new Date(ms).toLocaleDateString(intlLocale(getLocale()))
 }
 
 /**
