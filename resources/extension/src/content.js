@@ -2,8 +2,9 @@
  * The download panel that appears over the player, in the spirit of IDM's
  * "download this video" bar.
  *
- * Only runs on media hosts (the manifest's match patterns come from
- * media-sites.json), and it hands the app a *page* URL rather than the element's
+ * Arms on the hosts in media-sites.json, and on any other host the app confirms
+ * holds a video (it reads the page rather than spending a yt-dlp run — see
+ * `watchUnknownHost`). It hands the app a *page* URL rather than the element's
  * `src`. That distinction is the whole reason this works on X: the src of a video
  * element there is a short-lived `.m3u8` fragment that only the page's own
  * session can fetch, whereas yt-dlp given the tweet URL resolves the real formats
@@ -394,16 +395,11 @@
     observer.observe(document.documentElement, { childList: true, subtree: true })
   }
 
-  async function start() {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'mediaSites' })
-      allowedHosts = Array.isArray(response && response.sites) ? response.sites : []
-    } catch {
-      allowedHosts = []
-    }
-
-    if (!isAllowedHost(location.hostname)) return
-
+  /** Wire the panel up for good. Idempotent, because detection can approve late. */
+  let activated = false
+  function activate() {
+    if (activated) return
+    activated = true
     place()
     observe()
     document.addEventListener('pointermove', onPointerMove, { passive: true, capture: true })
@@ -413,6 +409,55 @@
     // Sites that resize the player without touching the DOM (theatre mode,
     // picture-in-picture) are only caught by polling.
     window.setInterval(schedule, 1000)
+  }
+
+  /** How often an unknown host is re-checked for a player, and for how long. */
+  const DETECT_POLL_MS = 1200
+  const DETECT_MAX_POLLS = 50
+
+  /**
+   * Ask the app whether this page holds a video, and arm the panel if it does.
+   *
+   * This is how the panel reaches a site that is not on the curated host list:
+   * the extension cannot answer for a host nobody has looked at, but the app can,
+   * by reading the page. A player that is not in the document yet is the common
+   * case on script-built sites, so this waits for one rather than giving up on
+   * the first look — but only for a bounded time, so a page that will never have
+   * one does not poll forever.
+   */
+  function watchUnknownHost() {
+    let polls = 0
+    const timer = window.setInterval(async () => {
+      polls += 1
+      // Nothing to ask about until a player actually exists.
+      if (!findMainVideo()) {
+        if (polls >= DETECT_MAX_POLLS) window.clearInterval(timer)
+        return
+      }
+      window.clearInterval(timer)
+
+      let response = null
+      try {
+        response = await chrome.runtime.sendMessage({ type: 'detectPage', url: location.href })
+      } catch {
+        response = null
+      }
+      if (response && response.ok && response.media) activate()
+    }, DETECT_POLL_MS)
+  }
+
+  async function start() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'mediaSites' })
+      allowedHosts = Array.isArray(response && response.sites) ? response.sites : []
+    } catch {
+      allowedHosts = []
+    }
+
+    // A known site is armed straight away; anywhere else is checked first, and
+    // only if the page turns out to hold a player.
+    if (isAllowedHost(location.hostname)) activate()
+    else watchUnknownHost()
   }
 
   void start()

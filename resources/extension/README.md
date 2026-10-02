@@ -58,7 +58,9 @@ Instagram 的 `/reel/...`、`/p/...`、`/tv/...` 與 X 的 `/使用者/status/..
 
 ### 影片下載面板
 
-- 只在 `media-sites.json` 列出的網站出現；送到 AriaDM 的是**影片自己的頁面網址**，
+- 在 `media-sites.json` 列出的網站會直接出現；其他網站則會先問 AriaDM 這一頁是否有影片
+  （`POST /detect`，由主行程讀取頁面判斷，不跑 yt-dlp），確認有才會啟用面板。
+  送到 AriaDM 的是**影片自己的頁面網址**，
   而不是影片元素的 `src`：後者通常是幾分鐘後就失效的串流片段（這正是 X 能成功的原因），
   而列表頁的網址（`x.com/home`、`instagram.com/`）yt-dlp 根本無法解析。面板因此會從播放器
   往上找最近一張「貼文卡片」裡的連結（`urls.js` 的 `itemUrlNear`），找不到才退回頁面網址。

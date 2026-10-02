@@ -35,7 +35,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { ClipboardWatcher, looksLikeDirectFile } from './integrations/clipboard-watch'
 import { HandoffServer } from './integrations/handoff-api'
 import { formatChoices, defaultFormatId } from '@shared/media-formats'
-import { resolveHandoffEngine } from '@shared/media-sites'
+import { matchMediaSite, needsPageSniff, resolveHandoffEngine } from '@shared/media-sites'
 import { runPostAction, type PostActionDeps } from './integrations/post-actions'
 import { Scheduler } from './integrations/scheduler'
 import { CookieVault, hostOf } from './media/cookie-vault'
@@ -68,6 +68,7 @@ let settingsStore: SettingsStore
 let history: HistoryStore
 let toolkit: ToolkitManager
 let mediaJobs: MediaJobs
+let mediaSniffer: MediaSniffer
 let engineRouter: EngineRouter
 let catcher: DownloadCatcher | null = null
 let updateManager: UpdateManager | null = null
@@ -601,6 +602,20 @@ async function restartHandoff(): Promise<void> {
         formats: formatChoices(probe.formats, { hasFfmpeg: mediaJobs.hasFfmpeg })
       }
     },
+    onDetect: async ({ url, cookies }) => {
+      const settings = settingsStore.get()
+      // The curated list is free and authoritative; only an unknown host is worth
+      // reading, and only when the feature that would use the answer is on.
+      const site = matchMediaSite(url)
+      if (site !== null) return { media: true, site }
+      if (!settings.ytdlpEnabled || !settings.ytdlpDetectSites) return { media: false, site: null }
+      if (!needsPageSniff(url)) return { media: false, site: null }
+
+      // The session the browser is on the page with: a login-gated player only
+      // renders its video for a signed-in visitor.
+      const verdict = await mediaSniffer.sniff(url, { cookieHeader: cookies ?? '', referer: url })
+      return { media: verdict === 'media', site: null }
+    },
     onAdd: async (payload) => {
       const settings = settingsStore.get()
       // Hold the capture for confirmation when the popup is on. It goes in
@@ -1067,7 +1082,7 @@ async function bootstrap(): Promise<void> {
 
   // Reads a page's content to recognise a video on a host the curated list does
   // not know — the general answer to "why did my link go to aria2?".
-  const mediaSniffer = new MediaSniffer({ log })
+  mediaSniffer = new MediaSniffer({ log })
 
   manager = new DownloadManager({
     supervisor,

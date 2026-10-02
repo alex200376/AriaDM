@@ -13,7 +13,7 @@ import { HandoffServer } from '../../src/main/integrations/handoff-api'
  * `/add`: token, loopback, and an extension Origin.
  */
 
-function makeServer(onProbe?: ReturnType<typeof vi.fn>): HandoffServer {
+function makeServer(onProbe?: ReturnType<typeof vi.fn>, onDetect?: ReturnType<typeof vi.fn>): HandoffServer {
   return new HandoffServer({
     port: 0,
     token: 'test-token',
@@ -21,7 +21,8 @@ function makeServer(onProbe?: ReturnType<typeof vi.fn>): HandoffServer {
     log: () => {},
     onPing: () => ({ version: '0.0.0-test', active: 0, waiting: 0 }),
     onAdd: async () => ({ gids: [], duplicates: [], warnings: [] }),
-    onProbe: onProbe as never
+    onProbe: onProbe as never,
+    onDetect: onDetect as never
   })
 }
 
@@ -120,6 +121,71 @@ describe('handoff /probe', () => {
     await server.start()
 
     const response = await post(server.listeningPort, '/probe', { url: 'https://x.com/a/status/1' })
+
+    expect(response.status).toBe(404)
+    expect(response.body.ok).toBe(false)
+
+    await server.stop()
+  })
+})
+
+/**
+ * `/detect` is what lets the extension's on-page panel appear on a host that is
+ * not on the curated list. It is cheaper than `/probe` — it reads the page
+ * instead of running yt-dlp — but it is still the extension naming a URL for the
+ * app to fetch, so it is gated exactly like the other two routes.
+ */
+describe('handoff /detect', () => {
+  it('answers whether an unknown host holds a video', async () => {
+    const onDetect = vi.fn(async () => ({ media: true, site: null }))
+    const server = makeServer(undefined, onDetect)
+    await server.start()
+
+    const response = await post(server.listeningPort, '/detect', {
+      url: 'https://www.acgmho.com/gif/883534.html'
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.body).toMatchObject({ ok: true, media: true, site: null })
+    expect(onDetect).toHaveBeenCalledWith({
+      url: 'https://www.acgmho.com/gif/883534.html',
+      cookies: undefined
+    })
+
+    await server.stop()
+  })
+
+  it('refuses an answer without a URL', async () => {
+    const onDetect = vi.fn()
+    const server = makeServer(undefined, onDetect)
+    await server.start()
+
+    const response = await post(server.listeningPort, '/detect', {})
+
+    expect(response.status).toBe(400)
+    expect(onDetect).not.toHaveBeenCalled()
+
+    await server.stop()
+  })
+
+  it('refuses a request without the token', async () => {
+    const onDetect = vi.fn()
+    const server = makeServer(undefined, onDetect)
+    await server.start()
+
+    const response = await post(server.listeningPort, '/detect', { url: 'https://example.test/a' }, 'wrong')
+
+    expect(response.status).toBe(401)
+    expect(onDetect).not.toHaveBeenCalled()
+
+    await server.stop()
+  })
+
+  it('is absent when the app has no sniffer wired', async () => {
+    const server = makeServer(undefined, undefined)
+    await server.start()
+
+    const response = await post(server.listeningPort, '/detect', { url: 'https://example.test/a' })
 
     expect(response.status).toBe(404)
     expect(response.body.ok).toBe(false)

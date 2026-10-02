@@ -54,6 +54,18 @@ export interface HandoffProbeResult {
   formats: MediaFormatInfo[]
 }
 
+/**
+ * Whether a page the browser is looking at holds a video.
+ *
+ * `site` is the curated host it matched, or null when the answer came from
+ * reading the page — the extension uses it only to decide whether to show its
+ * on-page panel, so a host it does not already know can still get one.
+ */
+export interface HandoffDetectResult {
+  media: boolean
+  site: string | null
+}
+
 export interface DiscoverResponse {
   app: 'AriaDM'
   version: string
@@ -98,6 +110,15 @@ export interface HandoffServerOptions {
    * say-so: the listener is loopback-only, token-gated and origin-checked.
    */
   onProbe?(payload: { url: string; cookies?: string }): Promise<HandoffProbeResult>
+  /**
+   * Decide whether a page holds a video, for a host the extension does not know.
+   *
+   * Deliberately cheaper than `onProbe`: it does not spend a yt-dlp run, it
+   * reads a little of the page. The extension asks it before it arms its
+   * on-page panel on a host that is not on the curated list, so this is what
+   * lets that panel appear anywhere rather than only on the sites we listed.
+   */
+  onDetect?(payload: { url: string; cookies?: string }): Promise<HandoffDetectResult>
   log(line: string): void
   version?: string
   /**
@@ -422,6 +443,31 @@ export class HandoffServer {
         }
         const result = await this.options.onProbe({ url: parsed.url, cookies: parsed.cookies })
         this.options.log(`handoff probe ${hostOf(parsed.url) || 'unknown host'}: ${result.formats.length} choice(s)`)
+        send(200, { ok: true, ...result })
+        return
+      }
+
+      /**
+       * "Is this page a video?"
+       *
+       * The extension's own host list cannot answer for a site nobody has looked
+       * at, and this is what lets its on-page panel appear there too. Same trust
+       * level as `/probe`: loopback, token, extension Origin.
+       */
+      if (request.method === 'POST' && url.pathname === '/detect') {
+        const parsed = JSON.parse((await readBody(request)) || '{}') as { url?: string; cookies?: string }
+        if (typeof parsed.url !== 'string' || !parsed.url) {
+          send(400, { ok: false, error: 'url required' })
+          return
+        }
+        if (!this.options.onDetect) {
+          send(404, { ok: false, error: 'not found' })
+          return
+        }
+        const result = await this.options.onDetect({ url: parsed.url, cookies: parsed.cookies })
+        this.options.log(
+          `handoff detect ${hostOf(parsed.url) || 'unknown host'}: ${result.media ? 'media' : 'not media'}`
+        )
         send(200, { ok: true, ...result })
         return
       }

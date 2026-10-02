@@ -277,6 +277,69 @@ async function probeFormats(url) {
   }
 }
 
+/**
+ * Whether a page holds a video, asked of the app.
+ *
+ * The extension's host list only names the sites we already knew, so on any other
+ * host this is what decides whether the on-page panel is worth arming. The app
+ * reads a little of the page rather than spending a yt-dlp run, so this is far
+ * cheaper than `probeFormats` — and worth remembering.
+ *
+ * A confirmed host is remembered as a whole: once one page on a site has proved
+ * it holds video, every other page there is treated the same rather than asking
+ * again on each navigation. A "no" is remembered only for the URL that earned
+ * it, because a host can serve a video page next to a hundred text ones.
+ */
+const DETECT_CACHE_LIMIT = 200
+const mediaHosts = new Set()
+const rejectedUrls = new Map()
+
+async function detectPage(url) {
+  let host = ''
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch {
+    return { ok: false, error: 'invalid url' }
+  }
+
+  if (mediaHosts.has(host)) return { ok: true, media: true, cached: true }
+  if (rejectedUrls.has(url)) return { ok: true, media: false, cached: true }
+
+  const config = await getConfig()
+  if (!config.port || !config.token) return { ok: false, error: 'not-paired' }
+
+  const cookies = await cookieHeaderFor(url)
+  try {
+    const response = await self.AriaDmRequest.requestWithRepair(requestDeps(), config, '/detect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url, ...(cookies ? { cookies } : {}) })
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      return { ok: false, error: body.error || `HTTP ${response.status}` }
+    }
+    const body = await response.json().catch(() => ({}))
+    if (body.ok === false) return { ok: false, error: body.error || 'detect failed' }
+
+    const media = body.media === true
+    if (media) mediaHosts.add(host)
+    else rememberRejection(url)
+    return { ok: true, media, site: body.site ?? null }
+  } catch (error) {
+    return { ok: false, error: self.AriaDmRequest.describeError(error) }
+  }
+}
+
+function rememberRejection(url) {
+  rejectedUrls.set(url, true)
+  while (rejectedUrls.size > DETECT_CACHE_LIMIT) {
+    const oldest = rejectedUrls.keys().next().value
+    if (oldest === undefined) break
+    rejectedUrls.delete(oldest)
+  }
+}
+
 /** Long enough for a slow site, short enough that a busy button is not a hang. */
 const PROBE_BUDGET_MS = 20_000
 
@@ -535,6 +598,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'mediaSites') {
     mediaSites().then((sites) => sendResponse({ sites }))
+    return true
+  }
+  if (message?.type === 'detectPage') {
+    detectPage(message.url).then(sendResponse)
     return true
   }
   if (message?.type === 'pair') {
