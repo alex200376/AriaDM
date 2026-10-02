@@ -6,7 +6,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { UpdateCheckResult, UpdateProgress } from '../../src/shared/ipc'
 import type { InstallInfo } from '../../src/main/update/install-kind'
-import { UpdateManager, type UpdateChild, type UpdateDownloadFetch } from '../../src/main/update/update-manager'
+import {
+  UpdateManager,
+  type UpdateChild,
+  type UpdateDownloadFetch,
+  type UpdateManagerDeps
+} from '../../src/main/update/update-manager'
 
 const EXE_BYTES = new TextEncoder().encode('MZ' + 'x'.repeat(2046))
 const INSTALLER_NAME = 'AriaDM-0.2.0-setup.exe'
@@ -130,6 +135,8 @@ function makeManager(
     digest?: string
     /** Replaces the default body, for a download that has to stay in flight. */
     fetchImpl?: UpdateDownloadFetch
+    /** Fake engine; omitted means a build whose engine cannot be located. */
+    aria2Download?: UpdateManagerDeps['aria2Download']
   } = {}
 ): {
   manager: UpdateManager
@@ -169,6 +176,7 @@ function makeManager(
     // a test should not stand in for one.
     timings: { earlyExitMs: 30, elevatedConfirmMs: 60, processPollMs: 5 },
     checkImpl: async () => releaseInfo({ downloadSha256: options.digest ?? '' }),
+    aria2Download: options.aria2Download,
     fetchImpl: (url, init) => {
       fetches += 1
       if (options.fetchImpl) return options.fetchImpl(url, init)
@@ -343,6 +351,118 @@ describe('UpdateManager.download', () => {
 
     await first
     expect(manager.progress.phase).toBe('error')
+  })
+})
+
+describe('UpdateManager.download with the bundled engine', () => {
+  /** What a working engine does: put the bytes where it was told to. */
+  function workingEngine(bytes: Uint8Array, calls?: { count: number }): UpdateManagerDeps['aria2Download'] {
+    return async (options) => {
+      if (calls) calls.count += 1
+      writeFileSync(path.join(options.dir, options.out), bytes)
+      options.onProgress(bytes.length)
+      return { ok: true }
+    }
+  }
+
+  it('fetches the installer with the engine and never goes near the network itself', async () => {
+    const calls = { count: 0 }
+    const { manager, dir, fetches } = makeManager({
+      digest: sha256(EXE_BYTES),
+      aria2Download: workingEngine(EXE_BYTES, calls)
+    })
+    await manager.check()
+
+    const final = await manager.download()
+
+    expect(final.phase).toBe('ready')
+    expect(calls.count).toBe(1)
+    // The engine did the transfer, so no fetch went out at all.
+    expect(fetches()).toBe(0)
+    expect(manager.pendingInstaller).toBe(path.join(dir, INSTALLER_NAME))
+    expect(readFileSync(manager.pendingInstaller!)).toEqual(Buffer.from(EXE_BYTES))
+  })
+
+  it('reports progress while the engine downloads', async () => {
+    const seen: UpdateProgress[] = []
+    const { manager } = makeManager({
+      digest: sha256(EXE_BYTES),
+      onProgress: (progress) => seen.push(progress),
+      aria2Download: workingEngine(EXE_BYTES)
+    })
+    await manager.check()
+    await manager.download()
+
+    expect(seen.some((progress) => progress.phase === 'downloading')).toBe(true)
+  })
+
+  it('falls back to its own download when the engine cannot run', async () => {
+    const { manager, fetches } = makeManager({
+      digest: sha256(EXE_BYTES),
+      aria2Download: async () => ({ ok: false, unavailable: true, error: 'no aria2' })
+    })
+    await manager.check()
+
+    expect((await manager.download()).phase).toBe('ready')
+    expect(fetches()).toBe(1)
+  })
+
+  it('throws away what the engine produced when the bytes are not the published ones', async () => {
+    // The engine verifies the checksum itself, so this is the belt-and-braces
+    // check — and the one that decides whether a bad file can ever be run.
+    const result = makeManager({
+      digest: sha256(EXE_BYTES),
+      aria2Download: workingEngine(new TextEncoder().encode('some other build'))
+    })
+    await result.manager.check()
+
+    await result.manager.download()
+
+    expect(result.logs.some((line) => line.includes('engine download failed its digest check'))).toBe(
+      true
+    )
+    // It fell through to the fetch path rather than giving up.
+    expect(result.fetches()).toBe(1)
+  })
+
+  it('does not use the engine when the release published no check code', async () => {
+    // With no published digest the engine has nothing to verify against, and an
+    // unverifiable 197 MB installer is precisely what must not be run.
+    const calls = { count: 0 }
+    const { manager } = makeManager({ aria2Download: workingEngine(EXE_BYTES, calls) })
+    await manager.check()
+
+    await manager.download()
+
+    expect(calls.count).toBe(0)
+  })
+
+  it('claims the in-flight slot before its first await', async () => {
+    // The regression: the guard was checked early but the slot was only claimed
+    // after several awaits, so two quick presses could each start a download into
+    // the same `.part` file — two write positions, one file.
+    let calls = 0
+    const { manager } = makeManager({
+      digest: sha256(EXE_BYTES),
+      aria2Download: (options) =>
+        new Promise((resolve) => {
+          calls += 1
+          options.signal.addEventListener('abort', () => resolve({ ok: false, error: '已取消下載' }), {
+            once: true
+          })
+        })
+    })
+    await manager.check()
+
+    const first = manager.download().catch((error: Error) => error.message)
+    await vi.waitFor(() => expect(calls).toBe(1))
+
+    // A second press in the same window must not start a rival download.
+    await manager.download()
+    expect(calls).toBe(1)
+
+    manager.cancel()
+    expect(await first).toBe('已取消下載')
   })
 })
 

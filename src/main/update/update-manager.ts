@@ -109,6 +109,22 @@ export interface UpdateManagerDeps {
    * every case where the silent path could not be confirmed.
    */
   openInstaller(file: string): void
+  /**
+   * Download the installer with the app's own engine (aria2c).
+   *
+   * Preferred over the built-in fetch-and-pipe because the engine runs as a
+   * separate process and verifies the published checksum itself. Absent on a
+   * build whose engine cannot be located, in which case the fetch path is used.
+   */
+  aria2Download?(options: {
+    url: string
+    dir: string
+    out: string
+    sha256: string
+    size: number
+    signal: AbortSignal
+    onProgress(received: number): void
+  }): Promise<{ ok: boolean; unavailable?: boolean; error?: string }>
   log(line: string): void
   /** Where the update log lives, for diagnostics. */
   logPath(): string
@@ -324,12 +340,36 @@ export class UpdateManager {
    * only watches events still sees it.
    */
   async download(): Promise<UpdateProgress> {
+    if (!this.info?.downloadUrl) throw new Error('沒有可下載的更新檔。')
+
+    /*
+     * Claim the in-flight slot before anything can await.
+     *
+     * The guard used to be checked here but the claim itself happened only after
+     * `mkdir` and after re-verifying whatever is already on disk, so two quick
+     * presses could both get past it and run two downloads into the same `.part`
+     * file. Two write positions and one file produce exactly the failure that
+     * cannot be seen from the byte count: the right length, with blocks of the
+     * wrong data in it.
+     */
+    if (this.controller) return this.state
+    const controller = new AbortController()
+    this.controller = controller
+    try {
+      return await this.runDownload(controller)
+    } finally {
+      // Only our own: a newer attempt may already have taken the slot, and
+      // clearing that one would let a third start on top of it.
+      if (this.controller === controller) this.controller = null
+    }
+  }
+
+  /** The download itself; `download` holds the in-flight slot around it. */
+  private async runDownload(controller: AbortController): Promise<UpdateProgress> {
     // Reassigned on a retry: the digest we compare against may itself be the
     // part that was stale.
     let info = this.info
     if (!info?.downloadUrl) throw new Error('沒有可下載的更新檔。')
-    // A second call while one is running is a no-op, not a second download.
-    if (this.controller) return this.state
 
     const name = installerNameFor(info)
     const dir = this.deps.installerDir()
@@ -348,8 +388,6 @@ export class UpdateManager {
       return this.state
     }
 
-    const controller = new AbortController()
-    this.controller = controller
     this.installer = null
 
     try {
@@ -363,6 +401,17 @@ export class UpdateManager {
         },
         true
       )
+
+      // The app's own engine first: it verifies the published checksum itself,
+      // and being a separate process it is not exposed to anything wrong in this
+      // one. Only when it is unavailable, or fails, does the fetch path run.
+      if (await this.downloadWithEngine(info, controller)) {
+        const size = (await fsp.stat(target).catch(() => null))?.size ?? info.downloadSize
+        this.installer = target
+        this.emit({ phase: 'ready', received: size, total: size, percent: 100, error: '' }, true)
+        void this.pruneInstallers(target)
+        return this.state
+      }
 
       let received = 0
       let total = info.downloadSize
@@ -447,11 +496,86 @@ export class UpdateManager {
       const message = controller.signal.aborted || isAbort(error) ? '已取消下載' : (error as Error).message
       this.emit({ phase: 'error', received: 0, total: 0, percent: -1, error: message }, true)
       throw new Error(message)
-    } finally {
-      // Only our own: a newer attempt may already have taken the slot, and
-      // clearing that one would let a third start on top of it.
-      if (this.controller === controller) this.controller = null
     }
+  }
+
+  /**
+   * Fetch the installer with the app's own engine.
+   *
+   * Never throws except for a cancellation: every other failure is reported so
+   * the caller can fall through to its own download, because only the
+   * *combination* failing is a real dead end. The engine checks the published
+   * SHA-256 itself and the digest is checked again here — a file that reaches the
+   * installer is the one thing in this flow that must never be wrong.
+   */
+  private async downloadWithEngine(info: UpdateInfo, controller: AbortController): Promise<boolean> {
+    const download = this.deps.aria2Download
+    const url = info.downloadUrl
+    if (!download || !url || !info.downloadSha256) return false
+
+    const dir = this.deps.installerDir()
+    const out = installerNameFor(info)
+    const target = path.join(dir, out)
+
+    try {
+      this.deps.log(`downloading with the bundled engine: ${url} -> ${target}`)
+      const result = await download({
+        url,
+        dir,
+        out,
+        sha256: info.downloadSha256,
+        size: info.downloadSize,
+        signal: controller.signal,
+        onProgress: (received) => {
+          this.emit({
+            phase: 'downloading',
+            received,
+            total: info.downloadSize,
+            percent:
+              info.downloadSize > 0 ? Math.min(99, Math.floor((received / info.downloadSize) * 100)) : -1,
+            error: ''
+          })
+        }
+      })
+      // A cancelled engine reports failure like any other; without this the
+      // fetch path would immediately start downloading what the user just
+      // cancelled.
+      if (controller.signal.aborted) throw new Error('已取消下載')
+      if (!result.ok) {
+        this.deps.log(
+          `update: the bundled engine could not fetch the installer` +
+            `${result.unavailable ? ' (aria2 is unavailable)' : ''}: ${result.error ?? ''}`
+        )
+        return false
+      }
+    } catch (error) {
+      if (controller.signal.aborted || isAbort(error)) throw error
+      this.deps.log(`update: the bundled engine failed: ${(error as Error).message}`)
+      return false
+    }
+
+    const actual = await this.hashFile(target).catch(() => '')
+    if (actual !== info.downloadSha256) {
+      this.deps.log(
+        `update: engine download failed its digest check ` +
+          `(expected ${info.downloadSha256}, got ${actual || 'no file on disk'})`
+      )
+      await fsp.rm(target, { force: true }).catch(() => undefined)
+      return false
+    }
+
+    // The same gate the fetch path applies: an installer that is not a Windows
+    // executable never gets to run, whoever downloaded it.
+    try {
+      await this.assertExecutable(target)
+    } catch (error) {
+      this.deps.log(`update: engine download is not a Windows executable: ${(error as Error).message}`)
+      await fsp.rm(target, { force: true }).catch(() => undefined)
+      return false
+    }
+
+    this.deps.log(`update downloaded: ${target}`)
+    return true
   }
 
   /**

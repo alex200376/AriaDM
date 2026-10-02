@@ -43,6 +43,7 @@ import { isMediaGid, MediaJobs, mergeMediaItems } from './media/jobs'
 import { defaultDownloadDir, resolvePaths } from './paths'
 import { SettingsStore } from './settings/store'
 import { ToolkitManager } from './toolkit'
+import { downloadWithAria2 } from './update/aria2-download'
 import { detectInstallInfo } from './update/install-kind'
 import { verifyInstallerSignature } from './update/signature'
 import { UpdateManager } from './update/update-manager'
@@ -1135,6 +1136,22 @@ async function bootstrap(): Promise<void> {
     log: updateLog,
     logPath: updateLogPath,
     readLogTail: readUpdateLogTail,
+    // The installer is fetched with the app's own engine. That is the path every
+    // other download already takes, it verifies the published checksum itself,
+    // and running as a separate process keeps it clear of anything wrong in this
+    // one — which is the failure mode the in-process fetch path hit. That path
+    // remains as the fallback for a build whose engine cannot be located.
+    aria2Download: async (options) => {
+      const engine = locateAria2({
+        bundledDir: path.join(resourcesRoot, 'bin'),
+        userDataBinDir: paths.bin,
+        override: settingsStore.get().aria2Path
+      })
+      if (engine.source === 'missing') {
+        return { ok: false, unavailable: true, error: '找不到 aria2 執行檔。' }
+      }
+      return downloadWithAria2({ ...options, aria2Path: engine.path, log: updateLog })
+    },
     // Only meaningful once a certificate exists; an unsigned build skips it (see
     // update/signature.ts).
     verifyInstaller: (file) => verifyInstallerSignature({ appPath: app.getPath('exe'), installerPath: file })
