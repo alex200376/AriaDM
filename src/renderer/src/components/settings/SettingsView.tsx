@@ -919,8 +919,14 @@ function IntegrationsTab(): JSX.Element {
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {handoff && (
-            <Badge tone={handoff.running ? 'ok' : 'danger'} dot>
-              {handoff.running ? t('settings.browser.running', { port: handoff.port }) : t('settings.browser.stopped')}
+            // A busy port is retried rather than fatal, so it reads as a warning
+            // that resolves itself instead of the red "stopped" state.
+            <Badge tone={handoff.running ? 'ok' : handoff.retrying ? 'warn' : 'danger'} dot>
+              {handoff.running
+                ? t('settings.browser.running', { port: handoff.port })
+                : handoff.retrying
+                  ? t('settings.browser.retrying', { port: handoff.port })
+                  : t('settings.browser.stopped')}
             </Badge>
           )}
           {/* Auto-pairing lives on its own listener with its own port, so it gets

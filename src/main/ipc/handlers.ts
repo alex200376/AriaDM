@@ -39,6 +39,13 @@ export interface HandlerContext {
   getHandoff(): HandoffServer | null
   /** The auto-pairing listener an extension discovers AriaDM through. */
   getRendezvous(): HandoffServer | null
+  /**
+   * State of the main endpoint's bind-retry.
+   *
+   * `lastError` outlives the failed server object, so Settings can still explain
+   * a stopped listener instead of showing a bare "not running".
+   */
+  getHandoffRetry(): { retrying: boolean; lastError: string }
   getClipboard(): ClipboardWatcher | null
   /**
    * A live session the browser extension offered for this URL's host, or ''.
@@ -115,6 +122,28 @@ function targetFor(item: DownloadItem): string | null {
 
 export function registerIpcHandlers(context: HandlerContext): void {
   const { manager, supervisor, settingsStore, history, toolkit, mediaJobs } = context
+
+  // One builder for both handoff handlers: they used to repeat this object field
+  // for field, which is exactly how a new field ends up on only one of them.
+  const handoffInfo = (token?: string): HandoffInfo => {
+    const handoff = context.getHandoff()
+    const settings = settingsStore.get()
+    const retry = context.getHandoffRetry()
+    const port = handoff?.listeningPort || settings.handoffPort
+    return {
+      enabled: settings.handoffEnabled,
+      port,
+      token: token ?? handoff?.token ?? settings.handoffToken,
+      url: `http://127.0.0.1:${port}/add`,
+      running: handoff !== null && handoff.listeningPort > 0,
+      retrying: retry.retrying,
+      // The live server's error is the freshest; the retained one survives the
+      // server being discarded after a failed bind.
+      lastError: handoff?.error ?? retry.lastError,
+      discoveryPort: context.getRendezvous()?.listeningPort ?? 0,
+      discoveryPorts: [...HANDOFF_DISCOVERY_PORTS]
+    }
+  }
 
   const allItems = (): DownloadItem[] => [...manager.getItems(), ...mediaJobs.items()]
 
@@ -330,36 +359,13 @@ export function registerIpcHandlers(context: HandlerContext): void {
     await context.updateSettings({ clipboardWatch: enabled })
   })
 
-  ipcMain.handle(IPC.integrationsGetHandoffInfo, (): HandoffInfo => {
-    const handoff = context.getHandoff()
-    const settings = settingsStore.get()
-    return {
-      enabled: settings.handoffEnabled,
-      port: handoff?.listeningPort || settings.handoffPort,
-      token: handoff?.token ?? settings.handoffToken,
-      url: `http://127.0.0.1:${handoff?.listeningPort || settings.handoffPort}/add`,
-      running: handoff !== null && handoff.listeningPort > 0,
-      lastError: handoff?.error ?? '',
-      discoveryPort: context.getRendezvous()?.listeningPort ?? 0,
-      discoveryPorts: [...HANDOFF_DISCOVERY_PORTS]
-    }
-  })
+  ipcMain.handle(IPC.integrationsGetHandoffInfo, (): HandoffInfo => handoffInfo())
 
   ipcMain.handle(IPC.integrationsRotateHandoffToken, async (): Promise<HandoffInfo> => {
     const handoff = context.getHandoff()
     const token = handoff ? handoff.rotateToken() : settingsStore.get().handoffToken
     await context.updateSettings({ handoffToken: token })
-    const settings = settingsStore.get()
-    return {
-      enabled: settings.handoffEnabled,
-      port: handoff?.listeningPort || settings.handoffPort,
-      token,
-      url: `http://127.0.0.1:${handoff?.listeningPort || settings.handoffPort}/add`,
-      running: handoff !== null && handoff.listeningPort > 0,
-      lastError: handoff?.error ?? '',
-      discoveryPort: context.getRendezvous()?.listeningPort ?? 0,
-      discoveryPorts: [...HANDOFF_DISCOVERY_PORTS]
-    }
+    return handoffInfo(token)
   })
 
   ipcMain.handle(IPC.integrationsGetMediaFormats, async (_event, url: string) => {

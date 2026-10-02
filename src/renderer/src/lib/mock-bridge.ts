@@ -271,6 +271,7 @@ const handoff: HandoffInfo = {
   token: settings.handoffToken,
   url: `http://127.0.0.1:${settings.handoffPort}/add`,
   running: true,
+  retrying: false,
   lastError: '',
   discoveryPort: 7071,
   discoveryPorts: [7070, 7071, 7072, 7073, 7074]

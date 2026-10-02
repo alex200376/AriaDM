@@ -288,6 +288,37 @@ describe('handoff pairing and discovery', () => {
     }
   })
 
+  it('exposes a bind failure, which is what the handoff retry reacts to', async () => {
+    // The port being taken is the exact condition after an update, while the
+    // previous process is still shutting down. The endpoint must surface it
+    // (so a retry can be scheduled and the UI can explain it) rather than
+    // failing silently, and it must leave no listener behind.
+    const squatter = http.createServer((_request, response) => response.end())
+    await new Promise<void>((resolve) => squatter.listen(0, '127.0.0.1', resolve))
+    const address = squatter.address()
+    const takenPort = typeof address === 'object' && address ? address.port : 0
+
+    try {
+      const server = new HandoffServer({
+        port: takenPort,
+        token: 'token-under-test',
+        version: '9.9.9-test',
+        onAdd: async () => ({ gids: [], duplicates: [], warnings: [] }),
+        onPing: () => ({ version: '', active: 0, waiting: 0 }),
+        log: (line) => logs.push(line)
+      })
+
+      await expect(server.start()).rejects.toMatchObject({ code: 'EADDRINUSE' })
+      expect(server.error).not.toBe('')
+      expect(server.listeningPort).toBe(0)
+      // A half-failed bind must be cleanly stoppable, which is what the retry
+      // path does before scheduling the next attempt.
+      await server.stop()
+    } finally {
+      await new Promise<void>((resolve) => squatter.close(() => resolve()))
+    }
+  })
+
   it('advertises a portable candidate list the extension can probe', () => {
     expect(HANDOFF_DISCOVERY_PORTS.length).toBeGreaterThan(1)
     expect(new Set(HANDOFF_DISCOVERY_PORTS).size).toBe(HANDOFF_DISCOVERY_PORTS.length)

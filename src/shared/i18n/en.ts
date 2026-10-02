@@ -494,6 +494,7 @@ export const en = {
     'Asks before starting what the extension caught, in an IDM-style window. Closing it keeps the download for later.',
   'settings.browser.running': 'Running :{port}',
   'settings.browser.stopped': 'Not running',
+  'settings.browser.retrying': 'Reconnecting :{port}…',
   'settings.browser.lastError': 'The browser integration reported a problem: {message}',
   'settings.browser.discovery': 'Auto-pairing :{port}',
   'settings.browser.discoveryOff': 'Auto-pairing off',

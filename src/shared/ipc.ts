@@ -294,6 +294,12 @@ export interface HandoffInfo {
   token: string
   url: string
   running: boolean
+  /**
+   * True when the endpoint failed to bind and a retry is scheduled. The port is
+   * most often still held by the previous process mid-update, so this is a
+   * transient state rather than a configuration error.
+   */
+  retrying: boolean
   lastError: string
   /**
    * Port the extension discovers AriaDM on, or 0 when the auto-pairing

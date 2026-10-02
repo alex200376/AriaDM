@@ -23,6 +23,7 @@ import { localeFromSetting } from '@shared/i18n'
 
 import { createAppLog } from './app-log'
 import { locateAria2 } from './aria2/locate'
+import { nextBackoffDelay } from './backoff'
 import { bounded, type BoundedResult } from './bounded'
 import { DownloadCatcher } from './catcher'
 import { Aria2Supervisor } from './aria2/supervisor'
@@ -70,6 +71,19 @@ let catcher: DownloadCatcher | null = null
 let updateManager: UpdateManager | null = null
 let clipboardWatcher: ClipboardWatcher | null = null
 let handoff: HandoffServer | null = null
+/**
+ * Retry timer for the main handoff endpoint.
+ *
+ * The bind is retried rather than attempted once because an update leaves the
+ * *previous* process briefly holding `handoffPort`: the new process would fail
+ * to bind, and a listener that is never retried stays down for the whole
+ * session, which the extension reports as "AriaDM is not reachable" until the
+ * user restarts the app by hand.
+ */
+let handoffRetry: NodeJS.Timeout | null = null
+let handoffAttempts = 0
+/** The last bind failure, kept so Settings can explain a stopped endpoint. */
+let handoffLastError = ''
 /** Fixed-port listener whose only job is to answer extension pairing. */
 let rendezvous: HandoffServer | null = null
 /** Retry timer for the rendezvous listener, which is retried with a backoff. */
@@ -79,6 +93,16 @@ let rendezvousAttempts = 0
 /** How long to wait before trying the discovery ports again. */
 const RENDEZVOUS_RETRY_BASE_MS = 5_000
 const RENDEZVOUS_RETRY_MAX_MS = 60_000
+
+/**
+ * How long to wait before trying the handoff port again.
+ *
+ * Shorter than the discovery backoff on purpose: the handoff endpoint is what
+ * the extension actually needs, and a stale holder after an update releases the
+ * port within seconds, so the first retry is meant to catch that window.
+ */
+const HANDOFF_RETRY_BASE_MS = 2_000
+const HANDOFF_RETRY_MAX_MS = 30_000
 let scheduler: Scheduler
 
 /**
@@ -528,6 +552,10 @@ function catcherHost(urls: string[]): string {
 
 async function restartHandoff(): Promise<void> {
   const settings = settingsStore.get()
+  if (handoffRetry) {
+    clearTimeout(handoffRetry)
+    handoffRetry = null
+  }
   if (rendezvousRetry) {
     clearTimeout(rendezvousRetry)
     rendezvousRetry = null
@@ -625,11 +653,39 @@ async function restartHandoff(): Promise<void> {
   try {
     await server.start()
     handoff = server
+    handoffAttempts = 0
+    handoffLastError = ''
   } catch {
     handoff = null
+    handoffLastError = server.error
+    // A half-failed bind must not leak a listener or its sockets.
+    await server.stop().catch(() => undefined)
+    log(`handoff API could not bind 127.0.0.1:${settings.handoffPort}: ${handoffLastError}`)
+    scheduleHandoffRetry()
+    // Discovery advertises the endpoint's port, so announcing it before the
+    // endpoint is listening would point the extension at a dead socket.
+    return
   }
 
   await startRendezvous(server)
+}
+
+/**
+ * Try the handoff port again after a capped backoff.
+ *
+ * Retries indefinitely (capped, not unlimited rate): a busy port is a transient
+ * state — most often the previous process still shutting down mid-update — and
+ * the alternative is a listener that is dead until the user intervenes.
+ */
+function scheduleHandoffRetry(): void {
+  handoffAttempts += 1
+  const delay = nextBackoffDelay(handoffAttempts, HANDOFF_RETRY_BASE_MS, HANDOFF_RETRY_MAX_MS)
+  log(`handoff API retrying in ${Math.round(delay / 1000)}s`)
+  handoffRetry = setTimeout(() => {
+    handoffRetry = null
+    if (!quitting && settingsStore.get().handoffEnabled && !handoff) void restartHandoff()
+  }, delay)
+  handoffRetry.unref?.()
 }
 
 /**
@@ -678,7 +734,7 @@ async function startRendezvous(server: HandoffServer): Promise<void> {
   // of leaving auto-pairing dead for the rest of the session.
   rendezvous = null
   rendezvousAttempts += 1
-  const delay = Math.min(RENDEZVOUS_RETRY_BASE_MS * 2 ** (rendezvousAttempts - 1), RENDEZVOUS_RETRY_MAX_MS)
+  const delay = nextBackoffDelay(rendezvousAttempts, RENDEZVOUS_RETRY_BASE_MS, RENDEZVOUS_RETRY_MAX_MS)
   log(`all discovery ports ${HANDOFF_DISCOVERY_PORTS.join(', ')} are in use; retrying in ${Math.round(delay / 1000)}s`)
   rendezvousRetry = setTimeout(() => {
     rendezvousRetry = null
@@ -903,9 +959,15 @@ async function shutdownAndQuit(): Promise<void> {
   ]
 
   for (const [label, run] of steps) {
-    if (rendezvousRetry && label === 'handoff API') {
-      clearTimeout(rendezvousRetry)
-      rendezvousRetry = null
+    if (label === 'handoff API') {
+      if (handoffRetry) {
+        clearTimeout(handoffRetry)
+        handoffRetry = null
+      }
+      if (rendezvousRetry) {
+        clearTimeout(rendezvousRetry)
+        rendezvousRetry = null
+      }
     }
     let result: BoundedResult
     try {
@@ -1129,6 +1191,7 @@ async function bootstrap(): Promise<void> {
     engineRouter,
     getHandoff: () => handoff,
     getRendezvous: () => rendezvous,
+    getHandoffRetry: () => ({ retrying: handoffRetry !== null, lastError: handoffLastError }),
     getClipboard: () => clipboardWatcher,
     // A session the extension offered recently, for the dialog path: pasting a
     // link that needs a login should work when the browser is already signed in.

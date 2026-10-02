@@ -489,6 +489,7 @@ export const zhTW = {
   'settings.browser.lastError': '瀏覽器整合發生問題：{message}',
   'settings.browser.running': '運作中 :{port}',
   'settings.browser.stopped': '未運作',
+  'settings.browser.retrying': '正在重新連線 :{port}…',
   'settings.browser.discovery': '自動配對 :{port}',
   'settings.browser.discoveryOff': '自動配對停用',
   'settings.browser.discoveryWarning':
