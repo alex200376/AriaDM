@@ -139,6 +139,35 @@ const PROGRESS_INTERVAL_MS = 120
 const INSTALLER_ARGS = ['/S', '--updated', '--force-run']
 
 /**
+ * How many times a download may be attempted before the failure is reported.
+ *
+ * Two, not one: a fresh release can be served — or its digest reported — a
+ * moment behind by a CDN edge or an antivirus/proxy cache, and the symptom is a
+ * digest mismatch on a file of exactly the right length. A second attempt
+ * re-reads the release and downloads from a different URL, which is what makes
+ * that recoverable instead of a permanent failure.
+ */
+const MAX_DOWNLOAD_ATTEMPTS = 2
+
+/**
+ * The same URL with a throwaway query parameter.
+ *
+ * Release assets are served through a CDN edge and, on a machine that has one,
+ * an antivirus or corporate proxy that caches by URL. A brand-new asset can be
+ * cached before it has fully propagated, and the same URL then keeps answering
+ * with the old bytes for ever. Changing the URL sidesteps every such cache.
+ */
+function cacheBusted(url: string): string {
+  try {
+    const parsed = new URL(url)
+    parsed.searchParams.set('ariadm_retry', String(Date.now()))
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
+/**
  * How long the installer must survive before we accept that it started.
  *
  * Long enough to catch an immediate failure (a bad image, a missing file, an
@@ -295,7 +324,9 @@ export class UpdateManager {
    * only watches events still sees it.
    */
   async download(): Promise<UpdateProgress> {
-    const info = this.info
+    // Reassigned on a retry: the digest we compare against may itself be the
+    // part that was stale.
+    let info = this.info
     if (!info?.downloadUrl) throw new Error('沒有可下載的更新檔。')
     // A second call while one is running is a no-op, not a second download.
     if (this.controller) return this.state
@@ -333,47 +364,69 @@ export class UpdateManager {
         true
       )
 
-      this.deps.log(`downloading ${info.downloadUrl} -> ${target}`)
-      const response = await this.fetchImpl(info.downloadUrl, { signal: controller.signal })
-      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
-
-      const headerLength = Number(response.headers.get('content-length'))
-      const total = headerLength > 0 ? headerLength : info.downloadSize
-
-      await fsp.rm(partial, { force: true })
-      const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0])
       let received = 0
-      source.on('data', (chunk: Buffer) => {
-        received += chunk.length
-        this.emit({
-          phase: 'downloading',
-          received,
-          total,
-          percent: total > 0 ? Math.min(99, Math.floor((received / total) * 100)) : -1,
-          error: ''
+      let total = info.downloadSize
+
+      for (let attempt = 0; attempt < MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
+        const baseUrl = info.downloadUrl
+        if (!baseUrl) throw new Error('沒有可下載的更新檔。')
+        const url = attempt === 0 ? baseUrl : cacheBusted(baseUrl)
+        this.deps.log(`downloading ${url} -> ${target}`)
+
+        const response = await this.fetchImpl(url, { signal: controller.signal })
+        if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
+
+        const headerLength = Number(response.headers.get('content-length'))
+        total = headerLength > 0 ? headerLength : info.downloadSize
+
+        await fsp.rm(partial, { force: true })
+        const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0])
+        received = 0
+        source.on('data', (chunk: Buffer) => {
+          received += chunk.length
+          this.emit({
+            phase: 'downloading',
+            received,
+            total,
+            percent: total > 0 ? Math.min(99, Math.floor((received / total) * 100)) : -1,
+            error: ''
+          })
         })
-      })
 
-      await pipeline(source, fs.createWriteStream(partial))
+        await pipeline(source, fs.createWriteStream(partial))
 
-      // A short read means the connection dropped mid-file. Installing a partial
-      // installer is worse than asking the user to try again.
-      if (total > 0 && received !== total) {
-        throw new Error(`更新檔不完整（${received}/${total} bytes）`)
-      }
+        // A short read means the connection dropped mid-file. Installing a
+        // partial installer is worse than asking the user to try again.
+        if (total > 0 && received !== total) {
+          throw new Error(`更新檔不完整（${received}/${total} bytes）`)
+        }
 
-      /*
-       * The bytes, not just the count.
-       *
-       * This is the check that separates "the transfer finished" from "the file
-       * is the one that was published". A damaged write of the right length is
-       * rare, but it is not hypothetical: it is what a storage or antivirus fault
-       * in the middle of a 197 MB write looks like, and without this the damage
-       * is only discovered by the installer — which cannot re-download anything,
-       * so every retry fails identically.
-       */
-      if (info.downloadSha256 && (await this.hashFile(partial)) !== info.downloadSha256) {
-        throw new Error('更新檔內容與發佈的檢查碼不符（可能已損毀），請再試一次。')
+        /*
+         * The bytes, not just the count.
+         *
+         * This is the check that separates "the transfer finished" from "the
+         * file is the one that was published". A damaged write of the right
+         * length is rare, but it is not hypothetical: it is what a storage or
+         * antivirus fault in the middle of a 197 MB write looks like, and a
+         * fresh release served a moment early looks the same from here.
+         */
+        if (!info.downloadSha256) break
+        const actual = await this.hashFile(partial)
+        if (actual === info.downloadSha256) break
+
+        // Recorded rather than only thrown: without the two hashes in the log,
+        // this failure is indistinguishable from a dozen other causes.
+        this.deps.log(
+          `update: downloaded installer failed its digest check ` +
+            `(expected ${info.downloadSha256}, got ${actual})`
+        )
+        if (attempt + 1 >= MAX_DOWNLOAD_ATTEMPTS) {
+          throw new Error('更新檔內容與發佈的檢查碼不符（可能已損毀），請再試一次。')
+        }
+        // Take the release's word again as well: the digest we were comparing
+        // against may have been the stale part, not the file.
+        const refreshed = await this.check().catch(() => null)
+        if (refreshed?.downloadUrl) info = refreshed
       }
 
       await fsp.rm(target, { force: true })

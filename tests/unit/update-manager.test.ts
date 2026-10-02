@@ -296,6 +296,28 @@ describe('UpdateManager.download', () => {
     expect(manager.progress.phase).toBe('error')
   })
 
+  it('retries once, and succeeds, when the first bytes fail the digest check', async () => {
+    // A fresh release can be served a moment behind by a CDN edge: a file of
+    // exactly the right length whose bytes are not the published ones. The
+    // second attempt has to actually happen rather than be reported as a dead
+    // end — otherwise a release is un-updatable for anyone who tries it early.
+    const wrong = new TextEncoder().encode('some other build')
+    let call = 0
+    const { manager } = makeManager({
+      digest: sha256(EXE_BYTES),
+      fetchImpl: () => {
+        call += 1
+        const bytes = call === 1 ? wrong : EXE_BYTES
+        return streamResponse(bytes, bytes.length)
+      }
+    })
+    await manager.check()
+
+    expect((await manager.download()).phase).toBe('ready')
+    expect(call).toBe(2)
+    expect(manager.pendingInstaller).not.toBeNull()
+  })
+
   it('keeps the slot taken while a cancelled attempt is still unwinding', async () => {
     // Two attempts writing the same `.part` file means two file positions and one
     // file: the result is the right length with blocks of the wrong data in it.
