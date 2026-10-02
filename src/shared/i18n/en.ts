@@ -369,6 +369,50 @@ export const en = {
   'detail.media.format': 'Format',
   'detail.media.note':
     'yt-dlp cannot pause, so pausing ends the process; resuming continues from the .part file.',
+  'detail.title': 'Download details',
+  'detail.retry': 'Retry download',
+  'detail.infoHash': 'Info hash',
+  'detail.torrentMode': 'Torrent mode',
+  'detail.seeders': 'Seeders',
+  'detail.tracker': 'Trackers',
+  'detail.files.empty.title': 'No file information yet',
+  'detail.files.empty.body':
+    'Torrent and Metalink downloads list their files once the metadata arrives.',
+  'detail.files.unselected': 'Not selected for download',
+  'detail.peers.loading': 'Loading peers…',
+  'detail.peers.torrentOnly.title': 'Only BitTorrent downloads have peers',
+  'detail.peers.torrentOnly.body':
+    'An HTTP download pulls byte ranges over several connections, so it has no peers.',
+  'detail.peers.none.title': 'No connected peers',
+  'detail.peers.none.body':
+    'It may still be searching for seeds, or the download finished and stopped connecting.',
+  'detail.peers.leecher': 'Leecher',
+  'detail.pieces.loading': 'Loading piece data…',
+  'detail.pieces.error.title': 'Could not read the pieces',
+  'detail.pieces.count': 'Pieces',
+  'detail.pieces.progress': 'Piece progress',
+  'detail.pieces.empty.title': 'No piece information yet',
+  'detail.pieces.empty.body':
+    'aria2 builds the segment bitmap once the download starts; a finished or removed item has none.',
+  'detail.pieces.cellTitle': 'Pieces {from}–{to}: {done}/{total} complete',
+  'detail.pieces.legend':
+    'Green is a finished piece and purple is partly done. Each cell stands for {count} pieces.',
+  'detail.pieces.merged': '{pieces} pieces are merged into {cells} cells.',
+  'detail.servers.loading': 'Loading server data…',
+  'detail.servers.active': 'Active connections',
+  'detail.servers.uris': 'Sources',
+  'detail.servers.mirrors': '{count} mirrors',
+  'detail.servers.used': 'In use',
+  'detail.servers.idle': 'Unused',
+  'detail.servers.empty.body':
+    'The engine has not reported any connection sources for this download yet.',
+  'detail.options.note':
+    'aria2 only lets you change a download that has not started; a running one is paused, updated, then resumed.',
+  'detail.options.noteSettled': 'A finished download cannot be changed any more.',
+  'detail.options.limitHint': 'Empty or 0 means no limit, for example 2M or 500K',
+  'detail.options.splitHint': 'How many connections this download uses at once',
+  'detail.options.engineList': 'aria2 options in effect',
+  'detail.options.blank': '(empty)',
 
   // -- settings ------------------------------------------------------------
   'settings.title': 'Settings',

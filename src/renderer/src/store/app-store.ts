@@ -95,7 +95,7 @@ export interface AppState {
   setSelection(gids: string[]): void
   toggleSelected(gid: string, additive: boolean): void
   selectAll(gids: string[]): void
-  openDetail(gid: string | null): void
+  openDetail(gid: string | null, selectionBeforeClick?: string[]): void
   openDialog(dialog: DialogKind, seed?: string): void
   closeDialog(): void
 
@@ -294,8 +294,14 @@ export const useApp = create<AppState>((set, get) => ({
     set({ selection: gids })
   },
 
-  openDetail(gid) {
-    set({ detailGid: gid })
+  openDetail(gid, selectionBeforeClick) {
+    // A row double-click arrives as two clicks, so by the time the row asks for
+    // the panel its first click has already moved the selection. Opening the
+    // details is not a selection gesture, so the row hands back what the
+    // selection was before those clicks and it is put back — without this,
+    // double-clicking a download to look at it flipped the row's checkbox
+    // (selected on the first click, toggled straight off by the second).
+    set(selectionBeforeClick ? { detailGid: gid, selection: selectionBeforeClick } : { detailGid: gid })
   },
 
   openDialog(dialog, seed = '') {

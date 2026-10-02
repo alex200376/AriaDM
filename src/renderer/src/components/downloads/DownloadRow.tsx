@@ -1,5 +1,5 @@
 import { Check, ExternalLink, FolderOpen, MoreHorizontal, Pause, Play, RotateCw, Trash2 } from 'lucide-react'
-import { memo, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 
 import type { DownloadItem } from '@shared/download'
 import { etaOf, progressOf } from '@shared/download'
@@ -11,6 +11,7 @@ import { useEasedNumber } from '../../hooks/useEased'
 // the language itself through the hook rather than the module-level `t`.
 import { useTranslation } from '../../lib/i18n'
 import { kindGlyph, kindLabel } from '../../lib/labels'
+import { useApp } from '../../store/app-store'
 import { IconButton } from '../ui/primitives'
 
 import { ProgressBar } from './ProgressBar'
@@ -19,11 +20,19 @@ import { StatusBadge } from './StatusBadge'
 // The column template is `.queue-grid` in globals.css: it is responsive, which a
 // JS constant cannot be.
 
+/**
+ * How long a remembered selection still counts as belonging to the double-click
+ * that is opening the panel. Deliberately the same order as the double-click
+ * time the browser uses to decide whether to fire `dblclick` at all.
+ */
+const DOUBLE_CLICK_MS = 500
+
 export interface DownloadRowProps {
   item: DownloadItem
   selected: boolean
   onSelect(gid: string, additive: boolean): void
-  onOpenDetail(gid: string): void
+  /** `selectionBeforeClick` is only passed when the open came from a double-click. */
+  onOpenDetail(gid: string, selectionBeforeClick?: string[]): void
   onAction(action: 'pause' | 'resume' | 'retry' | 'remove' | 'open' | 'folder', gid: string): void
 }
 
@@ -40,6 +49,13 @@ function hostOf(item: DownloadItem): string {
 function DownloadRowImpl({ item, selected, onSelect, onOpenDetail, onAction }: DownloadRowProps): JSX.Element {
   const [hovered, setHovered] = useState(false)
   const { t } = useTranslation()
+
+  // The last click that may turn out to be the first half of a double-click: when
+  // it landed, and the selection as it was before it changed anything. Read
+  // straight from the store rather than taken as a prop, because only the click
+  // handler needs it and a subscription here would re-render every row on any
+  // selection change.
+  const pendingClick = useRef<{ at: number; selection: string[] } | null>(null)
 
   const fraction = progressOf(item)
   const eta = etaOf(item)
@@ -67,8 +83,25 @@ function DownloadRowImpl({ item, selected, onSelect, onOpenDetail, onAction }: D
       tabIndex={0}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onClick={(event) => onSelect(item.gid, event.ctrlKey || event.metaKey || event.shiftKey)}
-      onDoubleClick={() => onOpenDetail(item.gid)}
+      onClick={(event) => {
+        // `detail` counts the clicks in one burst, so the second half of a
+        // double-click is not a second selection gesture. Without this, opening
+        // a row's details selected it and the click that followed it toggled
+        // the row's checkbox straight back off.
+        if (event.detail > 1) return
+        pendingClick.current = { at: event.timeStamp, selection: useApp.getState().selection }
+        onSelect(item.gid, event.ctrlKey || event.metaKey || event.shiftKey)
+      }}
+      onDoubleClick={(event) => {
+        // Opening the details is not a selection gesture, so the selection the
+        // click before this one moved is put back. Always cleared: a double-click
+        // whose first click never reached this row opens the panel and leaves the
+        // selection alone rather than restoring a stale one.
+        const pending = pendingClick.current
+        pendingClick.current = null
+        const recent = pending !== null && event.timeStamp - pending.at <= DOUBLE_CLICK_MS
+        onOpenDetail(item.gid, recent ? pending.selection : undefined)
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter') onOpenDetail(item.gid)
       }}
@@ -89,6 +122,10 @@ function DownloadRowImpl({ item, selected, onSelect, onOpenDetail, onAction }: D
             event.stopPropagation()
             onSelect(item.gid, true)
           }}
+          // `dblclick` is a separate event from `click`, so stopping only the
+          // click left a double-click on the checkbox bubbling up to the row and
+          // opening the details panel.
+          onDoubleClick={(event) => event.stopPropagation()}
           className={cn(
             'flex h-4 w-4 items-center justify-center rounded-[5px] border transition-colors',
             selected
@@ -199,6 +236,7 @@ function DownloadRowImpl({ item, selected, onSelect, onOpenDetail, onAction }: D
       <div
         className={cn('flex items-center justify-end gap-0.5', hovered || selected ? 'opacity-100' : 'opacity-0')}
         onClick={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
       >
         {!isComplete && (
           <IconButton

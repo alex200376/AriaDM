@@ -2,6 +2,7 @@
  * Pure formatting helpers. Shared so the renderer and the main process agree,
  * and so they can be unit tested without a DOM.
  */
+import { getLocale, intlLocale } from './i18n'
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'] as const
 
@@ -46,9 +47,16 @@ export function formatCount(n: number): string {
   return new Intl.NumberFormat('en-US').format(n)
 }
 
+/**
+ * A full local date and time.
+ *
+ * Formatted in the app's language rather than the system one: the OS locale is
+ * how the numbers are grouped, but a reader who picked English should not find
+ * 下午 in the middle of an English row.
+ */
 export function formatDateTime(ms: number | null): string {
   if (!ms) return '—'
-  return new Date(ms).toLocaleString()
+  return new Date(ms).toLocaleString(intlLocale(getLocale()))
 }
 
 /** Compact "3m ago" style relative time. */
