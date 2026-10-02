@@ -82,6 +82,7 @@ export const IPC = {
   integrationsGetHandoffInfo: 'integrations:getHandoffInfo',
   integrationsRotateHandoffToken: 'integrations:rotateToken',
   integrationsGetMediaFormats: 'integrations:getMediaFormats',
+  integrationsDetectMedia: 'integrations:detectMedia',
   integrationsGetMediaPlaylist: 'integrations:getMediaPlaylist',
   integrationsAddMedia: 'integrations:addMedia',
   integrationsCheckToolkits: 'integrations:checkToolkits',
@@ -326,6 +327,18 @@ export interface AddMediaResult {
 }
 
 /**
+ * What the page-sniff says about a pasted link.
+ *
+ * `site` is the curated host it matched, or null when the answer came from the
+ * content itself — the dialog uses it to name a recognised site and to label an
+ * unknown one honestly.
+ */
+export interface MediaDetectResult {
+  media: boolean
+  site: string | null
+}
+
+/**
  * The complete surface exposed on `window.api`.
  * Deliberately narrow: the renderer can never reach Node, the filesystem, or the
  * aria2 RPC secret directly.
@@ -398,6 +411,11 @@ export interface AriaDmApi {
     getHandoffInfo(): Promise<HandoffInfo>
     rotateHandoffToken(): Promise<HandoffInfo>
     getMediaFormats(url: string): Promise<MediaInfo>
+    /**
+     * Decide whether a pasted link is a video page, including on a host the
+     * curated list does not know — by reading a little of the page.
+     */
+    detectMedia(url: string): Promise<MediaDetectResult>
     /** List a playlist's items, so a subset can be chosen before downloading. */
     getMediaPlaylist(url: string): Promise<MediaPlaylistInfo>
     addMedia(input: AddMediaInput): Promise<AddMediaResult>

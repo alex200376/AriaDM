@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatBytes } from '@shared/format'
 import { classifyMediaError, type MediaErrorAction, type MediaErrorInfo } from '@shared/media-errors'
 import { defaultFormatId } from '@shared/media-formats'
-import { matchMediaSite, splitByMediaSite } from '@shared/media-sites'
+import { matchMediaSite, needsPageSniff, splitByMediaSite } from '@shared/media-sites'
 import type {
   AddDownloadInput,
   AudioFormat,
@@ -110,6 +110,8 @@ export function AddUrlDialog(): JSX.Element | null {
   const [probeNonce, setProbeNonce] = useState(0)
   /** Installing yt-dlp is automatic, but only tried once per URL. */
   const autoInstallTried = useRef(false)
+  /** A page sniff found a video on a host the curated list does not know. */
+  const [sniffedMedia, setSniffedMedia] = useState(false)
 
   const open = dialog === 'add'
 
@@ -140,6 +142,7 @@ export function AddUrlDialog(): JSX.Element | null {
     setPlaylistTitle('')
     setForceAria2(false)
     setInstalling('')
+    setSniffedMedia(false)
     autoInstallTried.current = false
   }, [open, seed, settings?.downloadDir, settings?.connectionsPreset])
 
@@ -152,8 +155,41 @@ export function AddUrlDialog(): JSX.Element | null {
       gets the same panel with a count instead of a site name. */
   const mediaSite = uris.length === 1 ? matchMediaSite(uris[0]!) : null
   const batchMedia = uris.length > 1 && mediaSplit.media.length > 0
+  /**
+   * A single link on a host the curated list does not know.
+   *
+   * This is the only case the page sniffer is asked about: the list already
+   * settled a known site, and a URL that names a file is never a page.
+   */
+  const sniffTarget = useMemo(
+    () => (uris.length === 1 && mediaSite === null ? uris[0]! : ''),
+    [uris, mediaSite]
+  )
   const hasYtDlp = toolkits?.ytdlp.present ?? false
   const hasFfmpeg = toolkits?.ffmpeg.present ?? false
+
+  // Read an unknown host's page to see whether it holds a video. The main
+  // process owns the fetch; every in-flight answer is dropped once the link
+  // changes, exactly like the format probe below.
+  useEffect(() => {
+    if (!open || sniffTarget === '' || !needsPageSniff(sniffTarget)) {
+      setSniffedMedia(false)
+      return
+    }
+    let cancelled = false
+    setSniffedMedia(false)
+    void window.api.integrations
+      .detectMedia(sniffTarget)
+      .then((result) => {
+        if (!cancelled) setSniffedMedia(result.media)
+      })
+      .catch(() => {
+        if (!cancelled) setSniffedMedia(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, sniffTarget])
 
   /**
    * Fetch a helper tool.
@@ -188,21 +224,22 @@ export function AddUrlDialog(): JSX.Element | null {
   // through the settings. Attempted once per URL so a failure (no network) does
   // not spin.
   useEffect(() => {
-    if (!open || (mediaSite === null && !batchMedia) || hasYtDlp || forceAria2 || autoInstallTried.current) return
+    if (!open || (mediaSite === null && !batchMedia && !sniffedMedia) || hasYtDlp || forceAria2 || autoInstallTried.current) return
     autoInstallTried.current = true
     void installToolkit('ytdlp')
-  }, [open, mediaSite, batchMedia, hasYtDlp, forceAria2, installToolkit])
+  }, [open, mediaSite, batchMedia, sniffedMedia, hasYtDlp, forceAria2, installToolkit])
 
   // Auto-detection is offered for a video page and for a pasted list that holds
   // any. Anything else stays on the aria2 path, which cannot surprise anyone.
-  const mediaMode = (mediaSite !== null || batchMedia) && !forceAria2 && !torrent && !metalink
+  const mediaMode = (mediaSite !== null || sniffedMedia || batchMedia) && !forceAria2 && !torrent && !metalink
   const useYtDlp = mediaMode && hasYtDlp
 
   /** The links the chosen format applies to: the page, or every video in it. */
-  const mediaTargets = useMemo(
-    () => (mediaSite !== null ? [uris[0]!] : mediaSplit.media),
-    [mediaSite, uris, mediaSplit]
-  )
+  const mediaTargets = useMemo(() => {
+    if (mediaSite !== null) return [uris[0]!]
+    if (mediaSplit.media.length > 0) return mediaSplit.media
+    return sniffTarget !== '' ? [sniffTarget] : []
+  }, [mediaSite, uris, mediaSplit, sniffTarget])
 
   /**
    * The links aria2 will receive.
@@ -213,8 +250,9 @@ export function AddUrlDialog(): JSX.Element | null {
    * are about, and what stops a batch from silently losing its video links.
    */
   const aria2Urls = useMemo(() => {
-    // The single video page that goes to yt-dlp is not also queued in aria2.
-    if (mediaSite !== null) return useYtDlp ? [] : uris
+    // The single video page that goes to yt-dlp is not also queued in aria2 —
+    // whether the list recognised it or the page sniff did.
+    if (mediaSite !== null || (sniffedMedia && uris.length === 1)) return useYtDlp ? [] : uris
     // In a batch only the non-video links belong to aria2 — unless yt-dlp is
     // unusable, and then the video links fall back to it rather than being
     // dropped on the floor.
@@ -225,9 +263,12 @@ export function AddUrlDialog(): JSX.Element | null {
   const aria2Text = useMemo(() => aria2Urls.join('\n'), [aria2Urls])
 
   /** The link whose formats the picker shows: the first video in the paste. */
-  const probeUrl = mediaSite !== null ? (uris[0] ?? '') : (mediaSplit.media[0] ?? '')
-  /** Whether the recognised-site panel applies to this paste at all. */
-  const showMediaPanel = (mediaSite !== null || batchMedia) && !torrent && !metalink
+  const probeUrl =
+    mediaSite !== null
+      ? (uris[0] ?? '')
+      : (mediaSplit.media[0] ?? (sniffedMedia ? sniffTarget : ''))
+  /** Whether the media panel applies to this paste at all. */
+  const showMediaPanel = (mediaSite !== null || sniffedMedia || batchMedia) && !torrent && !metalink
 
   // Ask the main process to classify, so the mirror/single decision matches
   // exactly what the backend will do when the download is created.
@@ -630,9 +671,13 @@ export function AddUrlDialog(): JSX.Element | null {
               {/* One video page names its site; a batch shows how many it holds,
                   because the format picked below applies to every one of them. */}
               <span className="text-[12.5px] font-medium text-fg">
-                {mediaSite !== null ? '偵測到影音網站' : `偵測到 ${mediaTargets.length} 個影音連結`}
+                {mediaSite !== null
+                  ? '偵測到影音網站'
+                  : batchMedia
+                    ? `偵測到 ${mediaTargets.length} 個影音連結`
+                    : '偵測到影音內容'}
               </span>
-              <Badge tone="brand">{mediaSite ?? '多筆'}</Badge>
+              <Badge tone="brand">{mediaSite ?? (batchMedia ? '多筆' : '自動偵測')}</Badge>
               {aria2Urls.length > 0 && uris.length > 1 && (
                 <Badge tone="muted">另有 {aria2Urls.length} 個一般下載</Badge>
               )}

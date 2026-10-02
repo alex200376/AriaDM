@@ -2,6 +2,7 @@ import type { AriaDmApi, HandoffInfo, UpdateProgress } from '@shared/ipc'
 import type { CategoryRule, Settings, SpeedProfile } from '@shared/settings'
 import type { DownloadItem, GlobalStat, HistoryRow, TickPayload, ToolkitStatus } from '@shared/download'
 import { DEFAULT_CATEGORIES } from '@shared/settings'
+import { matchMediaSite } from '@shared/media-sites'
 import { extensionOf, fileNameFromUri } from '@shared/uri'
 
 /**
@@ -480,6 +481,15 @@ export function createMockApi(): AriaDmApi {
           ],
           isPlaylist: url.includes('playlist') || url.includes('list=')
         }
+      },
+      detectMedia: async (url) => {
+        await new Promise((resolve) => window.setTimeout(resolve, 250))
+        const site = matchMediaSite(url)
+        if (site !== null) return { media: true, site }
+        // The harness has no real page fetch, so an unknown host is guessed from
+        // its path: enough to exercise the "unknown host video page" flow.
+        const media = /\.(?:html?|php)(?:[?#]|$)/i.test(url) || /\/(?:video|gif|watch)\//i.test(url)
+        return { media, site: null }
       },
       getMediaPlaylist: async (url) => {
         await new Promise((resolve) => window.setTimeout(resolve, 500))

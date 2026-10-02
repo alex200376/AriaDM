@@ -72,6 +72,26 @@ export function isMediaSiteUrl(url: string): boolean {
   return !hasFileExtension(url)
 }
 
+/**
+ * True when this link is worth reading the page to decide.
+ *
+ * The host list settles the sites we know, and a URL that names a file is a file
+ * — both are answered without any network. Everything else that is a single
+ * ordinary page link is a candidate: it may be a video page on a host we have
+ * never heard of, which is exactly what a content sniff is for. See
+ * `MediaSniffer`.
+ */
+export function needsPageSniff(url: string): boolean {
+  if (matchMediaSite(url) !== null) return false
+  if (hasFileExtension(url)) return false
+  try {
+    const parsed = new URL(url.trim())
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export interface MediaUrlSplit {
   /** Links to media pages, in the order they were pasted. */
   media: string[]
@@ -107,6 +127,14 @@ export interface EngineRequest {
   engine: 'auto' | 'aria2' | 'ytdlp'
   hasTorrent?: boolean
   hasMetalink?: boolean
+  /**
+   * A page sniff (see `needsPageSniff`) found a player on an unknown host.
+   *
+   * The sniff runs in the main process and needs the network, so it cannot live
+   * in this pure function; the caller passes its answer in. A curated host match
+   * does not depend on it.
+   */
+  detectedMedia?: boolean
 }
 
 export interface EngineAvailability {
@@ -143,7 +171,10 @@ export function chooseEngine(request: EngineRequest, options: EngineAvailability
   // Detection is only meaningful for a single link; a pasted list is a batch of
   // files, not a media page.
   if (request.uris.length !== 1) return 'aria2'
-  if (!isMediaSiteUrl(request.uris[0]!)) return 'aria2'
+  const url = request.uris[0]!
+  // A curated host that names a file is still aria2; an unknown host is only
+  // media when the caller's page sniff said so.
+  if (!isMediaSiteUrl(url) && !request.detectedMedia) return 'aria2'
   return options.ytdlpAvailable ? 'ytdlp' : 'aria2'
 }
 
@@ -197,5 +228,6 @@ export function shouldWarnAboutMissingYtDlp(request: EngineRequest, options: Eng
 
   if (!options.autoDetect) return false
   if (request.uris.length !== 1) return false
-  return isMediaSiteUrl(request.uris[0]!)
+  const url = request.uris[0]!
+  return isMediaSiteUrl(url) || request.detectedMedia === true
 }

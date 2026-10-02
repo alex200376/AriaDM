@@ -1,14 +1,25 @@
 import type { AddDownloadInput, AddDownloadResult, Settings } from '@shared/settings'
 import { defaultFormatId } from '@shared/media-formats'
-import { chooseEngine, shouldWarnAboutMissingYtDlp } from '@shared/media-sites'
+import {
+  chooseEngine,
+  needsPageSniff,
+  shouldWarnAboutMissingYtDlp,
+  type EngineAvailability
+} from '@shared/media-sites'
 
 import type { DownloadManager } from './manager'
 import type { MediaJobs } from '../media/jobs'
+import type { MediaSniffer } from '../media/page-sniff'
 import type { HttpContext } from '../media/ytdlp'
 
 export interface EngineRouterOptions {
   manager: DownloadManager
   mediaJobs: MediaJobs
+  /**
+   * Optional so tests (and any caller without one) keep the pure host-list
+   * behaviour; production always supplies it via the main process.
+   */
+  sniffer?: MediaSniffer
   getSettings(): Settings
   log(line: string): void
 }
@@ -26,6 +37,37 @@ export class EngineRouter {
   constructor(private readonly options: EngineRouterOptions) {}
 
   /**
+   * Ask the page sniffer whether an unknown-host link is a video page.
+   *
+   * False for every case the pure host list already answers — a known site, a
+   * link that names a file, an explicit engine, a paste of several links — so
+   * the network is only touched for the one case that needs it.
+   */
+  private async detectMedia(
+    input: AddDownloadInput,
+    availability: EngineAvailability
+  ): Promise<boolean> {
+    const sniffer = this.options.sniffer
+    if (!sniffer) return false
+    if (input.engine !== 'auto') return false
+    if (!availability.ytdlpEnabled || !availability.autoDetect || !availability.ytdlpAvailable) {
+      return false
+    }
+    if (input.uris.length !== 1) return false
+
+    const url = input.uris[0]!
+    if (!needsPageSniff(url)) return false
+
+    const verdict = await sniffer.sniff(url, {
+      cookieHeader: input.cookieHeader,
+      referer: input.referer,
+      userAgent: input.userAgent
+    })
+    if (verdict === 'media') this.options.log(`engine router: ${url} sniffed as a media page`)
+    return verdict === 'media'
+  }
+
+  /**
    * Add a download, choosing the engine from the request and the settings.
    *
    * A media URL that arrives without a chosen format takes the best available
@@ -33,29 +75,32 @@ export class EngineRouter {
    */
   async add(input: AddDownloadInput): Promise<AddDownloadResult> {
     const settings = this.options.getSettings()
+    const availability = {
+      ytdlpEnabled: settings.ytdlpEnabled,
+      autoDetect: settings.ytdlpDetectSites,
+      ytdlpAvailable: this.options.mediaJobs.binaryAvailable
+    }
+
+    // Reading the page is only worth it for an automatic, single, unknown-host
+    // link, and only when yt-dlp could act on the answer anyway.
+    const detectedMedia = await this.detectMedia(input, availability)
+
     const request = {
       uris: input.uris,
       engine: input.engine,
       hasTorrent: Boolean(input.torrentBase64),
-      hasMetalink: Boolean(input.metalinkBase64)
+      hasMetalink: Boolean(input.metalinkBase64),
+      detectedMedia
     }
 
-    const engine = chooseEngine(request, {
-      ytdlpEnabled: settings.ytdlpEnabled,
-      autoDetect: settings.ytdlpDetectSites,
-      ytdlpAvailable: this.options.mediaJobs.binaryAvailable
-    })
+    const engine = chooseEngine(request, availability)
 
     if (engine === 'aria2') {
       // The engine is named rather than inherited: a request that asked for
       // yt-dlp but could not have it would otherwise be recorded, and shown, as
       // a yt-dlp download that aria2 actually performed.
       const result = await this.options.manager.add({ ...input, engine: 'aria2' })
-      if (shouldWarnAboutMissingYtDlp(request, {
-        ytdlpEnabled: settings.ytdlpEnabled,
-        autoDetect: settings.ytdlpDetectSites,
-        ytdlpAvailable: this.options.mediaJobs.binaryAvailable
-      })) {
+      if (shouldWarnAboutMissingYtDlp(request, availability)) {
         return {
           ...result,
           warnings: [...result.warnings, '偵測到影音網站，但尚未安裝 yt-dlp，已改用一般下載。']

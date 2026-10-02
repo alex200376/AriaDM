@@ -7,6 +7,7 @@ import {
   chooseEngine,
   isMediaSiteUrl,
   matchMediaSite,
+  needsPageSniff,
   shouldWarnAboutMissingYtDlp,
   splitByMediaSite
 } from '@shared/media-sites'
@@ -46,6 +47,33 @@ describe('isMediaSiteUrl', () => {
     expect(isMediaSiteUrl('https://x.com/media/clip.mp4')).toBe(false)
     expect(isMediaSiteUrl('https://video.twimg.com/ext/file.mp4')).toBe(false)
     expect(isMediaSiteUrl('https://example.com/archive.zip')).toBe(false)
+  })
+
+  it('treats a video page with a .html suffix as media', () => {
+    // A page extension is not a file: this used to be rejected by
+    // hasFileExtension and sent to aria2, which saved the HTML.
+    expect(isMediaSiteUrl('https://www.youtube.com/watch/abc.html')).toBe(true)
+  })
+})
+
+describe('needsPageSniff', () => {
+  it('asks about a single unknown-host page link', () => {
+    expect(needsPageSniff('https://www.acgmho.com/gif/883534.html')).toBe(true)
+    expect(needsPageSniff('https://example.test/watch/123')).toBe(true)
+  })
+
+  it('skips a host the curated list already knows', () => {
+    expect(needsPageSniff('https://www.youtube.com/watch?v=abc')).toBe(false)
+  })
+
+  it('skips a URL that names a file', () => {
+    expect(needsPageSniff('https://example.com/archive.zip')).toBe(false)
+  })
+
+  it('skips anything that is not an http(s) URL', () => {
+    expect(needsPageSniff('magnet:?xt=urn:btih:abc')).toBe(false)
+    expect(needsPageSniff('ftp://example.com/a')).toBe(false)
+    expect(needsPageSniff('not a url')).toBe(false)
   })
 })
 
@@ -94,6 +122,25 @@ describe('chooseEngine', () => {
     ).toBe('aria2')
   })
 
+  it('routes a sniffed unknown-host video to yt-dlp', () => {
+    const sniffed = { uris: ['https://www.acgmho.com/gif/883534.html'], engine: 'auto' as const, detectedMedia: true }
+    expect(chooseEngine(sniffed, AVAILABLE)).toBe('ytdlp')
+  })
+
+  it('leaves an unsniffed unknown-host link on aria2', () => {
+    const unknown = { uris: ['https://www.acgmho.com/gif/883534.html'], engine: 'auto' as const }
+    expect(chooseEngine(unknown, AVAILABLE)).toBe('aria2')
+    // A negative sniff is the same answer as no sniff at all.
+    expect(chooseEngine({ ...unknown, detectedMedia: false }, AVAILABLE)).toBe('aria2')
+  })
+
+  it('does not use a sniff result for a batch or an explicit engine', () => {
+    const batch = { uris: ['https://a.example/x', 'https://b.example/y'], engine: 'auto' as const, detectedMedia: true }
+    expect(chooseEngine(batch, AVAILABLE)).toBe('aria2')
+    const explicit = { uris: ['https://www.acgmho.com/gif/883534.html'], engine: 'aria2' as const, detectedMedia: true }
+    expect(chooseEngine(explicit, AVAILABLE)).toBe('aria2')
+  })
+
   it('falls back to aria2 when yt-dlp is disabled, undetected or missing', () => {
     expect(chooseEngine(request, { ...AVAILABLE, ytdlpEnabled: false })).toBe('aria2')
     expect(chooseEngine(request, { ...AVAILABLE, autoDetect: false })).toBe('aria2')
@@ -105,6 +152,14 @@ describe('chooseEngine', () => {
     expect(shouldWarnAboutMissingYtDlp(request, missing)).toBe(true)
     expect(shouldWarnAboutMissingYtDlp({ uris: ['https://example.com/a.zip'], engine: 'auto' }, missing)).toBe(false)
     expect(shouldWarnAboutMissingYtDlp(request, AVAILABLE)).toBe(false)
+
+    // A sniffed unknown-host video deserves the same explanation as a curated one.
+    expect(
+      shouldWarnAboutMissingYtDlp(
+        { uris: ['https://www.acgmho.com/gif/883534.html'], engine: 'auto', detectedMedia: true },
+        missing
+      )
+    ).toBe(true)
 
     // An explicit request that cannot be honoured is explained even with
     // auto-detection off, because nothing about it was automatic.

@@ -54,11 +54,20 @@ function probeResult(directUrl = ''): MediaProbe {
   }
 }
 
-function makeRouter(options: { failProbe?: boolean; directUrl?: string; ytdlpAvailable?: boolean } = {}): {
+function makeRouter(
+  options: {
+    failProbe?: boolean
+    directUrl?: string
+    ytdlpAvailable?: boolean
+    autoDetect?: boolean
+    sniff?: 'media' | 'not-media' | 'unknown'
+  } = {}
+): {
   router: EngineRouter
   add: ReturnType<typeof vi.fn>
   addMedia: ReturnType<typeof vi.fn>
   probe: ReturnType<typeof vi.fn>
+  sniff: ReturnType<typeof vi.fn>
 } {
   const add = vi.fn(async () => ({ gids: ['aria2-gid'], duplicates: [], warnings: [] }))
   const addMedia = vi.fn(async () => ({ gid: 'ytdlp:1' }))
@@ -66,6 +75,7 @@ function makeRouter(options: { failProbe?: boolean; directUrl?: string; ytdlpAva
     if (options.failProbe) throw new Error('unsupported url')
     return probeResult(options.directUrl)
   })
+  const sniff = vi.fn(async () => options.sniff ?? 'not-media')
 
   const router = new EngineRouter({
     manager: { add } as never,
@@ -75,11 +85,16 @@ function makeRouter(options: { failProbe?: boolean; directUrl?: string; ytdlpAva
       probe,
       add: addMedia
     } as never,
-    getSettings: () => ({ ytdlpEnabled: true, ytdlpDetectSites: true, downloadDir: 'C:/downloads' }) as never,
+    sniffer: { sniff } as never,
+    getSettings: () => ({
+      ytdlpEnabled: true,
+      ytdlpDetectSites: options.autoDetect ?? true,
+      downloadDir: 'C:/downloads'
+    }) as never,
     log: () => {}
   })
 
-  return { router, add, addMedia, probe }
+  return { router, add, addMedia, probe, sniff }
 }
 
 describe('EngineRouter', () => {
@@ -156,6 +171,57 @@ describe('EngineRouter', () => {
     await router.add(input({ engine: 'ytdlp', mediaFormatId: 'no-such-format' }))
 
     expect(addMedia.mock.calls[0]![0]).toMatchObject({ formatId: 'bestvideo+bestaudio/best' })
+  })
+
+  it('sends an unknown-host video page to yt-dlp when the sniff finds a player', async () => {
+    // The whole feature: `acgmho.com` is not on the curated list, but its page
+    // carries a player, so the link belongs to yt-dlp.
+    const { router, add, addMedia, sniff } = makeRouter({ sniff: 'media' })
+
+    const result = await router.add(input({ uris: ['https://www.acgmho.com/gif/883534.html'] }))
+
+    expect(sniff).toHaveBeenCalledWith('https://www.acgmho.com/gif/883534.html', expect.any(Object))
+    expect(addMedia).toHaveBeenCalledOnce()
+    expect(add).not.toHaveBeenCalled()
+    expect(result.gids).toEqual(['ytdlp:1'])
+  })
+
+  it('keeps an unknown-host link on aria2 when the sniff finds no player', async () => {
+    const { router, add, addMedia } = makeRouter({ sniff: 'not-media' })
+
+    const result = await router.add(input({ uris: ['https://example.test/some/page'] }))
+
+    expect(add).toHaveBeenCalledOnce()
+    expect(addMedia).not.toHaveBeenCalled()
+    expect(result.gids).toEqual(['aria2-gid'])
+  })
+
+  it('treats a failed sniff as not media', async () => {
+    // A timeout or a network error must never turn a plain link into a video.
+    const { router, add, addMedia } = makeRouter({ sniff: 'unknown' })
+
+    await router.add(input({ uris: ['https://example.test/some/page'] }))
+
+    expect(add).toHaveBeenCalledOnce()
+    expect(addMedia).not.toHaveBeenCalled()
+  })
+
+  it('does not sniff when auto-detection is off', async () => {
+    const { router, sniff, add } = makeRouter({ autoDetect: false, sniff: 'media' })
+
+    await router.add(input({ uris: ['https://www.acgmho.com/gif/883534.html'] }))
+
+    expect(sniff).not.toHaveBeenCalled()
+    expect(add).toHaveBeenCalledOnce()
+  })
+
+  it('does not sniff a URL that names a file', async () => {
+    const { router, sniff, add } = makeRouter({ sniff: 'media' })
+
+    await router.add(input({ uris: ['https://example.test/archive.zip'] }))
+
+    expect(sniff).not.toHaveBeenCalled()
+    expect(add).toHaveBeenCalledOnce()
   })
 
   it('hands a bare file to aria2 instead of yt-dlp when the probe resolves one', async () => {

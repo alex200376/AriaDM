@@ -42,6 +42,17 @@ export function isReservedDeviceName(name: string): boolean {
   return RESERVED_DEVICE_NAMES.has(withoutExtension)
 }
 
+/**
+ * Extensions that name a *page* rather than a file.
+ *
+ * These look exactly like a file extension, but a URL ending in `.html` is a
+ * web page you can watch a video on, not a payload worth handing to aria2. Video
+ * sites are full of them — `/video/123.html`, `/watch.php?…` — and treating the
+ * suffix as a file pushed every such link to the download engine, which then
+ * saved the HTML instead of the video.
+ */
+const PAGE_EXTENSIONS = new Set(['html', 'htm', 'php', 'asp', 'aspx', 'jsp', 'jspx', 'shtml'])
+
 export function sanitizeFileName(input: string, fallback = 'download'): string {
   let name = (input ?? '').trim()
 
@@ -151,8 +162,9 @@ export type UriKind = 'http' | 'ftp' | 'bittorrent'
  *
  * Short extensions only: a path segment like `/watch` or `/status/12345` carries
  * no dot, and a long segment with a dot in it ("v2.1.3-notes") is a slug, not a
- * file. Servers that hand out files behind a script often name them in the query
- * instead, so those keys are checked too.
+ * file. Page extensions are excluded outright — see `PAGE_EXTENSIONS`. Servers
+ * that hand out files behind a script often name them in the query instead, so
+ * those keys are checked too.
  *
  * Used both to decide whether a copied link is safe to auto-add and to keep
  * direct CDN payloads away from the media engine.
@@ -169,8 +181,10 @@ export function hasFileExtension(url: string): boolean {
 
   const lastSegment = parsed.pathname.split('/').filter(Boolean).pop() ?? ''
   const extension = extensionOf(lastSegment)
-  if (extension.length >= 2 && extension.length <= 5) return true
+  if (extension.length >= 2 && extension.length <= 5 && !PAGE_EXTENSIONS.has(extension)) return true
 
+  // An explicit `?filename=thing.html` is the server declaring a download, so
+  // page extensions count here even though they do not in the path.
   for (const key of ['filename', 'file', 'download', 'name']) {
     const value = parsed.searchParams.get(key)
     if (value && extensionOf(value).length >= 2) return true

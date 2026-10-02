@@ -14,7 +14,6 @@ import { TONE_DOT } from '../ui/primitives'
  */
 export function TitleBar(): JSX.Element {
   const engine = useApp((state) => state.engine)
-  const aria2Version = useApp((state) => state.toolkits?.aria2.version ?? '')
   const global = useApp((state) => state.global)
 
   const tone = engineTone(engine.state)
@@ -24,8 +23,6 @@ export function TitleBar(): JSX.Element {
       {/* The wordmark only: the window frame and taskbar already carry the app
           icon, so a second mark here was just noise. */}
       <span className="text-[13px] font-semibold tracking-tight text-fg">AriaDM</span>
-
-      <span className="text-[11px] text-faint">{aria2Version ? `aria2 ${aria2Version}` : 'aria2'}</span>
 
       <div className="ml-1 flex items-center gap-1.5" title={engine.message || engineLabel(engine.state)}>
         <span

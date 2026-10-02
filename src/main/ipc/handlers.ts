@@ -9,10 +9,12 @@ import {
   IPC,
   type CatcherAction,
   type HandoffInfo,
+  type MediaDetectResult,
   type SystemPowerAction,
   type UriListClassification
 } from '@shared/ipc'
 import { classifyMediaError, type MediaErrorKind } from '@shared/media-errors'
+import { matchMediaSite, needsPageSniff } from '@shared/media-sites'
 import { classifyUriList, isSupportedUri } from '@shared/uri'
 
 import type { Aria2Supervisor } from '../aria2/supervisor'
@@ -23,6 +25,7 @@ import type { HistoryStore } from '../downloads/history-store'
 import type { HandoffServer } from '../integrations/handoff-api'
 import type { ClipboardWatcher } from '../integrations/clipboard-watch'
 import { isMediaGid, type MediaJobs } from '../media/jobs'
+import type { MediaSniffer } from '../media/page-sniff'
 import type { SettingsStore } from '../settings/store'
 import type { ToolkitManager } from '../toolkit'
 import type { UpdateManager } from '../update/update-manager'
@@ -36,6 +39,8 @@ export interface HandlerContext {
   toolkit: ToolkitManager
   mediaJobs: MediaJobs
   engineRouter: EngineRouter
+  /** Reads a page's content to decide whether an unknown host holds a video. */
+  sniffer: MediaSniffer
   getHandoff(): HandoffServer | null
   /** The auto-pairing listener an extension discovers AriaDM through. */
   getRendezvous(): HandoffServer | null
@@ -380,6 +385,27 @@ export function registerIpcHandlers(context: HandlerContext): void {
       // whether the link is a playlist. The picker needs all of them together.
       return { formats: probe.formats, subtitles: probe.subtitles, isPlaylist: probe.isPlaylist }
     })
+  })
+
+  ipcMain.handle(IPC.integrationsDetectMedia, async (_event, url: string): Promise<MediaDetectResult> => {
+    const settings = settingsStore.get()
+    // The curated list is authoritative and free; only a host we do not know is
+    // worth reading the page for.
+    const site = matchMediaSite(url)
+    if (site !== null) return { media: true, site }
+
+    // This is the dialog's "is this a video?" question, not the engine's
+    // autonomous decision, so 自動辨識 does not gate it: the dialog shows the
+    // media panel for known sites regardless, and must be able to offer to
+    // install yt-dlp for an unknown host the same way.
+    if (!settings.ytdlpEnabled) return { media: false, site: null }
+    if (!needsPageSniff(url)) return { media: false, site: null }
+
+    const verdict = await context.sniffer.sniff(url, {
+      cookieHeader: context.getExtensionCookies(url),
+      referer: url
+    })
+    return { media: verdict === 'media', site: null }
   })
 
   ipcMain.handle(IPC.integrationsGetMediaPlaylist, async (_event, url: string) => {

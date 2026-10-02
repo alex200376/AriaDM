@@ -93,6 +93,7 @@ const api: AriaDmApi = {
     getHandoffInfo: () => invoke(IPC.integrationsGetHandoffInfo),
     rotateHandoffToken: () => invoke(IPC.integrationsRotateHandoffToken),
     getMediaFormats: (url) => invoke(IPC.integrationsGetMediaFormats, url),
+    detectMedia: (url) => invoke(IPC.integrationsDetectMedia, url),
     getMediaPlaylist: (url) => invoke(IPC.integrationsGetMediaPlaylist, url),
     addMedia: (input) => invoke(IPC.integrationsAddMedia, input),
     checkToolkits: () => invoke(IPC.integrationsCheckToolkits),

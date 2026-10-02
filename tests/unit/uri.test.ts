@@ -6,6 +6,7 @@ import {
   extensionOf,
   fileNameFromPath,
   fileNameFromUri,
+  hasFileExtension,
   isListFileName,
   isReservedDeviceName,
   isSupportedUri,
@@ -93,6 +94,34 @@ describe('parseUriList', () => {
   it('drops blanks and comments and removes exact duplicates', () => {
     const text = ['# a comment', '', 'https://a.example/f', '  https://b.example/f  ', 'https://a.example/f'].join('\n')
     expect(parseUriList(text)).toEqual(['https://a.example/f', 'https://b.example/f'])
+  })
+})
+
+describe('hasFileExtension', () => {
+  it('treats a named payload as a file', () => {
+    expect(hasFileExtension('https://example.com/archive.zip')).toBe(true)
+    expect(hasFileExtension('https://example.com/clip.mp4')).toBe(true)
+    expect(hasFileExtension('https://example.com/ubuntu-24.04.iso?token=abc')).toBe(true)
+    expect(hasFileExtension('magnet:?xt=urn:btih:abc')).toBe(true)
+  })
+
+  it('does not treat a web page as a file', () => {
+    // The reported misrouting: a video page with a `.html` suffix is a page, not
+    // a payload, and handing it to aria2 saved the HTML instead of the video.
+    expect(hasFileExtension('https://www.acgmho.com/gif/883534.html')).toBe(false)
+    expect(hasFileExtension('https://example.com/watch/123.php')).toBe(false)
+    expect(hasFileExtension('https://example.com/show.aspx?id=1')).toBe(false)
+    expect(hasFileExtension('https://example.com/index.htm')).toBe(false)
+  })
+
+  it('still trusts an explicit filename when the server declares one', () => {
+    // `?filename=page.html` is the server naming a download, not a page URL.
+    expect(hasFileExtension('https://example.com/get?filename=report.html')).toBe(true)
+  })
+
+  it('leaves a dotless path and a slug alone', () => {
+    expect(hasFileExtension('https://x.com/someone/status/12345')).toBe(false)
+    expect(hasFileExtension('https://example.com/v2.1.3-release-notes')).toBe(false)
   })
 })
 

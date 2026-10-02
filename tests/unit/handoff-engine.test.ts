@@ -30,6 +30,17 @@ describe('resolveHandoffEngine', () => {
     expect(resolveHandoffEngine({ urls: [FILE], media: true })).toBe('auto')
   })
 
+  it('takes the video hint on a page whose path ends in a page extension', () => {
+    // `.html` is a page, not a payload, so the extension's video button is right
+    // about it; it used to be treated as a file and sent to aria2.
+    expect(resolveHandoffEngine({ urls: ['https://www.acgmho.com/gif/883534.html'], media: true })).toBe(
+      'ytdlp'
+    )
+    expect(resolveHandoffEngine({ urls: ['https://example.test/watch/index.php'], media: true })).toBe(
+      'ytdlp'
+    )
+  })
+
   it('still routes a file URL to aria2 even when detection is on', () => {
     // 'auto' is what lets chooseEngine run; a file URL is never a media site URL,
     // so it lands on aria2 either way.

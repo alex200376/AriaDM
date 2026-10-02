@@ -40,6 +40,7 @@ import { runPostAction, type PostActionDeps } from './integrations/post-actions'
 import { Scheduler } from './integrations/scheduler'
 import { CookieVault, hostOf } from './media/cookie-vault'
 import { isMediaGid, MediaJobs, mergeMediaItems } from './media/jobs'
+import { MediaSniffer } from './media/page-sniff'
 import { defaultDownloadDir, resolvePaths } from './paths'
 import { SettingsStore } from './settings/store'
 import { ToolkitManager } from './toolkit'
@@ -1064,6 +1065,10 @@ async function bootstrap(): Promise<void> {
   })
   mediaJobs = realMediaJobs
 
+  // Reads a page's content to recognise a video on a host the curated list does
+  // not know — the general answer to "why did my link go to aria2?".
+  const mediaSniffer = new MediaSniffer({ log })
+
   manager = new DownloadManager({
     supervisor,
     settingsStore,
@@ -1083,6 +1088,7 @@ async function bootstrap(): Promise<void> {
   engineRouter = new EngineRouter({
     manager,
     mediaJobs,
+    sniffer: mediaSniffer,
     getSettings: () => settingsStore.get(),
     log
   })
@@ -1206,6 +1212,7 @@ async function bootstrap(): Promise<void> {
     toolkit,
     mediaJobs,
     engineRouter,
+    sniffer: mediaSniffer,
     getHandoff: () => handoff,
     getRendezvous: () => rendezvous,
     getHandoffRetry: () => ({ retrying: handoffRetry !== null, lastError: handoffLastError }),
