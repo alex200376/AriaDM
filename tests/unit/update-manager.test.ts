@@ -442,3 +442,92 @@ describe('UpdateManager.diagnostics', () => {
     expect(report.logPath.endsWith('update.log')).toBe(true)
   })
 })
+
+describe('UpdateManager.repairCache', () => {
+  /** A file with the right name and length, and a few bytes of damage inside. */
+  function damagedBytes(): Uint8Array {
+    const bytes = Uint8Array.from(EXE_BYTES)
+    bytes[100] = 0x7a
+    return bytes
+  }
+
+  it('deletes an installer whose contents no longer match the release', async () => {
+    // The state the UI cannot escape on its own: the length is intact, so it
+    // keeps passing the name-and-size test, and every install attempt reuses the
+    // same damaged bytes instead of fetching a clean copy.
+    const repaired = makeManager({ digest: sha256(EXE_BYTES) })
+    await repaired.manager.check()
+    const file = path.join(repaired.dir, INSTALLER_NAME)
+    writeFileSync(file, damagedBytes())
+
+    const result = await repaired.manager.repairCache()
+
+    expect(result).toMatchObject({ checked: 1, removed: 1, kept: 0 })
+    expect(result.bytesFreed).toBe(EXE_BYTES.length)
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('keeps an installer that still matches', async () => {
+    const repaired = makeManager({ digest: sha256(EXE_BYTES) })
+    const file = path.join(repaired.dir, INSTALLER_NAME)
+    writeFileSync(file, EXE_BYTES)
+    await repaired.manager.check()
+
+    const result = await repaired.manager.repairCache()
+
+    expect(result).toMatchObject({ checked: 1, removed: 0, kept: 1, bytesFreed: 0 })
+    expect(existsSync(file)).toBe(true)
+    expect(repaired.manager.pendingInstaller).toBe(file)
+  })
+
+  it('stops offering an installer it had to delete', async () => {
+    const repaired = makeManager({ digest: sha256(EXE_BYTES) })
+    await repaired.manager.check()
+    await repaired.manager.download()
+    expect(repaired.manager.progress.phase).toBe('ready')
+
+    writeFileSync(path.join(repaired.dir, INSTALLER_NAME), damagedBytes())
+    await repaired.manager.repairCache()
+
+    // "Ready" pointing at a file that is no longer there is the dead end this
+    // whole repair exists to break.
+    expect(repaired.manager.pendingInstaller).toBeNull()
+    expect(repaired.manager.progress.phase).toBe('idle')
+  })
+
+  it('removes unfinished downloads, which no installer ever ran', async () => {
+    const repaired = makeManager({ digest: sha256(EXE_BYTES) })
+    await repaired.manager.check()
+    const partial = path.join(repaired.dir, `${INSTALLER_NAME}.part`)
+    writeFileSync(partial, EXE_BYTES)
+
+    const result = await repaired.manager.repairCache()
+
+    expect(result).toMatchObject({ checked: 1, removed: 1, kept: 0 })
+    expect(result.bytesFreed).toBe(EXE_BYTES.length)
+    expect(existsSync(partial)).toBe(false)
+  })
+
+  it('deletes nothing on a guess when no release is known yet', async () => {
+    // Before the first check there is no published check code, so there is
+    // nothing that could make an installer wrong.
+    const repaired = makeManager()
+    writeFileSync(path.join(repaired.dir, INSTALLER_NAME), EXE_BYTES)
+
+    const result = await repaired.manager.repairCache()
+
+    expect(result).toMatchObject({ checked: 1, removed: 0, kept: 1 })
+  })
+
+  it('reports an empty folder rather than failing', async () => {
+    const repaired = makeManager()
+    await repaired.manager.check()
+
+    await expect(repaired.manager.repairCache()).resolves.toEqual({
+      checked: 0,
+      removed: 0,
+      kept: 0,
+      bytesFreed: 0
+    })
+  })
+})

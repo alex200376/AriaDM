@@ -1,16 +1,23 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
 import type { DownloadItem } from '@shared/download'
 import { classifyMediaError, type MediaErrorKind } from '@shared/media-errors'
-import type { AddMediaInput, MediaFormatInfo } from '@shared/settings'
+import type { AddMediaInput, AudioFormat, MediaFormatInfo, MediaPlaylistInfo } from '@shared/settings'
 import { extensionOf } from '@shared/uri'
 
 import type { HistoryRecord, HistoryStore } from '../downloads/history-store'
 
-import { probeFormats, YtDlpRunner, type HttpContext, type MediaProbe, type YtDlpProgress } from './ytdlp'
+import {
+  probeFormats,
+  probePlaylist,
+  YtDlpRunner,
+  type HttpContext,
+  type MediaProbe,
+  type YtDlpProgress
+} from './ytdlp'
 
 /**
  * yt-dlp jobs, presented as ordinary download items.
@@ -101,6 +108,30 @@ const STORE_FAILURES = new Set<MediaErrorKind>([
 const SESSION_FAILURES = new Set<MediaErrorKind>(['session', 'empty-response'])
 
 /**
+ * How long a probe's answer may be reused for the same link and credentials.
+ *
+ * The quality menu and the download it leads to ask the same question about the
+ * same page a second apart, and a probe is several seconds of network work. Two
+ * minutes covers a menu the user is actually reading, and is short enough that a
+ * short-lived media URL or an extractor's format list cannot go stale underneath
+ * it.
+ */
+const PROBE_REUSE_MS = 120_000
+
+/** How many probe answers may be remembered at once; the newest are kept. */
+const PROBE_CACHE_LIMIT = 8
+
+/** A probe's answer, kept so the download it was made for need not repeat it. */
+interface CachedProbe {
+  url: string
+  /** When the probe finished, for the expiry check. */
+  at: number
+  probe: MediaProbe
+  /** The credentials that made this probe work, so a reuse resolves the same way. */
+  verdict: CredentialVerdict
+}
+
+/**
  * What a probe proved about the credentials it was given.
  *
  * Remembered by URL rather than by job because a probe is always followed
@@ -123,6 +154,12 @@ interface MediaJob {
   dir: string
   audioOnly: boolean
   playlist: boolean
+  /** 1-based playlist positions to download; empty means "the site's default". */
+  playlistItems: number[]
+  /** Subtitle languages to write, and whether to mux them in. Null when none. */
+  subtitles: { codes: string[]; embed: boolean } | null
+  /** Container to convert the audio to; 'native' keeps the site's own. */
+  audioFormat: AudioFormat
   title: string
   status: DownloadItem['status']
   downloadedBytes: number
@@ -168,6 +205,13 @@ export interface MediaJobsOptions {
   getCookieArgs?: () => string[]
   /** Installed yt-dlp version, shown when its extractor needs updating. */
   getYtdlpVersion?: () => string
+  /**
+   * How many HLS/DASH fragments to fetch in parallel.
+   *
+   * Read per run like the cookie setting, so changing it applies to the next
+   * download instead of the next app start.
+   */
+  getConcurrentFragments?: () => number
   log(line: string): void
 }
 
@@ -183,6 +227,17 @@ export class MediaJobs extends EventEmitter {
    * rather than paying for the same failure a second time.
    */
   private verdict: CredentialVerdict = { url: '', skipSession: false, skipStore: false }
+
+  /**
+   * Probe answers, keyed by link *and* credentials.
+   *
+   * The credentials are part of the key because the answer depends on them: the
+   * same Instagram reel resolves signed out and fails with a stale `sessionid`,
+   * so a cache keyed on the URL alone would hand one attempt's failure to the
+   * next. The key is a digest rather than the header itself, so a live session
+   * never sits in a map key where a crash dump could print it.
+   */
+  private readonly probeCache = new Map<string, CachedProbe>()
 
   /** Pending paced `change`, and when the last one was let through. */
   private progressTimer: NodeJS.Timeout | null = null
@@ -243,22 +298,35 @@ export class MediaJobs extends EventEmitter {
    * the site refuses, must not make every download in the app impossible. The
    * retried attempt's message is the one reported when that fails too, since it
    * is what remains once the credentials are out of the picture.
+   *
+   * `options.reuse` is what lets a caller say "ask again" — the quality menu's
+   * refresh button means exactly that, and a menu that hands back a remembered
+   * answer to a button labelled *probe again* would be lying about what it did.
    */
-  async probe(url: string, context: HttpContext = {}): Promise<MediaProbe> {
+  async probe(url: string, context: HttpContext = {}, options: { reuse?: boolean } = {}): Promise<MediaProbe> {
     const binary = this.options.getBinaryPath()
     if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
+
+    const key = this.probeKey(url, context)
+    if (options.reuse !== false) {
+      const cached = this.recallProbe(key, url)
+      if (cached) return cached
+    }
 
     this.verdict = { url, skipSession: false, skipStore: false }
     const { http, cookieArgs } = this.resolveCredentials(url, context)
     const supplied = Boolean(context.cookieHeader) || cookieArgs.length > 0
 
     try {
-      return await this.probeOnce(binary, url, http, cookieArgs)
+      const probe = await this.probeOnce(binary, url, http, cookieArgs)
+      this.rememberProbe(key, { url, at: Date.now(), probe, verdict: { ...this.verdict, url } })
+      return probe
     } catch (error) {
       const message = (error as Error).message
       const kind = classifyMediaError(message).kind
       this.options.log(`yt-dlp probe failed: ${message}`)
       if (!supplied || (!STORE_FAILURES.has(kind) && !SESSION_FAILURES.has(kind))) {
+        this.forgetProbe(url)
         throw new Error(this.describe(message))
       }
 
@@ -275,12 +343,75 @@ export class MediaJobs extends EventEmitter {
       this.verdict = { url, skipSession: !skipStore, skipStore }
 
       try {
-        return await this.probeOnce(binary, url, this.resolveCredentials(url, context).http, [])
+        const probe = await this.probeOnce(binary, url, this.resolveCredentials(url, context).http, [])
+        this.rememberProbe(key, { url, at: Date.now(), probe, verdict: { ...this.verdict, url } })
+        return probe
       } catch (retryError) {
         const retryMessage = (retryError as Error).message
         this.options.log(`yt-dlp probe failed again without credentials: ${retryMessage}`)
+        this.forgetProbe(url)
         throw new Error(this.describe(retryMessage))
       }
+    }
+  }
+
+  /**
+   * The cache key for a probe: the link plus everything that changes its answer.
+   *
+   * The store arguments are left out when a Cookie header is supplied, since a
+   * header means the store is never read — otherwise changing the browser-cookie
+   * setting would miss a cache entry that is still perfectly valid.
+   */
+  private probeKey(url: string, context: HttpContext): string {
+    const storeArgs = context.cookieHeader ? [] : this.options.getCookieArgs?.() ?? []
+    return createHash('sha256')
+      .update(url)
+      .update('\0')
+      .update(context.cookieHeader ?? '')
+      .update('\0')
+      .update(storeArgs.join('\0'))
+      .digest('hex')
+  }
+
+  /** A still-valid remembered answer for this link and credentials, if any. */
+  private recallProbe(key: string, url: string): MediaProbe | null {
+    const cached = this.probeCache.get(key)
+    if (!cached) return null
+    if (Date.now() - cached.at > PROBE_REUSE_MS) {
+      this.probeCache.delete(key)
+      return null
+    }
+    // The credentials that produced this answer are the ones the download that
+    // follows must send, so the verdict is restored with it.
+    this.verdict = { ...cached.verdict, url }
+    this.options.log(`media probe reused for ${url}`)
+    return cached.probe
+  }
+
+  /** Keep a probe's answer, newest kept, bounded to PROBE_CACHE_LIMIT entries. */
+  private rememberProbe(key: string, entry: CachedProbe): void {
+    // Re-inserting moves the entry to the end, which is what makes the trim
+    // below "oldest" rather than "first ever seen".
+    this.probeCache.delete(key)
+    this.probeCache.set(key, entry)
+    while (this.probeCache.size > PROBE_CACHE_LIMIT) {
+      const oldest = this.probeCache.keys().next()
+      if (oldest.done) break
+      this.probeCache.delete(oldest.value)
+    }
+  }
+
+  /**
+   * Drop every remembered probe for a link.
+   *
+   * Called when a download fails: the answer was good enough to build a menu
+   * from but not good enough to download, so the next attempt must not be handed
+   * it back. The "probe again" button asks for a fresh run by itself, so it does
+   * not depend on this — but a plain retry does.
+   */
+  forgetProbe(url: string): void {
+    for (const [key, entry] of this.probeCache) {
+      if (entry.url === url) this.probeCache.delete(key)
     }
   }
 
@@ -297,6 +428,21 @@ export class MediaJobs extends EventEmitter {
     return probe.formats.find((format) => format.formatId === formatId)
   }
 
+  /**
+   * List a playlist's items without resolving them.
+   *
+   * Deliberately not cached: the picker is opened on demand, and a stale list
+   * would be worse than the couple of seconds this costs — a re-upload or a
+   * deletion between two openings would otherwise offer positions that no longer
+   * exist.
+   */
+  async probePlaylist(url: string, context: HttpContext = {}): Promise<MediaPlaylistInfo> {
+    const binary = this.options.getBinaryPath()
+    if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
+    const { http, cookieArgs } = this.resolveCredentials(url, context)
+    return probePlaylist(binary, url, { ...http, cookieArgs })
+  }
+
   async add(input: AddMediaInput, probe: MediaProbe, http: HttpContext = {}): Promise<{ gid: string }> {
     const binary = this.options.getBinaryPath()
     if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
@@ -307,6 +453,25 @@ export class MediaJobs extends EventEmitter {
       // this stays an error — but one the dialog can answer with an install
       // button (see the ffmpeg rule in shared/media-errors).
       throw new Error('這個格式需要合併音訊與視訊，請先安裝 ffmpeg 媒體包，或改選單檔畫質。')
+    }
+
+    /*
+     * Subtitles and audio conversion both run through ffmpeg. Caught here rather
+     * than letting yt-dlp fail mid-download, so the dialog can offer the install
+     * button before anything is queued — and so the two failures name their own
+     * cause instead of yt-dlp's muxer message.
+     */
+    const subtitles =
+      input.subtitles && input.subtitles.codes.length > 0
+        ? { codes: [...input.subtitles.codes], embed: Boolean(input.subtitles.embed) }
+        : null
+    const audioFormat: AudioFormat = input.audioFormat ?? 'native'
+
+    if (subtitles?.embed && !this.hasFfmpeg) {
+      throw new Error('嵌入字幕需要 ffmpeg，請先安裝 ffmpeg 媒體包，或改為另存字幕檔。')
+    }
+    if (audioFormat !== 'native' && !this.hasFfmpeg) {
+      throw new Error('轉換音訊格式需要 ffmpeg，請先安裝 ffmpeg 媒體包，或改選「原始音訊」。')
     }
 
     /*
@@ -340,7 +505,12 @@ export class MediaJobs extends EventEmitter {
       formatLabel: format?.label ?? input.formatId,
       dir: input.dir,
       audioOnly: input.audioOnly,
-      playlist: input.playlist,
+      // A chosen subset implies a playlist: `--yes-playlist` has to be on for
+      // `--playlist-items` to mean anything.
+      playlist: input.playlist || Boolean(input.playlistItems && input.playlistItems.length > 0),
+      playlistItems: input.playlistItems ? [...input.playlistItems] : [],
+      subtitles,
+      audioFormat,
       title: probe.title,
       status: 'active',
       downloadedBytes: 0,
@@ -420,6 +590,10 @@ export class MediaJobs extends EventEmitter {
       ffmpegDir,
       audioOnly: job.audioOnly,
       playlist: job.playlist,
+      concurrentFragments: this.options.getConcurrentFragments?.() ?? 1,
+      ...(job.playlistItems.length > 0 ? { playlistItems: job.playlistItems } : {}),
+      ...(job.subtitles ? { subtitles: job.subtitles } : {}),
+      ...(job.audioFormat !== 'native' ? { audioFormat: job.audioFormat } : {}),
       overwrite: job.status === 'error',
       ...job.http,
       ...(job.cookiesRetried ? { cookieHeader: '', cookieArgs: [] } : { cookieArgs: job.cookieArgs })
@@ -479,6 +653,9 @@ export class MediaJobs extends EventEmitter {
       job.status = 'error'
       job.speed = 0
       job.errorCode = 1
+      // The remembered probe did not survive contact with the download, so the
+      // next attempt at this link has to ask yt-dlp again.
+      this.forgetProbe(job.url)
       // yt-dlp writes for its own maintainers; the row, the toast and the detail
       // view all show this text, so it is translated once, here.
       job.errorMessage = this.describe(message)

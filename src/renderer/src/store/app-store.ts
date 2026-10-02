@@ -569,6 +569,7 @@ export function selectedItems(state: Pick<AppState, 'items' | 'selection'>): Dow
   return state.items.filter((item) => wanted.has(item.gid))
 }
 
+
 export function categoryCounts(items: DownloadItem[]): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const item of items) {

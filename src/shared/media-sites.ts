@@ -72,6 +72,33 @@ export function isMediaSiteUrl(url: string): boolean {
   return !hasFileExtension(url)
 }
 
+export interface MediaUrlSplit {
+  /** Links to media pages, in the order they were pasted. */
+  media: string[]
+  /** Everything else: plain files, magnet links, hosts we do not recognise. */
+  plain: string[]
+}
+
+/**
+ * Separate a pasted list into video pages and ordinary links.
+ *
+ * `chooseEngine` refuses to auto-detect anything but a single link, because a
+ * pasted list is usually a batch of files — but it can just as easily be a batch
+ * of videos, and then the yt-dlp path is exactly what the user wants. Splitting
+ * here is what lets one paste keep both: every video page goes to yt-dlp,
+ * everything else stays with aria2, instead of the first link deciding for all of
+ * them.
+ */
+export function splitByMediaSite(urls: string[]): MediaUrlSplit {
+  const media: string[] = []
+  const plain: string[] = []
+  for (const url of urls) {
+    if (isMediaSiteUrl(url)) media.push(url)
+    else plain.push(url)
+  }
+  return { media, plain }
+}
+
 export type EngineChoice = 'aria2' | 'ytdlp'
 
 export interface EngineRequest {

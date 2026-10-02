@@ -5,7 +5,8 @@ import type {
   AddMediaInput,
   DeepPartial,
   ItemOptionPatch,
-  MediaFormatInfo,
+  MediaInfo,
+  MediaPlaylistInfo,
   Settings,
   ScheduleRule,
   CategoryRule,
@@ -81,6 +82,7 @@ export const IPC = {
   integrationsGetHandoffInfo: 'integrations:getHandoffInfo',
   integrationsRotateHandoffToken: 'integrations:rotateToken',
   integrationsGetMediaFormats: 'integrations:getMediaFormats',
+  integrationsGetMediaPlaylist: 'integrations:getMediaPlaylist',
   integrationsAddMedia: 'integrations:addMedia',
   integrationsCheckToolkits: 'integrations:checkToolkits',
   integrationsDownloadToolkit: 'integrations:downloadToolkit',
@@ -99,6 +101,8 @@ export const IPC = {
   updateOpenInstaller: 'update:openInstaller',
   /** Everything needed to file a useful bug report about an update. */
   updateDiagnostics: 'update:diagnostics',
+  /** Re-verify the update folder and delete anything that no longer matches. */
+  updateRepair: 'update:repair',
 
   catcherGet: 'catcher:get',
   catcherResolve: 'catcher:resolve',
@@ -249,6 +253,18 @@ export interface UpdateDiagnostics {
   logPath: string
 }
 
+/** What re-verifying the update folder found and did. */
+export interface UpdateRepairResult {
+  /** Update files looked at. */
+  checked: number
+  /** Files deleted because they could not be matched to the release. */
+  removed: number
+  /** Files left alone because they still matched. */
+  kept: number
+  /** Bytes reclaimed by the deletions, for the confirmation message. */
+  bytesFreed: number
+}
+
 /**
  * Live state of an in-app update download.
  *
@@ -375,7 +391,9 @@ export interface AriaDmApi {
     setClipboardWatch(enabled: boolean): Promise<void>
     getHandoffInfo(): Promise<HandoffInfo>
     rotateHandoffToken(): Promise<HandoffInfo>
-    getMediaFormats(url: string): Promise<MediaFormatInfo[]>
+    getMediaFormats(url: string): Promise<MediaInfo>
+    /** List a playlist's items, so a subset can be chosen before downloading. */
+    getMediaPlaylist(url: string): Promise<MediaPlaylistInfo>
     addMedia(input: AddMediaInput): Promise<AddMediaResult>
     checkToolkits(): Promise<ToolkitStatus>
     downloadToolkit(kind: 'aria2' | 'ytdlp' | 'ffmpeg'): Promise<ToolkitStatus>
@@ -408,6 +426,11 @@ export interface AriaDmApi {
     openInstaller(file: string): Promise<void>
     /** Version, install kind and the tail of the update log, in one string. */
     diagnostics(): Promise<UpdateDiagnostics>
+    /**
+     * Re-verify downloaded installers and delete any that no longer match the
+     * published release, so a damaged update can be fetched again.
+     */
+    repair(): Promise<UpdateRepairResult>
   }
 
   /** Only meaningful inside the catch popup window. */

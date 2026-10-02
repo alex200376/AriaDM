@@ -6,7 +6,13 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-import type { UpdateCheckResult, UpdateDiagnostics, UpdateInfo, UpdateProgress } from '@shared/ipc'
+import type {
+  UpdateCheckResult,
+  UpdateDiagnostics,
+  UpdateInfo,
+  UpdateProgress,
+  UpdateRepairResult
+} from '@shared/ipc'
 
 import type { InstallInfo } from './install-kind'
 import { checkForUpdate } from './update-checker'
@@ -455,6 +461,80 @@ export class UpdateManager {
   async launchInstaller(): Promise<{ started: boolean; reason?: string }> {
     if (!this.installer) return { started: false, reason: '更新尚未下載完成。' }
     return this.launch()
+  }
+
+  /**
+   * Re-verify what is sitting in the update folder and delete what does not
+   * match the release it claims to be.
+   *
+   * `download()` already checks what it writes, so this is for the files that
+   * were written before that check existed or were damaged afterwards — a
+   * storage fault, an antivirus rewriting a file it quarantined — which all
+   * leave the length intact. Such a file keeps passing a name-and-size test for
+   * ever: the app calls the update "ready", the installer fails its integrity
+   * check every time, and no retry ever re-fetches it. Removing it is the one
+   * action that gets that state moving again, and it is a step the user cannot
+   * take from the UI on their own.
+   */
+  async repairCache(): Promise<UpdateRepairResult> {
+    const result: UpdateRepairResult = { checked: 0, removed: 0, kept: 0, bytesFreed: 0 }
+    const dir = this.deps.installerDir()
+
+    let entries: string[]
+    try {
+      entries = await fsp.readdir(dir)
+    } catch {
+      this.deps.log('update cache repair: no update folder to check')
+      return result
+    }
+
+    // An installer can only be judged against the release it names. Before the
+    // first check there is no such release, and then there is nothing that could
+    // make a file "wrong" — so nothing is deleted on a guess.
+    const expectedSha256 = this.info?.downloadSha256 ?? ''
+
+    for (const entry of entries) {
+      if (!/\.(exe|part)$/i.test(entry)) continue
+      const full = path.join(dir, entry)
+      result.checked += 1
+
+      let size = 0
+      try {
+        size = (await fsp.stat(full)).size
+      } catch {
+        continue
+      }
+
+      // A `.part` file is an unfinished download by definition: no installer was
+      // ever run from it, and a fresh download starts a new one anyway.
+      const isPartial = entry.toLowerCase().endsWith('.part')
+      const digest =
+        !isPartial && expectedSha256 ? await this.hashFile(full).catch(() => '') : ''
+      const keep = !isPartial && (expectedSha256 === '' || digest === expectedSha256)
+
+      if (keep) {
+        result.kept += 1
+        continue
+      }
+
+      await fsp.rm(full, { force: true }).catch(() => {})
+      result.removed += 1
+      result.bytesFreed += size
+      this.deps.log(`update cache repair: removed ${entry}`)
+
+      if (this.installer === full) {
+        // Stop offering an installer that is no longer on disk. Without this the
+        // About tab would keep a "ready" state pointing at a deleted file.
+        this.installer = null
+        if (this.state.phase === 'ready') this.emit({ ...IDLE }, true)
+      }
+    }
+
+    this.deps.log(
+      `update cache repair: checked=${result.checked} removed=${result.removed} ` +
+        `kept=${result.kept} freed=${result.bytesFreed}`
+    )
+    return result
   }
 
   /** Everything a bug report about updating needs, in one pasteable string. */

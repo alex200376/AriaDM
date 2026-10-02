@@ -7,7 +7,8 @@ import {
   chooseEngine,
   isMediaSiteUrl,
   matchMediaSite,
-  shouldWarnAboutMissingYtDlp
+  shouldWarnAboutMissingYtDlp,
+  splitByMediaSite
 } from '@shared/media-sites'
 
 const AVAILABLE = { ytdlpEnabled: true, autoDetect: true, ytdlpAvailable: true }
@@ -113,6 +114,36 @@ describe('chooseEngine', () => {
         { ...missing, autoDetect: false }
       )
     ).toBe(true)
+  })
+})
+
+describe('splitByMediaSite', () => {
+  it('separates video pages from ordinary links, preserving order', () => {
+    // A pasted batch is just as likely to be a list of videos as a list of
+    // files, and the two need different engines.
+    const split = splitByMediaSite([
+      'https://www.youtube.com/watch?v=one',
+      'https://example.test/file.zip',
+      'https://www.instagram.com/reel/two/',
+      'magnet:?xt=urn:btih:abc'
+    ])
+
+    expect(split.media).toEqual([
+      'https://www.youtube.com/watch?v=one',
+      'https://www.instagram.com/reel/two/'
+    ])
+    expect(split.plain).toEqual(['https://example.test/file.zip', 'magnet:?xt=urn:btih:abc'])
+  })
+
+  it('treats a file served from a media host as an ordinary link', () => {
+    // Same rule as isMediaSiteUrl: a named file goes to aria2 either way.
+    const split = splitByMediaSite(['https://www.youtube.com/media/clip.mp4'])
+    expect(split.media).toEqual([])
+    expect(split.plain).toEqual(['https://www.youtube.com/media/clip.mp4'])
+  })
+
+  it('returns an empty split for an empty paste', () => {
+    expect(splitByMediaSite([])).toEqual({ media: [], plain: [] })
   })
 })
 

@@ -93,6 +93,7 @@ const api: AriaDmApi = {
     getHandoffInfo: () => invoke(IPC.integrationsGetHandoffInfo),
     rotateHandoffToken: () => invoke(IPC.integrationsRotateHandoffToken),
     getMediaFormats: (url) => invoke(IPC.integrationsGetMediaFormats, url),
+    getMediaPlaylist: (url) => invoke(IPC.integrationsGetMediaPlaylist, url),
     addMedia: (input) => invoke(IPC.integrationsAddMedia, input),
     checkToolkits: () => invoke(IPC.integrationsCheckToolkits),
     downloadToolkit: (kind) => invoke(IPC.integrationsDownloadToolkit, kind),
@@ -112,7 +113,8 @@ const api: AriaDmApi = {
     install: () => invoke(IPC.updateInstall),
     cancel: () => invoke(IPC.updateCancel),
     openInstaller: (file) => invoke(IPC.updateOpenInstaller, file),
-    diagnostics: () => invoke(IPC.updateDiagnostics)
+    diagnostics: () => invoke(IPC.updateDiagnostics),
+    repair: () => invoke(IPC.updateRepair)
   },
 
   catcher: {

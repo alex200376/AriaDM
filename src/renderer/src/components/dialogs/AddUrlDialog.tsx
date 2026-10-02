@@ -1,17 +1,24 @@
-import { FileUp, FolderOpen, Link2, Loader2, Settings2, Sparkles, Wrench } from 'lucide-react'
+import { Captions, FileUp, FolderOpen, Link2, Loader2, Settings2, Sparkles, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { formatBytes } from '@shared/format'
 import { classifyMediaError, type MediaErrorAction, type MediaErrorInfo } from '@shared/media-errors'
 import { defaultFormatId } from '@shared/media-formats'
-import { matchMediaSite } from '@shared/media-sites'
-import type { AddDownloadInput, MediaFormatInfo } from '@shared/settings'
+import { matchMediaSite, splitByMediaSite } from '@shared/media-sites'
+import type {
+  AddDownloadInput,
+  AudioFormat,
+  MediaFormatInfo,
+  MediaPlaylistEntry,
+  SubtitleTrack
+} from '@shared/settings'
 import { CONNECTION_PRESETS, type ConnectionsPreset } from '@shared/settings'
-import { fileNameFromUri, parseUriList } from '@shared/uri'
+import { fileNameFromUri, isListFileName, parseUriList } from '@shared/uri'
 
 import { useApp } from '../../store/app-store'
 import { cn } from '../../lib/cn'
 import { Badge, Button, Field, Input, Modal, Row, SelectField, TextArea, Toggle } from '../ui/primitives'
+import { PlaylistPicker } from './PlaylistPicker'
 
 /**
  * Base64-encode bytes without blowing the call stack.
@@ -85,6 +92,17 @@ export function AddUrlDialog(): JSX.Element | null {
   const [mediaError, setMediaError] = useState<MediaErrorInfo | null>(null)
   const [audioOnly, setAudioOnly] = useState(false)
   const [playlist, setPlaylist] = useState(false)
+  const [audioFormat, setAudioFormat] = useState<AudioFormat>('native')
+  const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrack[]>([])
+  const [subtitleLangs, setSubtitleLangs] = useState<string[]>([])
+  const [embedSubtitles, setEmbedSubtitles] = useState(false)
+  const [isPlaylist, setIsPlaylist] = useState(false)
+  /** Items the user ticked in the playlist picker, as 1-based positions. */
+  const [selectedItems, setSelectedItems] = useState<number[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [playlistLoading, setPlaylistLoading] = useState(false)
+  const [playlistTitle, setPlaylistTitle] = useState('')
+  const [playlistEntries, setPlaylistEntries] = useState<MediaPlaylistEntry[]>([])
   /** The user asked for a plain aria2 download even though the site is known. */
   const [forceAria2, setForceAria2] = useState(false)
   const [installing, setInstalling] = useState<string>('')
@@ -111,13 +129,29 @@ export function AddUrlDialog(): JSX.Element | null {
     setMediaError(null)
     setAudioOnly(false)
     setPlaylist(false)
+    setAudioFormat('native')
+    setSubtitleTracks([])
+    setSubtitleLangs([])
+    setEmbedSubtitles(false)
+    setIsPlaylist(false)
+    setSelectedItems([])
+    setPickerOpen(false)
+    setPlaylistEntries([])
+    setPlaylistTitle('')
     setForceAria2(false)
     setInstalling('')
     autoInstallTried.current = false
   }, [open, seed, settings?.downloadDir, settings?.connectionsPreset])
 
   const uris = useMemo(() => parseUriList(text), [text])
+  // A paste can hold video pages and plain files at once, and the two need
+  // different engines. Splitting them is what keeps the video links out of the
+  // aria2 path without dropping the rest of the list.
+  const mediaSplit = useMemo(() => splitByMediaSite(uris), [uris])
+  /** A single video page gets the full "recognised site" panel; a list of them
+      gets the same panel with a count instead of a site name. */
   const mediaSite = uris.length === 1 ? matchMediaSite(uris[0]!) : null
+  const batchMedia = uris.length > 1 && mediaSplit.media.length > 0
   const hasYtDlp = toolkits?.ytdlp.present ?? false
   const hasFfmpeg = toolkits?.ffmpeg.present ?? false
 
@@ -154,45 +188,79 @@ export function AddUrlDialog(): JSX.Element | null {
   // through the settings. Attempted once per URL so a failure (no network) does
   // not spin.
   useEffect(() => {
-    if (!open || mediaSite === null || hasYtDlp || forceAria2 || autoInstallTried.current) return
+    if (!open || (mediaSite === null && !batchMedia) || hasYtDlp || forceAria2 || autoInstallTried.current) return
     autoInstallTried.current = true
     void installToolkit('ytdlp')
-  }, [open, mediaSite, hasYtDlp, forceAria2, installToolkit])
-  const mediaUrl = uris[0] ?? ''
-  // Auto-detection is only offered for a single known media page and a working
-  // yt-dlp. Anything else stays on the aria2 path, which cannot surprise anyone.
-  const mediaMode = mediaSite !== null && !forceAria2 && !torrent && !metalink
+  }, [open, mediaSite, batchMedia, hasYtDlp, forceAria2, installToolkit])
+
+  // Auto-detection is offered for a video page and for a pasted list that holds
+  // any. Anything else stays on the aria2 path, which cannot surprise anyone.
+  const mediaMode = (mediaSite !== null || batchMedia) && !forceAria2 && !torrent && !metalink
   const useYtDlp = mediaMode && hasYtDlp
+
+  /** The links the chosen format applies to: the page, or every video in it. */
+  const mediaTargets = useMemo(
+    () => (mediaSite !== null ? [uris[0]!] : mediaSplit.media),
+    [mediaSite, uris, mediaSplit]
+  )
+
+  /**
+   * The links aria2 will receive.
+   *
+   * A paste that goes to yt-dlp is not also queued in aria2 — that would download
+   * everything twice. A video link does fall back to aria2 when yt-dlp cannot be
+   * used, which is what the "改用一般下載" toggle and the missing-engine warning
+   * are about, and what stops a batch from silently losing its video links.
+   */
+  const aria2Urls = useMemo(() => {
+    // The single video page that goes to yt-dlp is not also queued in aria2.
+    if (mediaSite !== null) return useYtDlp ? [] : uris
+    // In a batch only the non-video links belong to aria2 — unless yt-dlp is
+    // unusable, and then the video links fall back to it rather than being
+    // dropped on the floor.
+    if (useYtDlp || (hasYtDlp && !forceAria2)) return mediaSplit.plain
+    return uris
+  }, [useYtDlp, mediaSite, hasYtDlp, forceAria2, uris, mediaSplit])
+  /** Only the aria2 links are classified; a video page is not a file. */
+  const aria2Text = useMemo(() => aria2Urls.join('\n'), [aria2Urls])
+
+  /** The link whose formats the picker shows: the first video in the paste. */
+  const probeUrl = mediaSite !== null ? (uris[0] ?? '') : (mediaSplit.media[0] ?? '')
+  /** Whether the recognised-site panel applies to this paste at all. */
+  const showMediaPanel = (mediaSite !== null || batchMedia) && !torrent && !metalink
 
   // Ask the main process to classify, so the mirror/single decision matches
   // exactly what the backend will do when the download is created.
   useEffect(() => {
-    if (!open || uris.length === 0) {
+    if (!open || aria2Text === '') {
       setClassification({ mirrors: [], singles: [] })
       return
     }
     let cancelled = false
     void window.api.downloads
-      .parseUriList(text)
+      .parseUriList(aria2Text)
       .then((result) => {
         if (!cancelled) setClassification(result)
       })
       .catch(() => {
-        if (!cancelled) setClassification({ mirrors: [], singles: uris })
+        if (!cancelled) setClassification({ mirrors: [], singles: aria2Urls })
       })
     return () => {
       cancelled = true
     }
-  }, [open, text, uris])
+  }, [open, aria2Text])
 
   // Probe formats as soon as a recognised page settles, so the quality picker is
   // already populated by the time the user looks at it. The probe is debounced
   // while typing and every in-flight result is dropped once the URL changes.
   useEffect(() => {
-    if (!open || !useYtDlp || mediaUrl === '') {
+    if (!open || !useYtDlp || probeUrl === '') {
       setFormats(null)
       setFormatId('')
       setMediaError(null)
+      setSubtitleTracks([])
+      setSubtitleLangs([])
+      setIsPlaylist(false)
       setProbing(false)
       return
     }
@@ -205,15 +273,18 @@ export function AddUrlDialog(): JSX.Element | null {
 
     const timer = window.setTimeout(() => {
       void window.api.integrations
-        .getMediaFormats(mediaUrl)
+        .getMediaFormats(probeUrl)
         .then((result) => {
           if (cancelled) return
-          setFormats(result)
+          setFormats(result.formats)
+          setSubtitleTracks(result.subtitles)
+          setSubtitleLangs([])
+          setIsPlaylist(result.isPlaylist)
           // The best entry is only usable with ffmpeg; without it the picker
           // opens on the best single-file format instead of on a download that
           // is going to fail.
-          setFormatId(defaultFormatId(result, hasFfmpeg))
-          if (result.length === 0) {
+          setFormatId(defaultFormatId(result.formats, hasFfmpeg))
+          if (result.formats.length === 0) {
             setMediaError({ kind: 'unknown', message: '這個連結找不到可下載的格式。', action: 'retry', actionLabel: '重新偵測' })
           }
         })
@@ -230,7 +301,7 @@ export function AddUrlDialog(): JSX.Element | null {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [open, useYtDlp, mediaUrl, probeNonce, hasFfmpeg, toolkits?.ytdlp.version])
+  }, [open, useYtDlp, probeUrl, probeNonce, hasFfmpeg, toolkits?.ytdlp.version])
 
   if (!open) return null
 
@@ -244,6 +315,11 @@ export function AddUrlDialog(): JSX.Element | null {
   // A merged stream and an mp3 conversion both need ffmpeg; a plain progressive
   // format does not, which is exactly the trade-off the hint explains.
   const needsFfmpeg = chosenFormat?.needsFfmpeg ?? false
+
+  /** Append dropped text to the box, keeping whatever is already typed there. */
+  const appendText = (addition: string): void => {
+    setText((previous) => (previous ? `${previous}\n${addition}` : addition))
+  }
 
   const handleDrop = async (event: React.DragEvent): Promise<void> => {
     event.preventDefault()
@@ -264,9 +340,17 @@ export function AddUrlDialog(): JSX.Element | null {
       return
     }
 
+    // A list file is a paste that arrived as a file: `.txt`, or a playlist whose
+    // `#EXTINF` directives `parseUriList` drops for us.
+    const listFile = files.find((file) => isListFileName(file.name))
+    if (listFile) {
+      appendText(await listFile.text())
+      return
+    }
+
     // Anything else is treated as text; a dragged link is a common gesture.
     const dropped = event.dataTransfer.getData('text')
-    if (dropped) setText((previous) => (previous ? `${previous}\n${dropped}` : dropped))
+    if (dropped) appendText(dropped)
   }
 
   /**
@@ -296,34 +380,91 @@ export function AddUrlDialog(): JSX.Element | null {
     }
   }
 
-  const submitMedia = async (): Promise<void> => {
-    if (!settings || !formatId) return
-    const ok = await runAction('加入影音下載', async () => {
-      const result = await window.api.integrations.addMedia({
-        url: mediaUrl,
-        formatId,
-        dir,
-        audioOnly,
-        playlist,
-        maxConcurrent: settings.maxConcurrentDownloads
-      })
+  /**
+   * Send every video link in the paste to yt-dlp, all with the chosen format.
+   *
+   * One link failing must not cancel the others: the reason to paste a list is
+   * that the user does not want to babysit it. Failures are collected and
+   * reported together, and only a batch where nothing at all was added comes
+   * back as an error for the dialog to stay open on.
+   */
+  const submitMedia = async (): Promise<boolean> => {
+    if (!settings || !formatId || mediaTargets.length === 0) return true
+    return runAction('加入影音下載', async () => {
+      const gids: string[] = []
+      const failures: { url: string; message: string }[] = []
+      for (const url of mediaTargets) {
+        try {
+          const result = await window.api.integrations.addMedia({
+            url,
+            formatId,
+            dir,
+            audioOnly,
+            playlist: playlist || selectedItems.length > 0,
+            maxConcurrent: settings.maxConcurrentDownloads,
+            ...(selectedItems.length > 0 ? { playlistItems: selectedItems } : {}),
+            ...(subtitleLangs.length > 0
+              ? { subtitles: { codes: subtitleLangs, embed: embedSubtitles } }
+              : {}),
+            ...(audioFormat !== 'native' ? { audioFormat } : {})
+          })
+          gids.push(...result.gids)
+        } catch (error) {
+          failures.push({ url, message: (error as Error).message })
+        }
+      }
+      if (gids.length === 0 && failures.length > 0) throw new Error(failures[0]!.message)
+
       pushToast({
         title: '已交給 yt-dlp 下載',
-        body: `${result.gids.length} 個項目`,
+        body: `${gids.length} 個項目`,
         tone: 'success'
       })
+      if (failures.length > 0) {
+        pushToast({
+          title: `有 ${failures.length} 個連結失敗`,
+          body: failures[0]!.message,
+          tone: 'error'
+        })
+      }
     })
-    if (ok) closeDialog()
   }
 
-  const submit = async (): Promise<void> => {
-    if (!settings) return
-
-    if (useYtDlp) {
-      await submitMedia()
-      return
+  /**
+   * Add whatever aria2 should take from this paste.
+   *
+   * A torrent or metalink is one download; otherwise each mirror group becomes
+   * one download with several sources and each unique filename its own.
+   */
+  /**
+   * Open the playlist picker and load the list behind it.
+   *
+   * The list is fetched on demand rather than at probe time: it is a second
+   * yt-dlp run, and most links are a single video that has no playlist to list.
+   */
+  const openPlaylistPicker = async (): Promise<void> => {
+    if (probeUrl === '') return
+    setPickerOpen(true)
+    setPlaylistLoading(true)
+    setPlaylistEntries([])
+    try {
+      const info = await window.api.integrations.getMediaPlaylist(probeUrl)
+      setPlaylistTitle(info.title)
+      setPlaylistEntries(info.entries)
+    } catch (error) {
+      pushToast({
+        title: '讀取播放清單失敗',
+        body: classifyMediaError((error as Error).message).message,
+        tone: 'error'
+      })
+      setPickerOpen(false)
+    } finally {
+      setPlaylistLoading(false)
     }
+  }
 
+  const addPlainDownloads = async (): Promise<void> => {
+    if (!settings) return
     const presetValues = preset === 'custom' ? null : CONNECTION_PRESETS[preset]
     const split = presetValues?.split ?? settings.split
     const maxConnectionPerServer = presetValues?.maxConnectionPerServer ?? settings.maxConnectionPerServer
@@ -378,7 +519,22 @@ export function AddUrlDialog(): JSX.Element | null {
         await addDownload({ ...base, uris: [uri], out: downloadCount === 1 ? out : '', category })
       }
     }
+  }
 
+  const submit = async (): Promise<void> => {
+    if (!settings) return
+
+    if (useYtDlp) {
+      const ok = await submitMedia()
+      if (!ok) return
+      // A paste that mixes video pages and plain files sends both: the videos
+      // through yt-dlp, the rest through aria2, in one action.
+      if (aria2Urls.length > 0) await addPlainDownloads()
+      closeDialog()
+      return
+    }
+
+    await addPlainDownloads()
     closeDialog()
   }
 
@@ -390,15 +546,18 @@ export function AddUrlDialog(): JSX.Element | null {
         ? probing
           ? '正在偵測可用格式…'
           : formatId
-            ? '將由 yt-dlp 下載並轉存'
+            ? mediaTargets.length > 1
+              ? `將由 yt-dlp 下載 ${mediaTargets.length} 個影音項目${aria2Urls.length > 0 ? `，另有 ${aria2Urls.length} 個一般下載` : ''}`
+              : '將由 yt-dlp 下載並轉存'
             : '偵測不到可用格式'
         : uris.length > 0
           ? `將建立 ${downloadCount} 個下載${mirrorCount > 0 ? `（其中 ${mirrorCount} 組為多鏡像）` : ''}`
           : '尚未輸入連結'
 
   return (
+    <>
     <Modal
-      open={open}
+      open={open && !pickerOpen}
       title="新增下載"
       subtitle="貼上任何連結即可，影音網站的內容會自動交給 yt-dlp"
       onClose={closeDialog}
@@ -410,7 +569,7 @@ export function AddUrlDialog(): JSX.Element | null {
             取消
           </Button>
           <Button variant="primary" disabled={!canSubmit} onClick={() => void submit()}>
-            {useYtDlp ? '下載影片' : '開始下載'}
+            {useYtDlp ? (mediaTargets.length > 1 ? `下載 ${mediaTargets.length} 個影片` : '下載影片') : '開始下載'}
           </Button>
         </>
       }
@@ -464,12 +623,19 @@ export function AddUrlDialog(): JSX.Element | null {
           </div>
         )}
 
-        {mediaSite !== null && !torrent && !metalink && (
+        {showMediaPanel && (
           <div className="rounded-xl border border-brand/30 bg-brand/10 px-3 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <Sparkles size={14} className="text-brand" />
-              <span className="text-[12.5px] font-medium text-fg">偵測到影音網站</span>
-              <Badge tone="brand">{mediaSite}</Badge>
+              {/* One video page names its site; a batch shows how many it holds,
+                  because the format picked below applies to every one of them. */}
+              <span className="text-[12.5px] font-medium text-fg">
+                {mediaSite !== null ? '偵測到影音網站' : `偵測到 ${mediaTargets.length} 個影音連結`}
+              </span>
+              <Badge tone="brand">{mediaSite ?? '多筆'}</Badge>
+              {aria2Urls.length > 0 && uris.length > 1 && (
+                <Badge tone="muted">另有 {aria2Urls.length} 個一般下載</Badge>
+              )}
               {forceAria2 ? (
                 <Badge tone="muted">一般下載</Badge>
               ) : (
@@ -496,7 +662,7 @@ export function AddUrlDialog(): JSX.Element | null {
                 <span className="text-[11.5px] leading-relaxed text-warn">
                   {installing === 'ytdlp'
                     ? '正在安裝影音引擎（yt-dlp）…安裝完成後會自動偵測格式。'
-                    : '尚未安裝 yt-dlp，這個連結目前只能改用一般下載；影音網站的實際檔案是短效的串流網址，通常會失敗。'}
+                    : `尚未安裝 yt-dlp，${uris.length > 1 ? '這些影音連結' : '這個連結'}目前只能改用一般下載；影音網站的實際檔案是短效的串流網址，通常會失敗。`}
                 </span>
                 {installing === 'ytdlp' ? (
                   <Loader2 size={14} className="animate-spin text-warn" />
@@ -590,10 +756,97 @@ export function AddUrlDialog(): JSX.Element | null {
                       label="純音訊"
                     />
                   </Row>
-                  <Row label="下載整個播放清單" hint="展開清單中的所有項目">
-                    <Toggle checked={playlist} onChange={setPlaylist} label="播放清單" />
+                  <Row
+                    label="播放清單"
+                    hint={
+                      selectedItems.length > 0
+                        ? `已選擇 ${selectedItems.length} 個項目`
+                        : isPlaylist
+                          ? '已偵測到播放清單，可選擇部分項目'
+                          : '展開清單中的所有項目'
+                    }
+                  >
+                    {isPlaylist ? (
+                      <div className="flex items-center gap-2">
+                        {selectedItems.length > 0 && (
+                          <button
+                            type="button"
+                            className="text-[11px] text-brand hover:underline"
+                            onClick={() => {
+                              setSelectedItems([])
+                              setPlaylist(false)
+                            }}
+                          >
+                            清除
+                          </button>
+                        )}
+                        <Button variant="secondary" size="sm" onClick={() => void openPlaylistPicker()}>
+                          選擇項目…
+                        </Button>
+                      </div>
+                    ) : (
+                      <Toggle checked={playlist} onChange={setPlaylist} label="播放清單" />
+                    )}
                   </Row>
                 </div>
+
+                {audioOnly && (
+                  <SelectField
+                    className="mt-2"
+                    label="音訊格式"
+                    hint="轉換格式需要 ffmpeg；「原始音軌」直接保留網站提供的格式"
+                    value={audioFormat}
+                    options={[
+                      { value: 'native', label: '原始音軌（不轉換）' },
+                      { value: 'mp3', label: 'MP3' },
+                      { value: 'm4a', label: 'M4A' },
+                      { value: 'flac', label: 'FLAC' },
+                      { value: 'opus', label: 'OPUS' },
+                      { value: 'wav', label: 'WAV' }
+                    ]}
+                    onValueChange={(value) => setAudioFormat(value as AudioFormat)}
+                  />
+                )}
+
+                {subtitleTracks.length > 0 && (
+                  <div className="mt-2 border-t border-brand/20 pt-2">
+                    <div className="flex items-center gap-2 text-[11.5px] text-muted">
+                      <Captions size={13} />
+                      <span>字幕語言</span>
+                      <span className="text-faint">（未選則不另外存字幕）</span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {subtitleTracks.map((track) => {
+                        const active = subtitleLangs.includes(track.code)
+                        return (
+                          <button
+                            key={track.code}
+                            type="button"
+                            onClick={() =>
+                              setSubtitleLangs((previous) =>
+                                active ? previous.filter((code) => code !== track.code) : [...previous, track.code]
+                              )
+                            }
+                            className={cn(
+                              'rounded-md border px-2 py-0.5 text-[11px] transition-colors',
+                              active
+                                ? 'border-brand bg-brand/15 text-fg'
+                                : 'border-line bg-elevated/40 text-muted hover:text-fg'
+                            )}
+                          >
+                            {track.code}
+                            {track.auto ? ' · 自動' : ''}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {subtitleLangs.length > 0 && (
+                      <Row label="嵌入字幕" hint="需要 ffmpeg；關閉則另存成 .srt 字幕檔">
+                        <Toggle checked={embedSubtitles} onChange={setEmbedSubtitles} label="嵌入字幕" />
+                      </Row>
+                    )}
+                  </div>
+                )}
 
                 {needsFfmpeg && !hasFfmpeg && (
                   <p className="rounded-lg border border-warn/25 bg-warn/10 px-3 py-2 text-[11.5px] leading-relaxed text-warn">
@@ -728,5 +981,18 @@ export function AddUrlDialog(): JSX.Element | null {
         )}
       </div>
     </Modal>
+      <PlaylistPicker
+        open={pickerOpen}
+        loading={playlistLoading}
+        title={playlistTitle}
+        entries={playlistEntries}
+        onClose={() => setPickerOpen(false)}
+        onConfirm={(indices) => {
+          setSelectedItems(indices)
+          setPlaylist(true)
+          setPickerOpen(false)
+        }}
+      />
+    </>
   )
 }

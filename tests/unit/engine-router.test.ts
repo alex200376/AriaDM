@@ -23,6 +23,7 @@ function probeResult(directUrl = ''): MediaProbe {
     id: 'abc',
     durationSeconds: 0,
     thumbnail: '',
+    subtitles: [],
     formats: [
       {
         formatId: 'bestvideo+bestaudio/best',

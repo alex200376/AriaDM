@@ -258,3 +258,103 @@ describe('MediaJobs credentials', () => {
     expect(jobs.get(gid)!.status).toBe('error')
   })
 })
+
+describe('MediaJobs probe reuse', () => {
+  /**
+   * The quality menu and the download it leads to ask the same question a second
+   * apart, and each answer costs a yt-dlp run. Reusing the first is what turns a
+   * two-probe click into a one-probe click; over Instagram, where the first
+   * attempt with a `sessionid` always fails, it also removes the doomed retry.
+   */
+  it('answers a repeated probe from the first run', async () => {
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url)
+    const again = await jobs.probe(PROBE.url)
+
+    expect(state.probeFormats).toHaveBeenCalledTimes(1)
+    expect(again).toMatchObject({ id: 'abc' })
+  })
+
+  it('treats a different cookie header as a different question', async () => {
+    // Two sessions can disagree: one resolves and one is refused, so they must
+    // not share an answer.
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url, { cookieHeader: 'sessionid=one' })
+    await jobs.probe(PROBE.url, { cookieHeader: 'sessionid=two' })
+
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+  })
+
+  it('carries the credentials that made the probe work into the download', async () => {
+    // The store failed, so the verdict dropped it. A reused probe must restore
+    // that verdict, or the download would send the credential the probe already
+    // proved unusable.
+    state.probeFormats.mockRejectedValueOnce(new Error(LOCKED)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url)
+    const probe = await jobs.probe(PROBE.url)
+    await jobs.add(addInput(), probe)
+
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+    expect(runnerOptions(0).cookieArgs).toEqual([])
+  })
+
+  it('asks again when the caller says so', async () => {
+    // What the menu's own refresh means: the answer on screen is the one the
+    // user is replacing.
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url, {}, { reuse: false })
+    await jobs.probe(PROBE.url, {}, { reuse: false })
+
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+  })
+
+  it('never remembers a failure', async () => {
+    state.probeFormats.mockRejectedValue(new Error('ERROR: [youtube] abc: Video unavailable'))
+    const jobs = makeJobs()
+
+    await expect(jobs.probe(PROBE.url)).rejects.toThrow()
+    await expect(jobs.probe(PROBE.url)).rejects.toThrow()
+
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+  })
+
+  it('forgets a link whose download failed', async () => {
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+
+    const probe = await jobs.probe(PROBE.url)
+    const { gid } = await jobs.add(addInput(), probe)
+    state.runners[0]!.emit('failed', 'ERROR: [youtube] abc: Video unavailable')
+    expect(jobs.get(gid)!.status).toBe('error')
+
+    await jobs.probe(PROBE.url)
+
+    // The answer was good enough to build a menu from, not good enough to
+    // download, so asking again has to reach yt-dlp.
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps only the newest handful of answers', async () => {
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+    const urls = Array.from({ length: 9 }, (_, index) => `https://example.test/v/${index}`)
+
+    for (const url of urls) await jobs.probe(url)
+    expect(state.probeFormats).toHaveBeenCalledTimes(9)
+
+    // The first one has aged out...
+    await jobs.probe(urls[0]!)
+    expect(state.probeFormats).toHaveBeenCalledTimes(10)
+    // ...while the newest are still there.
+    await jobs.probe(urls[8]!)
+    expect(state.probeFormats).toHaveBeenCalledTimes(10)
+  })
+})

@@ -154,6 +154,13 @@ export interface Settings {
    * logged or written to disk.
    */
   mediaExtensionCookies: boolean
+  /**
+   * HLS/DASH fragments fetched in parallel by yt-dlp's native downloader.
+   *
+   * The supported way to speed up fragmented downloads — an external downloader
+   * for fragmented manifests is a known injection path (GHSA-vx4q-3cr2-7cg2).
+   */
+  mediaConcurrentFragments: number
   ffmpegPath: string
 
   aria2Path: string
@@ -267,6 +274,52 @@ export interface MediaFormatInfo {
   needsFfmpeg: boolean
 }
 
+/** One subtitle language a video offers. */
+export interface SubtitleTrack {
+  /** yt-dlp language code, e.g. `en`, `zh-Hant`. */
+  code: string
+  /** True for a machine-generated track, which is used only if the language has no manual one. */
+  auto: boolean
+}
+
+/**
+ * Contents of a link, as the picker needs them.
+ *
+ * Returned as one object rather than the bare format list it used to be: the
+ * subtitle picker and the playlist selector need the same probe that produced the
+ * quality menu, and one answer that carries all three avoids probing the page
+ * three times.
+ */
+export interface MediaInfo {
+  formats: MediaFormatInfo[]
+  subtitles: SubtitleTrack[]
+  /** True when the link is a playlist, so the selector should be offered. */
+  isPlaylist: boolean
+}
+
+/** One item of a playlist, as the flat probe reports it. */
+export interface MediaPlaylistEntry {
+  id: string
+  title: string
+  durationSeconds: number
+  url: string
+  thumbnail: string
+}
+
+/** A playlist's items, so the picker can offer a subset instead of all-or-nothing. */
+export interface MediaPlaylistInfo {
+  title: string
+  entries: MediaPlaylistEntry[]
+}
+
+/**
+ * The container a media download's audio is left in, or converted to.
+ *
+ * `native` keeps whatever the site serves, which is the default and never needs
+ * ffmpeg; every other value is an ffmpeg conversion.
+ */
+export type AudioFormat = 'native' | 'mp3' | 'm4a' | 'flac' | 'opus' | 'wav'
+
 export interface AddMediaInput {
   url: string
   formatId: string
@@ -275,6 +328,17 @@ export interface AddMediaInput {
   /** True when the user asked for a playlist and we should expand it. */
   playlist: boolean
   maxConcurrent: number
+  /** Subtitle languages to write, and whether to mux them into the video. */
+  subtitles?: { codes: string[]; embed: boolean }
+  /** Convert the audio track to this format; omitted or 'native' keeps the site's own. */
+  audioFormat?: AudioFormat
+  /**
+   * 1-based playlist positions to download, when the user picked a subset.
+   *
+   * Empty or omitted means the `playlist` flag decides: false downloads one
+   * item, true downloads the whole list.
+   */
+  playlistItems?: number[]
 }
 
 export interface AppPaths {

@@ -280,6 +280,20 @@ const RULES: Rule[] = [
     actionLabel: '重新偵測'
   },
   {
+    /**
+     * The app's own ffmpeg requirement for subtitles and audio conversion.
+     *
+     * Listed ahead of the merge rule so these two name what the user was trying
+     * to do — embedding a subtitle track, converting to mp3 — rather than
+     * talking about muxing a video, which is a different operation.
+     */
+    kind: 'ffmpeg',
+    patterns: [/嵌入字幕/, /轉換音訊格式/, /需要 ffmpeg/],
+    message: '這個動作需要 ffmpeg（合併影音、嵌入字幕或轉換音訊格式）。請先安裝 ffmpeg 媒體包。',
+    action: 'install-ffmpeg',
+    actionLabel: '安裝 ffmpeg'
+  },
+  {
     kind: 'ffmpeg',
     patterns: [
       /ffmpeg (is )?not (installed|found)/i,

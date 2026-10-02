@@ -1,9 +1,10 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Inbox } from 'lucide-react'
+import { Check, Inbox, Minus } from 'lucide-react'
 import { useRef, type ReactNode } from 'react'
 
 import type { DownloadItem } from '@shared/download'
 import { t } from '@shared/i18n'
+import { nextSelectionAfterSelectAll } from '@shared/selection'
 
 import { useApp, type SortField } from '../../store/app-store'
 import { cn } from '../../lib/cn'
@@ -66,6 +67,7 @@ export function DownloadTable({
   const selection = useApp((state) => state.selection)
   const toggleSort = useApp((state) => state.toggleSort)
   const toggleSelected = useApp((state) => state.toggleSelected)
+  const selectAll = useApp((state) => state.selectAll)
   const openDetail = useApp((state) => state.openDetail)
   const removeGids = useApp((state) => state.removeGids)
   const pauseGids = useApp((state) => state.pauseGids)
@@ -76,6 +78,14 @@ export function DownloadTable({
 
   const rowHeight = ROW_HEIGHT[density] ?? 60
   const selectedSet = new Set(selection)
+
+  // The header checkbox reflects the rows that are actually rendered: "all" for
+  // this control means everything the current search and category leave visible,
+  // which is the same set `Ctrl+A` acts on. A partially selected list still
+  // counts as neither, so it draws the indeterminate dash.
+  const allSelected = items.length > 0 && items.every((item) => selectedSet.has(item.gid))
+  const someSelected = items.some((item) => selectedSet.has(item.gid))
+  const headerLabel = allSelected ? t('table.clearSelection') : t('table.selectAll')
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -118,6 +128,37 @@ export function DownloadTable({
       >
         {COLUMNS.map((column, index) => {
           const label = COLUMN_LABELS[column.label]?.() ?? ''
+          // The first column holds the select-all control instead of a heading.
+          if (index === 0) {
+            return (
+              <div key="select-all" className={cn('flex items-center gap-1', column.className)}>
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={allSelected ? true : someSelected ? 'mixed' : false}
+                  aria-label={headerLabel}
+                  title={headerLabel}
+                  disabled={items.length === 0}
+                  onClick={() => selectAll(nextSelectionAfterSelectAll(selection, items.map((item) => item.gid)))}
+                  className={cn(
+                    'flex h-4 w-4 items-center justify-center rounded-[5px] border transition-colors',
+                    allSelected
+                      ? 'border-brand bg-brand text-brand-fg'
+                      : someSelected
+                        ? 'border-brand bg-brand/25 text-brand'
+                        : 'border-line hover:border-faint/70',
+                    items.length === 0 && 'cursor-not-allowed opacity-40'
+                  )}
+                >
+                  {allSelected ? (
+                    <Check size={11} strokeWidth={3} />
+                  ) : someSelected ? (
+                    <Minus size={11} strokeWidth={3} />
+                  ) : null}
+                </button>
+              </div>
+            )
+          }
           return (
             <div key={`${column.label}-${index}`} className={cn('flex items-center gap-1', column.className)}>
               {column.key ? (

@@ -155,6 +155,7 @@ let settings: Settings = {
   ytdlpEnabled: true,
   mediaCookiesFromBrowser: 'auto',
   mediaExtensionCookies: true,
+  mediaConcurrentFragments: 5,
   ytdlpDetectSites: true,
   ffmpegPath: '',
   aria2Path: "C:\\AriaDM\\resources\\bin\\aria2c.exe",
@@ -463,12 +464,35 @@ export function createMockApi(): AriaDmApi {
         if (url.includes('broken')) {
           throw new Error('ERROR: [youtube] dQw4w9WgXcQ: Unable to extract player response')
         }
-        return [
-          { formatId: 'bestvideo+bestaudio/best', label: '最佳畫質（自動合併音訊）', ext: 'mp4', resolution: '2160p', filesize: null, vcodec: 'auto', acodec: 'auto', note: '需要 ffmpeg 才能合併', needsFfmpeg: true },
-          { formatId: '137', label: '2160p · mp4', ext: 'mp4', resolution: '2160p', filesize: 1_820_000_000, vcodec: 'avc1', acodec: 'none', note: '2160p', needsFfmpeg: true },
-          { formatId: '22', label: '720p · mp4', ext: 'mp4', resolution: '720p', filesize: 214_000_000, vcodec: 'avc1', acodec: 'mp4a', note: '720p', needsFfmpeg: false },
-          { formatId: '140', label: '純音訊 · m4a · 128kbps', ext: 'm4a', resolution: 'audio', filesize: 48_000_000, vcodec: 'none', acodec: 'mp4a', note: 'medium', needsFfmpeg: false }
-        ]
+        return {
+          formats: [
+            { formatId: 'bestvideo+bestaudio/best', label: '最佳畫質（自動合併音訊）', ext: 'mp4', resolution: '2160p', filesize: null, vcodec: 'auto', acodec: 'auto', note: '需要 ffmpeg 才能合併', needsFfmpeg: true },
+            { formatId: '137', label: '2160p · mp4', ext: 'mp4', resolution: '2160p', filesize: 1_820_000_000, vcodec: 'avc1', acodec: 'none', note: '2160p', needsFfmpeg: true },
+            { formatId: '22', label: '720p · mp4', ext: 'mp4', resolution: '720p', filesize: 214_000_000, vcodec: 'avc1', acodec: 'mp4a', note: '720p', needsFfmpeg: false },
+            { formatId: '140', label: '純音訊 · m4a · 128kbps', ext: 'm4a', resolution: 'audio', filesize: 48_000_000, vcodec: 'none', acodec: 'mp4a', note: 'medium', needsFfmpeg: false }
+          ],
+          subtitles: [
+            { code: 'zh-Hant', auto: false },
+            { code: 'zh-Hans', auto: true },
+            { code: 'en', auto: true },
+            { code: 'ja', auto: false }
+          ],
+          isPlaylist: url.includes('playlist') || url.includes('list=')
+        }
+      },
+      getMediaPlaylist: async (url) => {
+        await new Promise((resolve) => window.setTimeout(resolve, 500))
+        if (!url) throw new Error('缺少連結。')
+        return {
+          title: '示範播放清單',
+          entries: Array.from({ length: 8 }, (_, index) => ({
+            id: String(index + 1),
+            title: `第 ${index + 1} 集：示範項目`,
+            durationSeconds: 180 + index * 37,
+            url: `${url}&index=${index + 1}`,
+            thumbnail: ''
+          }))
+        }
       },
       addMedia: async () => ({ gids: ['ytdlp:mock'] }),
       checkToolkits: async () => toolkit,
@@ -526,7 +550,8 @@ export function createMockApi(): AriaDmApi {
       diagnostics: async () => ({
         text: 'AriaDM 0.1.0-mock\nplatform: mock\ninstall kind: dev',
         logPath: '/mock/update.log'
-      })
+      }),
+      repair: async () => ({ checked: 0, removed: 0, kept: 0, bytesFreed: 0 })
     },
 
     catcher: {

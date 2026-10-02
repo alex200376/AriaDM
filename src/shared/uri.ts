@@ -77,6 +77,17 @@ export function sanitizeFileName(input: string, fallback = 'download'): string {
   return name
 }
 
+/**
+ * True when a dropped file is a list of links rather than a download itself.
+ *
+ * `.m3u`/`.m3u8` interleave `#EXTINF` directives with their URLs, and
+ * `parseUriList` already drops `#` comments and blank lines — so the contents can
+ * be appended as they are.
+ */
+export function isListFileName(name: string): boolean {
+  return /\.(txt|list|urls|m3u8?)$/i.test(name.trim())
+}
+
 /** Percent-decode a path segment without throwing on malformed input. */
 export function decodeUriSegment(segment: string): string {
   try {

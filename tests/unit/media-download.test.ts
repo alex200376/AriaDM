@@ -5,7 +5,7 @@ import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MediaJobs, mergeStreamProgress } from '../../src/main/media/jobs'
-import { buildDownloadArgs, parseFileLine, parseProgressLine } from '../../src/main/media/ytdlp'
+import { buildDownloadArgs, buildProbeArgs, parseFileLine, parseProgressLine } from '../../src/main/media/ytdlp'
 
 /**
  * How a media download runs, and what it reports while it runs.
@@ -174,6 +174,51 @@ describe('yt-dlp arguments that make progress arrive', () => {
     const print = args[args.indexOf('--print') + 1]!
 
     expect(print).toBe('after_move:ariadm-file:%(filepath)j')
+  })
+})
+
+/**
+ * Fragmented downloads and the one path that is never allowed to touch them.
+ *
+ * yt-dlp removed support for downloading HLS/DASH through aria2c in 2026.06.09
+ * (GHSA-vx4q-3cr2-7cg2): a hostile manifest could inject aria2c input-file
+ * options and write arbitrary files. The guard below is what keeps that path
+ * closed no matter what a config, a flag or a future upgrade tries to set.
+ */
+describe('fragmented downloads stay on the native downloader', () => {
+  const run = {
+    binaryPath: 'yt-dlp.exe',
+    url: 'https://www.youtube.com/watch?v=abc',
+    formatId: '312+bestaudio',
+    dir: 'C:/downloads',
+    ffmpegDir: '',
+    audioOnly: false,
+    playlist: false,
+    overwrite: false
+  }
+
+  it('pins dash/m3u8 to the native downloader, always', () => {
+    const args = buildDownloadArgs(run)
+
+    expect(args[args.indexOf('--downloader') + 1]).toBe('dash,m3u8:native')
+  })
+
+  it('runs in parallel only when asked, and never absurdly', () => {
+    const serial = buildDownloadArgs(run)
+    expect(serial).not.toContain('--concurrent-fragments')
+
+    const parallel = buildDownloadArgs({ ...run, concurrentFragments: 5 })
+    expect(parallel[parallel.indexOf('--concurrent-fragments') + 1]).toBe('5')
+
+    const capped = buildDownloadArgs({ ...run, concurrentFragments: 99 })
+    expect(capped[capped.indexOf('--concurrent-fragments') + 1]).toBe('16')
+  })
+
+  it('never reads a config file, on either the probe or the download', () => {
+    // A `yt-dlp.conf` in the working directory is another way an attacker's
+    // options reached the command line, so both invocations opt out.
+    expect(buildDownloadArgs(run)).toContain('--ignore-config')
+    expect(buildProbeArgs('https://www.youtube.com/watch?v=abc')).toContain('--ignore-config')
   })
 })
 

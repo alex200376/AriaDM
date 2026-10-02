@@ -90,6 +90,8 @@ export const en = {
   // -- download table ------------------------------------------------------
   'table.select': 'Select',
   'table.deselect': 'Deselect',
+  'table.selectAll': 'Select all',
+  'table.clearSelection': 'Clear selection',
   'table.name': 'Name',
   'table.size': 'Size',
   'table.progress': 'Progress',
@@ -516,6 +518,20 @@ export const en = {
   'settings.media.enable': 'Enable video downloads (yt-dlp)',
   'settings.media.detect': 'Detect media sites automatically',
   'settings.media.detectHint': 'With this off, every link goes to aria2',
+  'settings.media.fragments': 'Parallel segments',
+  'settings.media.fragmentsHint':
+    'How many HLS/DASH segments yt-dlp fetches at once. Higher is faster on segmented sites; 1 restores the default.',
+  'playlist.title': 'Choose items',
+  'playlist.items': '{count} items',
+  'playlist.selected': '{count} selected',
+  'playlist.loading': 'Reading the playlist…',
+  'playlist.empty': 'This playlist has no items to show.',
+  'playlist.selectAll': 'Select all',
+  'playlist.clear': 'Clear',
+  'playlist.range': 'Range',
+  'playlist.rangeApply': 'Apply',
+  'playlist.cancel': 'Cancel',
+  'playlist.confirm': 'Download {count} items',
   'settings.media.cookies': 'Read cookies from a browser',
   'settings.media.cookiesHint':
     'Lets yt-dlp reuse the session you are already signed in with. X, Instagram, Facebook and age-restricted YouTube need this. Close Chromium-based browsers completely, or their cookie database cannot be read.',
@@ -629,6 +645,8 @@ export const en = {
   'settings.update.openLog': 'Open the update log',
   'settings.update.copyDiagnostics': 'Copy diagnostics',
   'settings.update.diagnosticsCopied': 'Diagnostics copied.',
+  'settings.update.repairCache': 'Check update files',
+  'settings.update.repairDone': 'Checked {checked} file(s), removed {removed}, freed {size}',
   'settings.update.pendingReady': 'A verified installer is already on disk, so this will not download again.',
   'settings.update.installFailedHint':
     'AriaDM is still running. Use "Open the installer" to finish the update by hand, or try again.',

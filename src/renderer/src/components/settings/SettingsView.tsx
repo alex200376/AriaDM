@@ -19,7 +19,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { AppPaths, CategoryRule, ScheduleRule, SpeedProfile } from '@shared/settings'
 import type { UpdateInfo, UpdateInstallKind, UpdateProgress } from '@shared/ipc'
-import { formatSpeed } from '@shared/format'
+import { formatBytes, formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
 
 import { cn } from '../../lib/cn'
@@ -1023,6 +1023,18 @@ function IntegrationsTab(): JSX.Element {
               label={t('settings.media.detect')}
             />
           </Row>
+          <Row label={t('settings.media.fragments')} hint={t('settings.media.fragmentsHint')}>
+            <Input
+              className="w-20 text-right"
+              inputMode="numeric"
+              value={String(settings.mediaConcurrentFragments)}
+              onChange={(event) =>
+                void patch({
+                  mediaConcurrentFragments: Math.min(16, Math.max(1, Math.floor(Number(event.target.value) || 1)))
+                })
+              }
+            />
+          </Row>
         </div>
 
         <SelectField
@@ -1410,6 +1422,38 @@ function AboutTab(): JSX.Element {
     }
   }
 
+  /**
+   * Re-verify the downloaded update files and delete the ones that no longer
+   * match the release.
+   *
+   * This tab is where someone ends up when an update will not install, and the
+   * state that blocks them — a damaged installer that keeps passing the
+   * name-and-size test — is the one thing the UI cannot clear on its own.
+   */
+  const repairUpdateCache = async (): Promise<void> => {
+    setFailure('')
+    setNotice('')
+    try {
+      const result = await window.api.update.repair()
+      setNotice(
+        t('settings.update.repairDone', {
+          checked: result.checked,
+          removed: result.removed,
+          size: formatBytes(result.bytesFreed)
+        })
+      )
+      // The repair may have deleted the installer this tab is still offering, so
+      // resync. A failed re-check must not hide that the repair itself worked.
+      try {
+        setUpdate(await window.api.update.check())
+      } catch {
+        setUpdate((previous) => (previous ? { ...previous, pendingInstaller: null } : previous))
+      }
+    } catch (error) {
+      setFailure((error as Error).message)
+    }
+  }
+
   const installKindLabel = update ? t(INSTALL_KIND_KEYS[update.installKind]) : t('common.dash')
   const engineRunning = engine.state === 'ready'
   const pathEntries = paths
@@ -1611,6 +1655,18 @@ function AboutTab(): JSX.Element {
             </Button>
             <Button variant="ghost" size="sm" onClick={() => void copyDiagnostics()}>
               {t('settings.update.copyDiagnostics')}
+            </Button>
+            {/* The escape hatch for an update that is "ready" and fails every
+                time: its installer is re-hashed and thrown away if it no longer
+                matches the published release. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Wrench size={13} />}
+              disabled={installing}
+              onClick={() => void repairUpdateCache()}
+            >
+              {t('settings.update.repairCache')}
             </Button>
           </div>
 

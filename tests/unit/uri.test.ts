@@ -6,6 +6,7 @@ import {
   extensionOf,
   fileNameFromPath,
   fileNameFromUri,
+  isListFileName,
   isReservedDeviceName,
   isSupportedUri,
   kindFromUri,
@@ -132,5 +133,32 @@ describe('kind detection', () => {
     expect(detectKindFromList(['https://a/1', 'magnet:?xt=urn:btih:x'])).toBe('bittorrent')
     expect(detectKindFromList(['https://a/1', 'ftp://b/2'])).toBe('ftp')
     expect(detectKindFromList(['https://a/1'])).toBe('http')
+  })
+})
+
+describe('isListFileName', () => {
+  it('recognises a text or playlist file of links', () => {
+    expect(isListFileName('links.txt')).toBe(true)
+    expect(isListFileName('download.LIST')).toBe(true)
+    expect(isListFileName('playlist.m3u')).toBe(true)
+    expect(isListFileName('playlist.m3u8')).toBe(true)
+    expect(isListFileName('  urls.urls  ')).toBe(true)
+  })
+
+  it('leaves anything that is itself a download alone', () => {
+    // A `.torrent` and a `.metalink` have their own drop handling, and a media
+    // file is not a list of links.
+    expect(isListFileName('ubuntu.torrent')).toBe(false)
+    expect(isListFileName('pack.metalink')).toBe(false)
+    expect(isListFileName('video.mp4')).toBe(false)
+    expect(isListFileName('archive.zip')).toBe(false)
+  })
+
+  it('finds the links in a playlist through parseUriList', () => {
+    // The `#EXTINF` directives are comments, which parseUriList already drops.
+    const playlist = ['#EXTM3U', '#EXTINF:-1,One', 'https://example.test/one', '', 'https://example.test/two'].join(
+      '\n'
+    )
+    expect(parseUriList(playlist)).toEqual(['https://example.test/one', 'https://example.test/two'])
   })
 })

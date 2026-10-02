@@ -365,9 +365,22 @@ export function registerIpcHandlers(context: HandlerContext): void {
   ipcMain.handle(IPC.integrationsGetMediaFormats, async (_event, url: string) => {
     if (!settingsStore.get().ytdlpEnabled) throw new Error('影音下載功能已停用。')
     return withExtensionCookies(context, url, async (cookieHeader) => {
-      const probe = await mediaJobs.probe(url, { cookieHeader })
-      return probe.formats
+      // Building the menu is the caller asking what this link contains *now* —
+      // including when it is the dialog's "probe again" button. The answer a
+      // previous probe gave is still reused by the download that follows, which
+      // is where the second run used to be spent.
+      const probe = await mediaJobs.probe(url, { cookieHeader }, { reuse: false })
+      // One probe, three answers: the quality menu, the subtitle languages and
+      // whether the link is a playlist. The picker needs all of them together.
+      return { formats: probe.formats, subtitles: probe.subtitles, isPlaylist: probe.isPlaylist }
     })
+  })
+
+  ipcMain.handle(IPC.integrationsGetMediaPlaylist, async (_event, url: string) => {
+    if (!settingsStore.get().ytdlpEnabled) throw new Error('影音下載功能已停用。')
+    return withExtensionCookies(context, url, (cookieHeader) =>
+      mediaJobs.probePlaylist(url, { cookieHeader })
+    )
   })
 
   ipcMain.handle(IPC.integrationsAddMedia, async (_event, input) => {
@@ -450,6 +463,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
   })
 
   ipcMain.handle(IPC.updateDiagnostics, () => context.update.diagnostics())
+  ipcMain.handle(IPC.updateRepair, () => context.update.repairCache())
 
   // ---- catch popup -----------------------------------------------------------
 

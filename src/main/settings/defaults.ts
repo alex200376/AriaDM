@@ -56,6 +56,9 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     // (Perplexity Comet, for instance) can never download anything that needs a
     // login. Nothing is stored or logged beyond the download in question.
     mediaExtensionCookies: true,
+    // Five fragments in flight is a comfortable middle: it is several times the
+    // default speed on segmented sites without hammering the origin.
+    mediaConcurrentFragments: 5,
     ffmpegPath: '',
 
     aria2Path: '',

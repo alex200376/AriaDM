@@ -93,6 +93,8 @@ export const zhTW = {
   // -- download table ------------------------------------------------------
   'table.select': '選取',
   'table.deselect': '取消選取',
+  'table.selectAll': '全選',
+  'table.clearSelection': '取消全選',
   'table.name': '檔案名稱',
   'table.size': '大小',
   'table.progress': '進度',
@@ -509,6 +511,20 @@ export const zhTW = {
   'settings.media.enable': '啟用影音下載（yt-dlp）',
   'settings.media.detect': '自動辨識影音網站',
   'settings.media.detectHint': '關閉後所有連結都由 aria2 下載',
+  'settings.media.fragments': '分段並行數',
+  'settings.media.fragmentsHint':
+    'yt-dlp 一次抓取幾個 HLS／DASH 分段。數值越大，分段式網站下載越快；設為 1 即回預設值。',
+  'playlist.title': '選擇項目',
+  'playlist.items': '共 {count} 個項目',
+  'playlist.selected': '已選 {count} 個',
+  'playlist.loading': '正在讀取播放清單…',
+  'playlist.empty': '這個播放清單沒有可顯示的項目。',
+  'playlist.selectAll': '全選',
+  'playlist.clear': '清除',
+  'playlist.range': '範圍',
+  'playlist.rangeApply': '套用',
+  'playlist.cancel': '取消',
+  'playlist.confirm': '下載 {count} 個項目',
   'settings.media.cookies': '使用瀏覽器 Cookie',
   'settings.media.cookiesHint':
     '讓 yt-dlp 沿用你已登入的瀏覽器工作階段。X、Instagram、Facebook 與有年齡限制的 YouTube 影片必須開啟才能下載；Chromium 系瀏覽器請先完全關閉，Cookie 才讀得到。',
@@ -621,6 +637,8 @@ export const zhTW = {
   'settings.update.openLog': '開啟更新記錄',
   'settings.update.copyDiagnostics': '複製診斷資訊',
   'settings.update.diagnosticsCopied': '診斷資訊已複製。',
+  'settings.update.repairCache': '檢查並清除更新檔',
+  'settings.update.repairDone': '已檢查 {checked} 個檔案，清除 {removed} 個（釋放 {size}）',
   'settings.update.pendingReady': '先前下載的更新檔還在，可以直接安裝，不必重新下載。',
   'settings.update.installFailedHint':
     'AriaDM 仍在執行。請按「開啟安裝程式」手動完成更新，或再試一次。',

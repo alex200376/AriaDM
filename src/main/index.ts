@@ -996,6 +996,7 @@ async function bootstrap(): Promise<void> {
         env: process.env
       }).args,
     getYtdlpVersion: () => tools.ytdlp.version,
+    getConcurrentFragments: () => settingsStore.get().mediaConcurrentFragments,
     log
   })
   mediaJobs = realMediaJobs

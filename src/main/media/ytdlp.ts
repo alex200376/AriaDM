@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import path from 'node:path'
 
-import type { MediaFormatInfo } from '@shared/settings'
+import type { AudioFormat, MediaFormatInfo, MediaPlaylistInfo, SubtitleTrack } from '@shared/settings'
 
 /**
  * yt-dlp wrapper.
@@ -42,8 +42,13 @@ interface RawProbe {
   duration?: number
   thumbnail?: string
   webpage_url?: string
+  url?: string
   formats?: RawFormat[]
   entries?: RawProbe[]
+  /** Manual subtitle tracks, keyed by language code. */
+  subtitles?: Record<string, unknown>
+  /** Auto-generated caption tracks, keyed by language code. */
+  automatic_captions?: Record<string, unknown>
 }
 
 export interface MediaProbe {
@@ -53,6 +58,8 @@ export interface MediaProbe {
   durationSeconds: number
   thumbnail: string
   formats: MediaFormatInfo[]
+  /** Languages this video offers subtitles in, manual first. */
+  subtitles: SubtitleTrack[]
   /** True when this looked like a playlist rather than a single item. */
   isPlaylist: boolean
   /** yt-dlp's extractor name, e.g. 'generic' or 'youtube'. */
@@ -67,6 +74,49 @@ export interface MediaProbe {
    * reports no size for it, so the row's speed and ETA come out as noise.
    */
   directUrl: string
+}
+
+/**
+ * 1-based positions compressed into yt-dlp's `--playlist-items` syntax.
+ *
+ * `[1,2,3,5]` becomes `1-3,5`. Runs are collapsed because that is the form
+ * yt-dlp documents and the shortest one to read in a log; duplicates and
+ * non-positions are dropped rather than trusted, since a bad value makes yt-dlp
+ * refuse the whole run.
+ */
+export function formatPlaylistItems(indices: number[]): string {
+  const sorted = [...new Set(indices.filter((value) => Number.isInteger(value) && value > 0))].sort(
+    (a, b) => a - b
+  )
+  const parts: string[] = []
+  let start = 0
+  while (start < sorted.length) {
+    let end = start
+    while (end + 1 < sorted.length && sorted[end + 1] === sorted[end]! + 1) end += 1
+    const from = sorted[start]!
+    const to = sorted[end]!
+    parts.push(from === to ? String(from) : `${from}-${to}`)
+    start = end + 1
+  }
+  return parts.join(',')
+}
+
+/**
+ * Turn a flat-playlist probe into the list the picker shows.
+ *
+ * A flat probe resolves only the playlist's own metadata, so each entry carries
+ * a title, an id and a duration but no formats — which is exactly what a chooser
+ * needs, and fast even for a list with hundreds of items.
+ */
+export function parsePlaylist(payload: RawProbe): MediaPlaylistInfo {
+  const entries = (payload.entries ?? []).map((entry, index) => ({
+    id: entry.id ?? String(index + 1),
+    title: entry.title ?? entry.id ?? `#${index + 1}`,
+    durationSeconds: entry.duration ?? 0,
+    url: entry.webpage_url ?? entry.url ?? '',
+    thumbnail: entry.thumbnail ?? ''
+  }))
+  return { title: payload.title ?? '', entries }
 }
 
 export interface YtDlpProgress {
@@ -110,6 +160,25 @@ function directPayloadUrl(primary: RawProbe, extractor: string, isPlaylist: bool
   const protocol = (format.protocol ?? '').toLowerCase()
   if (protocol !== 'http' && protocol !== 'https') return ''
   return format.url ?? ''
+}
+
+/**
+ * The subtitle languages a probe found, manual and automatic merged.
+ *
+ * A language that has both a hand-authored track and an auto-generated one is
+ * listed once, as the manual track: it is the better of the two and the one the
+ * download should prefer. Sorted so the picker's order does not depend on the
+ * order the extractor happened to report them in.
+ */
+export function parseSubtitles(payload: RawProbe): SubtitleTrack[] {
+  const tracks = new Map<string, SubtitleTrack>()
+  for (const code of Object.keys(payload.subtitles ?? {})) {
+    if (code) tracks.set(code, { code, auto: false })
+  }
+  for (const code of Object.keys(payload.automatic_captions ?? {})) {
+    if (code && !tracks.has(code)) tracks.set(code, { code, auto: true })
+  }
+  return [...tracks.values()].sort((a, b) => a.code.localeCompare(b.code))
 }
 
 /**
@@ -234,8 +303,38 @@ interface CredentialOptions {
 export function buildProbeArgs(url: string, context: HttpContext & CredentialOptions = {}): string[] {
   return [
     '--dump-single-json',
+    /*
+     * Never read a config file. yt-dlp loads `yt-dlp.conf` from the working
+     * directory and the user's home before its own arguments, so a file an
+     * attacker managed to place there would run with our flags. It also keeps
+     * the app predictable: a stray config on the machine cannot silently change
+     * a probe's behaviour.
+     */
+    '--ignore-config',
     '--no-warnings',
     '--no-playlist',
+    '--no-check-certificates',
+    '--socket-timeout',
+    '30',
+    ...(context.cookieArgs ?? []),
+    ...httpHeaderArgs(context),
+    url
+  ]
+}
+
+/**
+ * Arguments for listing a playlist without resolving every item.
+ *
+ * `--flat-playlist` is the whole point: a normal probe of a large playlist would
+ * resolve each entry (seconds per item), where this returns the titles, ids and
+ * durations straight from the list page.
+ */
+export function buildPlaylistProbeArgs(url: string, context: HttpContext & CredentialOptions = {}): string[] {
+  return [
+    '--flat-playlist',
+    '--dump-single-json',
+    '--ignore-config',
+    '--no-warnings',
     '--no-check-certificates',
     '--socket-timeout',
     '30',
@@ -307,10 +406,62 @@ export async function probeFormats(
         durationSeconds: primary.duration ?? 0,
         thumbnail: primary.thumbnail ?? '',
         formats: parseFormats(primary, options.hasFfmpeg),
+        subtitles: parseSubtitles(primary),
         isPlaylist,
         extractor,
         directUrl: directPayloadUrl(primary, extractor, isPlaylist)
       })
+    })
+  })
+}
+
+export async function probePlaylist(
+  binaryPath: string,
+  url: string,
+  options: { timeoutMs?: number } & HttpContext & CredentialOptions
+): Promise<MediaPlaylistInfo> {
+  const timeoutMs = options.timeoutMs ?? 45_000
+
+  return new Promise<MediaPlaylistInfo>((resolve, reject) => {
+    const child = spawn(binaryPath, buildPlaylistProbeArgs(url, options), { windowsHide: true })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let settled = false
+
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill()
+      reject(new Error('讀取播放清單逾時。'))
+    }, timeoutMs)
+
+    child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk))
+    child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk))
+
+    child.on('error', (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(new Error(`無法執行 yt-dlp：${error.message}`))
+    })
+
+    child.on('exit', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+
+      const output = Buffer.concat(stdout).toString('utf8').trim()
+      if (code !== 0 || output.length === 0) {
+        const message = Buffer.concat(stderr).toString('utf8').trim().split(/\r?\n/).slice(-3).join(' ')
+        reject(new Error(message || `yt-dlp 結束，代碼 ${code ?? '未知'}`))
+        return
+      }
+
+      try {
+        resolve(parsePlaylist(JSON.parse(output) as RawProbe))
+      } catch {
+        reject(new Error('無法解析 yt-dlp 的輸出。'))
+      }
     })
   })
 }
@@ -324,6 +475,22 @@ export interface YtDlpRunOptions extends HttpContext, CredentialOptions {
   ffmpegDir: string
   audioOnly: boolean
   playlist: boolean
+  /**
+   * How many HLS/DASH fragments to fetch in parallel.
+   *
+   * This is the native downloader's own multithreading, and it is the only safe
+   * way to speed up fragmented downloads: yt-dlp removed support for downloading
+   * fragmented manifests through aria2c in 2026.06.09 (GHSA-vx4q-3cr2-7cg2),
+   * because a malicious manifest could inject aria2c input-file options. 1 means
+   * the yt-dlp default of one fragment at a time.
+   */
+  concurrentFragments?: number
+  /** Subtitle tracks to write, and whether to mux them into the video. */
+  subtitles?: { codes: string[]; embed: boolean }
+  /** Convert the audio track to this format; 'native' keeps the site's own. */
+  audioFormat?: AudioFormat
+  /** 1-based playlist positions to download; empty means "the site's default". */
+  playlistItems?: number[]
   /** Overwrite an existing final file rather than renaming. */
   overwrite: boolean
 }
@@ -332,6 +499,11 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
   const args: string[] = [
     '--newline',
     '--no-colors',
+    /*
+     * Same reasoning as the probe: no config file is read, so nothing on the
+     * machine can inject options into the command line we build.
+     */
+    '--ignore-config',
     /*
      * `--print` implies `--quiet`, and quiet is exactly what switches progress
      * off. Asking for a progress template under `--quiet` therefore produced no
@@ -362,7 +534,56 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
     args.push('--no-playlist')
   }
 
+  /*
+   * Fragmented manifests always go to yt-dlp's own downloader.
+   *
+   * This is a hard guard, not a preference. Handing HLS/DASH to an external
+   * downloader is what GHSA-vx4q-3cr2-7cg2 exploited, and yt-dlp dropped that
+   * path entirely in 2026.06.09. Spelling out `native` for these protocols means
+   * an external downloader set by any future config, flag or upgrade can never
+   * be applied to a fragmented manifest — and it is also what makes
+   * `--concurrent-fragments` below take effect, since that option is ignored
+   * whenever an external downloader is in use.
+   */
+  args.push('--downloader', 'dash,m3u8:native')
+
+  // Parallel fragments, the supported speed-up for HLS/DASH. Left out at 1 so
+  // the default command line stays the default yt-dlp behaviour.
+  const fragments = Math.floor(options.concurrentFragments ?? 1)
+  if (fragments > 1) args.push('--concurrent-fragments', String(Math.min(fragments, 16)))
+
+  /*
+   * A chosen subset of a playlist. `--yes-playlist` above is what lets yt-dlp
+   * consider more than one item; this narrows it to the positions the user
+   * ticked. yt-dlp refuses a malformed value, so it is compressed and filtered
+   * by `formatPlaylistItems` before it ever reaches the command line.
+   */
+  if (options.playlistItems && options.playlistItems.length > 0) {
+    args.push('--playlist-items', formatPlaylistItems(options.playlistItems))
+  }
+
   args.push('-f', options.formatId || (options.audioOnly ? 'bestaudio/best' : 'bestvideo+bestaudio/best'))
+
+  /*
+   * Subtitles. `--write-auto-subs` is requested alongside `--write-subs` because
+   * the picker cannot know in advance whether a chosen language has a manual
+   * track: `--sub-langs` filters whatever either switch turns on, so asking for
+   * both and letting the language list decide is correct either way. Embedding
+   * needs ffmpeg, which the caller checks before we get here.
+   */
+  const subtitleCodes = options.subtitles?.codes ?? []
+  if (subtitleCodes.length > 0) {
+    args.push('--write-subs', '--write-auto-subs', '--sub-langs', subtitleCodes.join(','))
+    args.push('--sub-format', 'srt/best')
+    if (options.subtitles?.embed) args.push('--embed-subs')
+  }
+
+  // Audio conversion. 'native' means "take the track the site already serves",
+  // which is the default and needs no ffmpeg.
+  const audioFormat = options.audioFormat ?? 'native'
+  if (audioFormat !== 'native') {
+    args.push('--extract-audio', '--audio-format', audioFormat, '--audio-quality', '0')
+  }
 
   // Continue from a partial .part file. This is what makes resume-after-pause
   // work given yt-dlp has no pause of its own.
