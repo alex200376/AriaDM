@@ -3,7 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { formatBytes } from '@shared/format'
 import { classifyMediaError, type MediaErrorAction, type MediaErrorInfo } from '@shared/media-errors'
-import { defaultFormatId } from '@shared/media-formats'
+import {
+  defaultFormatId,
+  provisionalFormatId,
+  provisionalFormatOption
+} from '@shared/media-formats'
 import { matchMediaSite, needsPageSniff, splitByMediaSite } from '@shared/media-sites'
 import type {
   AddDownloadInput,
@@ -110,6 +114,13 @@ export function AddUrlDialog(): JSX.Element | null {
   const [probeNonce, setProbeNonce] = useState(0)
   /** Installing yt-dlp is automatic, but only tried once per URL. */
   const autoInstallTried = useRef(false)
+  /**
+   * Whether the user has chosen a format themselves.
+   *
+   * The probe runs after the picker is already usable, so a choice made while it
+   * is still in flight must not be overwritten by the answer when it arrives.
+   */
+  const formatTouched = useRef(false)
   /** A page sniff found a video on a host the curated list does not know. */
   const [sniffedMedia, setSniffedMedia] = useState(false)
 
@@ -294,6 +305,12 @@ export function AddUrlDialog(): JSX.Element | null {
   // Probe formats as soon as a recognised page settles, so the quality picker is
   // already populated by the time the user looks at it. The probe is debounced
   // while typing and every in-flight result is dropped once the URL changes.
+  //
+  // The picker does not wait for the answer: a default format is named up front
+  // (see `provisionalFormatId`), so the common "just download it in the best
+  // quality" action starts immediately and the probe only fills in the specific
+  // tiers underneath. On a YouTube page the probe is a few seconds of yt-dlp
+  // boot and network work that the user no longer has to sit through.
   useEffect(() => {
     if (!open || !useYtDlp || probeUrl === '') {
       setFormats(null)
@@ -303,6 +320,7 @@ export function AddUrlDialog(): JSX.Element | null {
       setSubtitleLangs([])
       setIsPlaylist(false)
       setProbing(false)
+      formatTouched.current = false
       return
     }
 
@@ -310,7 +328,10 @@ export function AddUrlDialog(): JSX.Element | null {
     setProbing(true)
     setMediaError(null)
     setFormats(null)
-    setFormatId('')
+    // A fresh link starts from a fresh default, so a choice made for the previous
+    // one cannot leak in, and the answer below is then free to refine it.
+    formatTouched.current = false
+    setFormatId(provisionalFormatId(hasFfmpeg, audioOnly))
 
     const timer = window.setTimeout(() => {
       void window.api.integrations
@@ -321,16 +342,24 @@ export function AddUrlDialog(): JSX.Element | null {
           setSubtitleTracks(result.subtitles)
           setSubtitleLangs([])
           setIsPlaylist(result.isPlaylist)
-          // The best entry is only usable with ffmpeg; without it the picker
-          // opens on the best single-file format instead of on a download that
-          // is going to fail.
-          setFormatId(defaultFormatId(result.formats, hasFfmpeg))
           if (result.formats.length === 0) {
+            // Nothing was found to download, so the provisional default is a lie:
+            // clear it and let the error below take the form over.
+            setFormatId('')
             setMediaError({ kind: 'unknown', message: '這個連結找不到可下載的格式。', action: 'retry', actionLabel: '重新偵測' })
+          } else if (!formatTouched.current) {
+            // The best entry is only usable with ffmpeg; without it the picker
+            // opens on the best single-file format instead of on a download that
+            // is going to fail. Skipped when the user has already chosen, so the
+            // wait they skipped past does not undo what they picked.
+            setFormatId(defaultFormatId(result.formats, hasFfmpeg))
           }
         })
         .catch((error: Error) => {
           if (cancelled) return
+          // The default was only ever provisional; a failed probe must not leave
+          // a submittable download behind.
+          setFormatId('')
           setMediaError(classifyMediaError(error.message, { ytdlpVersion: toolkits?.ytdlp.version ?? '' }))
         })
         .finally(() => {
@@ -344,6 +373,17 @@ export function AddUrlDialog(): JSX.Element | null {
     }
   }, [open, useYtDlp, probeUrl, probeNonce, hasFfmpeg, toolkits?.ytdlp.version])
 
+  /**
+   * The rows the format picker offers.
+   *
+   * The probe's own list once it answers; until then a single provisional row,
+   * so the download can be started without waiting for it (see the effect above).
+   */
+  const choiceList = useMemo(
+    () => (formats && formats.length > 0 ? formats : [provisionalFormatOption(hasFfmpeg, audioOnly)]),
+    [formats, hasFfmpeg, audioOnly]
+  )
+
   if (!open) return null
 
   const isTorrent = torrent !== null || uris.some((uri) => uri.startsWith('magnet:'))
@@ -352,7 +392,17 @@ export function AddUrlDialog(): JSX.Element | null {
   const canSubmit =
     torrent !== null || metalink !== null ? true : useYtDlp ? formatId !== '' : uris.length > 0
 
-  const chosenFormat = formats?.find((format) => format.formatId === formatId) ?? null
+  /**
+   * Whether the quality panel has something usable to show.
+   *
+   * True while the probe is running (the provisional default) and once it has
+   * answered, false when it failed or found nothing — the error message owns the
+   * form in those cases.
+   */
+  const showFormatPanel =
+    useYtDlp && formatId !== '' && (formats === null || formats.length > 0)
+
+  const chosenFormat = choiceList.find((format) => format.formatId === formatId) ?? null
   // A merged stream and an mp3 conversion both need ffmpeg; a plain progressive
   // format does not, which is exactly the trade-off the hint explains.
   const needsFfmpeg = chosenFormat?.needsFfmpeg ?? false
@@ -756,18 +806,21 @@ export function AddUrlDialog(): JSX.Element | null {
               </div>
             )}
 
-            {useYtDlp && formats && formats.length > 0 && (
+            {showFormatPanel && (
               <>
                 <div className="mt-2.5 grid grid-cols-2 gap-3">
                   <SelectField
-                    label="下載格式"
+                    label={probing ? '下載格式（偵測畫質中…）' : '下載格式'}
                     hint="預設為最佳畫質；標示「需 ffmpeg」的格式需要合併音訊與視訊"
                     value={formatId}
-                    options={formats.map((format) => ({
+                    options={choiceList.map((format) => ({
                       value: format.formatId,
                       label: formatOptionLabel(format)
                     }))}
-                    onValueChange={setFormatId}
+                    onValueChange={(value) => {
+                      formatTouched.current = true
+                      setFormatId(value)
+                    }}
                   />
                   <Field label="儲存位置">
                     <div className="flex gap-2">
@@ -791,11 +844,12 @@ export function AddUrlDialog(): JSX.Element | null {
                       checked={audioOnly}
                       onChange={(next) => {
                         setAudioOnly(next)
+                        formatTouched.current = true
                         if (next) {
-                          const audio = formats.find((format) => format.resolution === 'audio')
-                          if (audio) setFormatId(audio.formatId)
-                        } else if (chosenFormat?.resolution === 'audio' && formats[0]) {
-                          setFormatId(formats[0].formatId)
+                          const audio = formats?.find((format) => format.resolution === 'audio')
+                          setFormatId(audio?.formatId ?? provisionalFormatId(hasFfmpeg, true))
+                        } else if (chosenFormat?.resolution === 'audio') {
+                          setFormatId(formats?.[0]?.formatId ?? provisionalFormatId(hasFfmpeg, false))
                         }
                       }}
                       label="純音訊"

@@ -26,6 +26,75 @@ export function defaultFormatId(formats: MediaFormatInfo[], hasFfmpeg: boolean):
   return (single ?? formats.find((format) => !format.needsFfmpeg) ?? formats[0]!).formatId
 }
 
+/**
+ * The format a download uses before any probe has answered.
+ *
+ * The quality picker used to stay un-submittable until yt-dlp had listed the
+ * formats, which on a YouTube page is a few seconds of network work plus the
+ * process boot — the whole delay the user waits through to do the one thing they
+ * came for. Naming the format `defaultFormatId` would eventually choose lets the
+ * download start immediately, while the probe still runs to fill in the tiers.
+ *
+ * `best` is yt-dlp's best already-muxed single file, which is exactly what a
+ * machine without ffmpeg can produce. With ffmpeg the synthetic merged entry is
+ * the better default. An audio-only request names the best audio the same way
+ * the probe's own audio entry does.
+ */
+export function provisionalFormatId(hasFfmpeg: boolean, audioOnly: boolean): string {
+  if (audioOnly) return 'bestaudio/best'
+  return hasFfmpeg ? 'bestvideo+bestaudio/best' : 'best'
+}
+
+/**
+ * The single picker row shown while the probe is still running.
+ *
+ * Shaped like the entry the probe replaces it with (see `parseFormats`) so the
+ * menu does not visibly change size when the answer arrives — only the options
+ * around it gain their resolutions and containers.
+ */
+export function provisionalFormatOption(
+  hasFfmpeg: boolean,
+  audioOnly: boolean
+): MediaFormatInfo {
+  if (audioOnly) {
+    return {
+      formatId: 'bestaudio/best',
+      label: '純音訊（最佳）',
+      ext: 'm4a',
+      resolution: 'audio',
+      filesize: null,
+      vcodec: 'none',
+      acodec: 'auto',
+      note: '直接抓取既有音軌，不需重新編碼',
+      needsFfmpeg: false
+    }
+  }
+  if (hasFfmpeg) {
+    return {
+      formatId: 'bestvideo+bestaudio/best',
+      label: '最佳畫質（自動合併音訊）',
+      ext: 'mp4',
+      resolution: '最佳',
+      filesize: null,
+      vcodec: 'auto',
+      acodec: 'auto',
+      note: '建議',
+      needsFfmpeg: true
+    }
+  }
+  return {
+    formatId: 'best',
+    label: '最佳（單檔）',
+    ext: 'mp4',
+    resolution: '最佳',
+    filesize: null,
+    vcodec: 'auto',
+    acodec: 'auto',
+    note: '不需 ffmpeg 即可下載',
+    needsFfmpeg: false
+  }
+}
+
 /** True when nothing in the list can be produced without ffmpeg. */
 export function needsFfmpegForAnything(formats: MediaFormatInfo[]): boolean {
   return formats.length > 0 && formats.every((format) => format.needsFfmpeg)

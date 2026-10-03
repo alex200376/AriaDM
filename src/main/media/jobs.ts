@@ -260,6 +260,16 @@ export class MediaJobs extends EventEmitter {
    */
   private readonly probeCache = new Map<string, CachedProbe>()
 
+  /**
+   * Probes currently running, keyed like the cache.
+   *
+   * The menu's probe and the download that follows it can overlap — an optimistic
+   * download no longer waits for the menu's answer — so without this the same
+   * link would be extracted by two yt-dlp processes at once. Sharing the pending
+   * run gives both callers the same answer for the cost of one.
+   */
+  private readonly probeInFlight = new Map<string, Promise<MediaProbe>>()
+
   /** Pending paced `change`, and when the last one was let through. */
   private progressTimer: NodeJS.Timeout | null = null
   private lastProgressAt = 0
@@ -377,6 +387,26 @@ export class MediaJobs extends EventEmitter {
       if (cached) return cached
     }
 
+    // One run, however many callers asked for it at the same time.
+    const pending = this.probeInFlight.get(key)
+    if (pending) return pending
+
+    const run = this.runProbe(binary, url, context, key)
+    this.probeInFlight.set(key, run)
+    try {
+      return await run
+    } finally {
+      this.probeInFlight.delete(key)
+    }
+  }
+
+  /** The probe itself, once `probe` has found it neither remembered nor running. */
+  private async runProbe(
+    binary: string,
+    url: string,
+    context: HttpContext,
+    key: string
+  ): Promise<MediaProbe> {
     this.verdict = { url, skipSession: false, skipStore: false }
     const { http, cookieArgs, cookieFile } = await this.prepareCredentials(url, context)
     const supplied = Boolean(context.cookieHeader) || cookieArgs.length > 0

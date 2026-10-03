@@ -135,6 +135,40 @@ describe('MediaJobs credentials', () => {
     expect(runnerOptions(0).cookieArgs).toEqual(STORE_ARGS)
   })
 
+  it('shares one run between probes asked for at the same time', async () => {
+    // The quality menu and the optimistic download now race for the same link, so
+    // the second ask must join the first run rather than spawn a second yt-dlp —
+    // the whole point of starting the download before the probe answers.
+    let release: ((value: typeof PROBE) => void) | null = null
+    state.probeFormats.mockImplementation(
+      () => new Promise<typeof PROBE>((resolve) => { release = resolve })
+    )
+    const jobs = makeJobs()
+
+    const first = jobs.probe(PROBE.url)
+    const second = jobs.probe(PROBE.url)
+    // Let the shared run reach the (faked) yt-dlp before answering it.
+    for (let index = 0; index < 50 && release === null; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    release!(PROBE)
+
+    const [a, b] = await Promise.all([first, second])
+    expect(state.probeFormats).toHaveBeenCalledTimes(1)
+    expect(a).toBe(b)
+  })
+
+  it('runs again once the shared run has settled', async () => {
+    // An in-flight entry is not a cache: a later ask gets its own yt-dlp run.
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url, {}, { reuse: false })
+    await jobs.probe(PROBE.url, {}, { reuse: false })
+
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+  })
+
   it('retries the probe without cookies when the cookie store cannot be read', async () => {
     state.probeFormats.mockRejectedValueOnce(new Error(UNDECRYPTABLE)).mockResolvedValueOnce(PROBE)
     const jobs = makeJobs()

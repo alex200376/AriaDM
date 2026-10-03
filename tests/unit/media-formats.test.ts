@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { defaultFormatId, formatChoices } from '../../src/shared/media-formats'
+import {
+  defaultFormatId,
+  formatChoices,
+  provisionalFormatId,
+  provisionalFormatOption
+} from '../../src/shared/media-formats'
 import type { MediaFormatInfo } from '../../src/shared/settings'
 
 /**
@@ -103,5 +108,42 @@ describe('defaultFormatId', () => {
     // happen without ffmpeg — the reason "I can't download YouTube videos"
     // happened on a machine that looked fully installed.
     expect(defaultFormatId(YOUTUBE, false)).toBe('18')
+  })
+})
+
+describe('provisionalFormatId', () => {
+  it('names the merged best entry when ffmpeg can produce it', () => {
+    expect(provisionalFormatId(true, false)).toBe('bestvideo+bestaudio/best')
+  })
+
+  it('names a single-file stream without ffmpeg, which is what can actually be made', () => {
+    expect(provisionalFormatId(false, false)).toBe('best')
+  })
+
+  it('names the best audio for an audio-only request, ffmpeg or not', () => {
+    expect(provisionalFormatId(true, true)).toBe('bestaudio/best')
+    expect(provisionalFormatId(false, true)).toBe('bestaudio/best')
+  })
+})
+
+describe('provisionalFormatOption', () => {
+  it('agrees with the id provisionalFormatId chose, in every combination', () => {
+    for (const hasFfmpeg of [true, false]) {
+      for (const audioOnly of [true, false]) {
+        expect(provisionalFormatOption(hasFfmpeg, audioOnly).formatId).toBe(
+          provisionalFormatId(hasFfmpeg, audioOnly)
+        )
+      }
+    }
+  })
+
+  it('does not promise a merge a machine without ffmpeg cannot finish', () => {
+    expect(provisionalFormatOption(false, false).needsFfmpeg).toBe(false)
+    expect(provisionalFormatOption(true, false).needsFfmpeg).toBe(true)
+  })
+
+  it('marks the audio row as audio so the pure-audio toggle settles', () => {
+    expect(provisionalFormatOption(true, true).resolution).toBe('audio')
+    expect(provisionalFormatOption(true, true).needsFfmpeg).toBe(false)
   })
 })
