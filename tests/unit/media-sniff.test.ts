@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isHtmlContentType,
   isMediaContentType,
+  isScannableDocument,
   looksLikeMediaPage,
   normalizeContentType,
   SNIFF_BYTE_LIMIT
@@ -76,6 +77,15 @@ describe('looksLikeMediaPage', () => {
   it('accepts a media content type without reading the body', () => {
     expect(looksLikeMediaPage('video/mp4', '')).toBe(true)
     expect(looksLikeMediaPage('application/vnd.apple.mpegurl', '')).toBe(true)
+  })
+
+  it('shares one document test with the metadata parser', () => {
+    // The parser in the main process scans exactly what this accepts, so the
+    // two can never disagree about what counts as a page.
+    expect(isScannableDocument('text/html', PLAIN_PAGE)).toBe(true)
+    expect(isScannableDocument('', MEDIA_PAGE)).toBe(true)
+    expect(isScannableDocument('', '{".m3u8":true}')).toBe(false)
+    expect(isScannableDocument('application/json', MEDIA_PAGE)).toBe(false)
   })
 
   it('only scans a bounded prefix of a large page', () => {

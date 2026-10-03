@@ -10,7 +10,18 @@ import { hasFileExtension } from './uri'
  * is the safe answer for the overwhelming majority of links.
  */
 
-/** Host suffixes that serve pages yt-dlp understands. */
+/**
+ * Host suffixes that serve pages yt-dlp understands.
+ *
+ * The first block is the video platforms the app was built around. The rest are
+ * sites the bundled yt-dlp ships a dedicated extractor for, taken from its own
+ * `--list-extractors` (see `scripts/generate-media-sites.mjs`). Listing a host
+ * here only saves a network sniff — an unknown host is still sniffed, and the
+ * metadata parser catches the ones whose player is declared in `og:video`. So
+ * the list is an optimisation, not the definition of a video site, and a host
+ * that turns out not to be video (a news article on a broadcaster's site) is
+ * still safe: a failed yt-dlp probe falls back to aria2.
+ */
 export const MEDIA_SITE_HOSTS = [
   'x.com',
   'twitter.com',
@@ -35,7 +46,75 @@ export const MEDIA_SITE_HOSTS = [
   'youku.com',
   'iqiyi.com',
   'imgur.com',
-  'bsky.app'
+  'bsky.app',
+  // From yt-dlp's own extractor list.
+  '24tv.ua',
+  '56.com',
+  '9now.com.au',
+  'abc.net.au',
+  'aol.com',
+  'archive.org',
+  'arte.sky.it',
+  'bbc.co.uk',
+  'blogger.com',
+  'canalc2.tv',
+  'cbc.ca',
+  'cielotv.it',
+  'croatian.film',
+  'cu.ntv.co.jp',
+  'daum.net',
+  'dzen.ru',
+  'faz.net',
+  'freespeech.org',
+  'gem.cbc.ca',
+  'ign.com',
+  'iq.com',
+  'la7.it',
+  'maariv.co.il',
+  'massengeschmack.tv',
+  'media.ccc.de',
+  'megaphone.fm',
+  'mir24.tv',
+  'n-tv.de',
+  'nfl.com',
+  'nhl.com',
+  'nick.com',
+  'nts.live',
+  'ntv.ru',
+  'ocw.mit.edu',
+  'onet.pl',
+  'onet.tv',
+  'parliamentlive.tv',
+  'peer.tv',
+  'phoenix.de',
+  'play.tv',
+  'player.sky.it',
+  'radio.de',
+  'rtl.nl',
+  'rtvslo.si',
+  'sbs.co.kr',
+  'senate.gov',
+  'sky.it',
+  'southpark.cc.com',
+  'southpark.de',
+  'southpark.lat',
+  'southparkstudios.co.uk',
+  'southparkstudios.com.br',
+  'southparkstudios.nu',
+  't-online.de',
+  'techtv.mit.edu',
+  'tou.tv',
+  'tv.dfb.de',
+  'tv2play.hu',
+  'tv2playseries.hu',
+  'tv8.it',
+  'uol.com.br',
+  'vh1.com',
+  'video.arnes.si',
+  'video.sky.it',
+  'vids.io',
+  'wat.tv',
+  'wikimedia.org'
 ] as const
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "ariadm",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "AriaDM - a modern IDM-style download manager powered by aria2",
   "private": true,
   "type": "module",
@@ -34,6 +34,7 @@
     "dist:portable": "npm run build:extension && npm run build && electron-builder --win portable"
   },
   "dependencies": {
+    "open-graph-scraper-lite": "^2.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

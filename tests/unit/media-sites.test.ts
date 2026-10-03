@@ -21,6 +21,12 @@ describe('matchMediaSite', () => {
     expect(matchMediaSite('https://www.youtube.com/watch?v=abc')).toBe('youtube.com')
   })
 
+  it('matches hosts taken from yt-dlp\'s extractor list', () => {
+    expect(matchMediaSite('https://www.bbc.co.uk/iplayer/episode/abc')).toBe('bbc.co.uk')
+    expect(matchMediaSite('https://archive.org/details/some-film')).toBe('archive.org')
+    expect(matchMediaSite('https://media.ccc.de/v/38c3')).toBe('media.ccc.de')
+  })
+
   it('does not match lookalike hosts', () => {
     // The whole point of matching on label boundaries: these are not our sites.
     expect(matchMediaSite('https://notx.com/a')).toBeNull()
@@ -64,6 +70,9 @@ describe('needsPageSniff', () => {
 
   it('skips a host the curated list already knows', () => {
     expect(needsPageSniff('https://www.youtube.com/watch?v=abc')).toBe(false)
+    // A host taken from yt-dlp's own extractor list is known too, so it does not
+    // cost a network sniff either.
+    expect(needsPageSniff('https://www.bbc.co.uk/iplayer/episode/abc')).toBe(false)
   })
 
   it('skips a URL that names a file', () => {

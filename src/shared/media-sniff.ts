@@ -72,6 +72,24 @@ export function isHtmlContentType(contentType: string): boolean {
 }
 
 /**
+ * True when a body should be handed to a page parser at all.
+ *
+ * The same rule `looksLikeMediaPage` uses internally, exposed so the metadata
+ * parser in the main process scans the identical set of bodies — and, just as
+ * importantly, refuses the identical set. A binary payload that happens to
+ * contain the bytes `video` is not a page, and must never be parsed as one.
+ */
+export function isScannableDocument(contentType: string, body: string): boolean {
+  const type = normalizeContentType(contentType)
+  return (
+    isHtmlContentType(type) ||
+    // A missing type is common on hand-rolled servers, but only a body that
+    // starts like HTML is treated as a document.
+    (type === '' && /^\s*<(?:!doctype\s+html|html)\b/i.test(body.slice(0, 256)))
+  )
+}
+
+/**
  * Does this page look like it plays media?
  *
  * The content type decides the easy cases. A page is only scanned when it really
@@ -82,14 +100,7 @@ export function isHtmlContentType(contentType: string): boolean {
  */
 export function looksLikeMediaPage(contentType: string, body: string): boolean {
   if (isMediaContentType(contentType)) return true
-
-  const type = normalizeContentType(contentType)
-  const isDocument =
-    isHtmlContentType(type) ||
-    // A missing type is common on hand-rolled servers, but only a body that
-    // starts like HTML is treated as a document.
-    (type === '' && /^\s*<(?:!doctype\s+html|html)\b/i.test(body.slice(0, 256)))
-  if (!isDocument) return false
+  if (!isScannableDocument(contentType, body)) return false
 
   const scan = body.length > SNIFF_BYTE_LIMIT ? body.slice(0, SNIFF_BYTE_LIMIT) : body
   return MEDIA_PAGE_MARKERS.some((marker) => marker.test(scan))

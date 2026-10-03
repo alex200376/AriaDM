@@ -1,4 +1,6 @@
-import { isMediaContentType, looksLikeMediaPage, SNIFF_BYTE_LIMIT } from '@shared/media-sniff'
+import { isMediaContentType, isScannableDocument, looksLikeMediaPage, SNIFF_BYTE_LIMIT } from '@shared/media-sniff'
+
+import { pageHasMediaMetadata } from './media-metadata'
 
 /**
  * Fetch a little of a page and decide whether it plays media.
@@ -95,7 +97,13 @@ export class MediaSniffer {
       const contentType = response.headers.get('content-type') ?? ''
       if (isMediaContentType(contentType)) return 'media'
       const body = await readPrefix(response, SNIFF_BYTE_LIMIT)
-      return looksLikeMediaPage(contentType, body) ? 'media' : 'not-media'
+      // The cheap markers answer most pages; only when they are silent is the
+      // body handed to the metadata parser, so a page that names its video in
+      // `og:video` or a JSON-LD `VideoObject` is not missed. A binary body is
+      // never parsed: a payload that happens to contain `video` is not a page.
+      if (looksLikeMediaPage(contentType, body)) return 'media'
+      if (!isScannableDocument(contentType, body)) return 'not-media'
+      return (await pageHasMediaMetadata(body)) ? 'media' : 'not-media'
     } catch (error) {
       this.log(`page sniff: ${url} -> unknown (${(error as Error).message})`)
       return 'unknown'
