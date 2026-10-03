@@ -220,8 +220,43 @@ const RULES: Rule[] = [
       '無法寫入儲存資料夾（權限不足或磁碟已滿）。請在設定中更換儲存位置，或確認該資料夾可以寫入。'
   },
   {
+    /**
+     * An X post that exists and holds a video, but is marked sensitive.
+     *
+     * X answers an anonymous client with a TweetTombstone rather than the tweet,
+     * so yt-dlp sees no media and reports `No video could be found in this tweet`
+     * — which reads like "this post has no video" when in fact the post is simply
+     * invisible to a signed-out visitor. A session is what reveals it, and the
+     * extension is the source that works when the browser store will not read.
+     */
     kind: 'auth',
-    patterns: [/login required/i, /requires authentication/i, /not authorized/i, /private (video|tweet)/i, /only available to/i],
+    patterns: [
+      /no video could be found in this tweet/i,
+      /tweet is unavailable/i,
+      /possibly[_ ]sensitive/i,
+      /tombstone/i
+    ],
+    message:
+      '這則貼文對未登入的訪客是隱藏的（可能被標記為敏感內容），因此看不到影片。請啟用「使用瀏覽器 Cookie」，或從瀏覽器擴充功能送出這個連結。',
+    action: 'enable-cookies',
+    actionLabel: '啟用瀏覽器 Cookie'
+  },
+  {
+    kind: 'auth',
+    patterns: [
+      /login required/i,
+      /requires authentication/i,
+      /not authorized/i,
+      /private (video|tweet)/i,
+      /only available to/i,
+      /*
+       * Instagram's own wording when it will not serve media to a visitor it
+       * considers signed out — measured from its extractor, which raises these
+       * instead of a generic auth error.
+       */
+      /locked behind the login page/i,
+      /redirected to the login page/i
+    ],
     message: '這個內容需要登入才能取得。請啟用「使用瀏覽器 Cookie」，或確認你在瀏覽器中已登入。',
     action: 'enable-cookies',
     actionLabel: '啟用瀏覽器 Cookie'

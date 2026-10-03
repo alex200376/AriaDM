@@ -175,6 +175,26 @@ describe('yt-dlp arguments that make progress arrive', () => {
 
     expect(print).toBe('after_move:ariadm-file:%(filepath)j')
   })
+
+  it('sends a live session as a cookies file, and drops the header', () => {
+    // The extractors read the cookie jar, which a header never fills; sending
+    // both would also hand the site two competing sessions.
+    const args = buildDownloadArgs({
+      ...run,
+      cookieHeader: 'auth_token=abc; ct0=def',
+      cookieFile: '/tmp/ariadm-cookies/cookies-1.txt'
+    })
+
+    expect(args[args.indexOf('--cookies') + 1]).toBe('/tmp/ariadm-cookies/cookies-1.txt')
+    expect(args.join(' ')).not.toContain('Cookie:')
+  })
+
+  it('still sends the header when no file was written', () => {
+    const args = buildDownloadArgs({ ...run, cookieHeader: 'auth_token=abc' })
+
+    expect(args).not.toContain('--cookies')
+    expect(args.join(' ')).toContain('Cookie: auth_token=abc')
+  })
 })
 
 /**
@@ -212,6 +232,22 @@ describe('fragmented downloads stay on the native downloader', () => {
 
     const capped = buildDownloadArgs({ ...run, concurrentFragments: 99 })
     expect(capped[capped.indexOf('--concurrent-fragments') + 1]).toBe('16')
+  })
+
+  it('chunks a request only when asked, and keeps the size in range', () => {
+    // Off by default: an extra request per chunk only pays off on a host that
+    // throttles a single connection.
+    expect(buildDownloadArgs(run)).not.toContain('--http-chunk-size')
+
+    const chunked = buildDownloadArgs({ ...run, httpChunkSize: 4 * 1024 * 1024 })
+    expect(chunked[chunked.indexOf('--http-chunk-size') + 1]).toBe(String(4 * 1024 * 1024))
+
+    // Below the floor, one segment becomes thousands of requests.
+    const tiny = buildDownloadArgs({ ...run, httpChunkSize: 1024 })
+    expect(tiny[tiny.indexOf('--http-chunk-size') + 1]).toBe(String(256 * 1024))
+
+    const huge = buildDownloadArgs({ ...run, httpChunkSize: 1024 * 1024 * 1024 })
+    expect(huge[huge.indexOf('--http-chunk-size') + 1]).toBe(String(32 * 1024 * 1024))
   })
 
   it('never reads a config file, on either the probe or the download', () => {

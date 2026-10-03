@@ -553,6 +553,9 @@ export const zhTW = {
   'settings.media.fragments': '分段並行數',
   'settings.media.fragmentsHint':
     'yt-dlp 一次抓取幾個 HLS／DASH 分段。數值越大，分段式網站下載越快；設為 1 即回預設值。',
+  'settings.media.chunkSize': 'HTTP 分段大小 (MB)',
+  'settings.media.chunkSizeHint':
+    '將每個影音請求切成這個大小的分段。伺服器限制單一連線速度時可加快下載；通常 1 MB 效果最好，設為 0 即關閉。',
   'playlist.title': '選擇項目',
   'playlist.items': '共 {count} 個項目',
   'playlist.selected': '已選 {count} 個',

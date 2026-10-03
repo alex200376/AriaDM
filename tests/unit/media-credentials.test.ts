@@ -1,4 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+import { describe, expect, it, vi, beforeEach, afterAll } from 'vitest'
 
 import { MediaJobs } from '../../src/main/media/jobs'
 
@@ -72,15 +76,29 @@ const STALE_SESSION = 'ERROR: [youtube] abc: The page needs to be reloaded.'
 const EMPTY_RESPONSE =
   'ERROR: [Instagram] abc: Failed to parse JSON (caused by JSONDecodeError("Expecting value in \'\': line 1 column 1 (char 0)"))'
 
+const cookieDir = mkdtempSync(path.join(tmpdir(), 'ariadm-jobs-cookies-'))
+
+afterAll(() => {
+  rmSync(cookieDir, { recursive: true, force: true })
+})
+
 function makeJobs(options: { cookieArgs?: string[] } = {}) {
   const jobs = new MediaJobs({
     history: { upsert: vi.fn(), flush: async () => {}, patchDeferred: vi.fn(), remove: vi.fn() } as never,
     getBinaryPath: () => 'yt-dlp.exe',
     getFfmpegPath: () => '',
     getCookieArgs: () => options.cookieArgs ?? STORE_ARGS,
+    cookieDir,
     log: () => {}
   })
   return jobs
+}
+
+/** Wait, briefly, for an asynchronously deleted file to disappear. */
+async function waitUntilGone(file: string): Promise<void> {
+  for (let index = 0; index < 50 && existsSync(file); index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
 }
 
 function addInput() {
@@ -150,6 +168,28 @@ describe('MediaJobs credentials', () => {
     await jobs.add(addInput(), probe, { cookieHeader: 'SID=stale' })
     expect(runnerOptions(0).cookieHeader).toBe('')
     expect(runnerOptions(0).cookieArgs).toEqual([])
+  })
+
+  it('writes the extension session to a cookies file the run can read', async () => {
+    // The whole point of Part 1: a `Cookie:` header never fills yt-dlp's jar, so
+    // the extension's session is written to a file and passed as `--cookies`.
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url, { cookieHeader: 'auth_token=abc' })
+    expect(state.probeFormats.mock.calls[0]![2].cookieFile).toBeTruthy()
+
+    const probe = await jobs.probe(PROBE.url, { cookieHeader: 'auth_token=abc' })
+    const { gid } = await jobs.add(addInput(), probe, { cookieHeader: 'auth_token=abc' })
+
+    const file = runnerOptions(0).cookieFile as string
+    expect(file).toBeTruthy()
+    expect(existsSync(file)).toBe(true)
+
+    // The file is a credential, so it does not outlive the run.
+    await jobs.remove(gid, false)
+    await waitUntilGone(file)
+    expect(existsSync(file)).toBe(false)
   })
 
   it('drops the session when the site answers with nothing at all', async () => {

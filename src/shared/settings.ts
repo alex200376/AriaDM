@@ -161,6 +161,15 @@ export interface Settings {
    * for fragmented manifests is a known injection path (GHSA-vx4q-3cr2-7cg2).
    */
   mediaConcurrentFragments: number
+  /**
+   * Size of each ranged HTTP request yt-dlp makes, in bytes; 0 disables chunking.
+   *
+   * For a CDN that throttles one connection — a single 1.4 MB HLS segment that
+   * arrives at 48 KB/s — splitting each request into chunks makes the server open
+   * a fresh stream per chunk, which measurably speeds the same segment up. The
+   * UI collects it in MB. Upstream calls this experimental, so it is opt-in.
+   */
+  mediaHttpChunkSize: number
   ffmpegPath: string
 
   aria2Path: string

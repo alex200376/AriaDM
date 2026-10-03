@@ -1041,6 +1041,26 @@ function IntegrationsTab(): JSX.Element {
               }
             />
           </Row>
+          <Row label={t('settings.media.chunkSize')} hint={t('settings.media.chunkSizeHint')}>
+            <div className="flex items-center gap-2">
+              <Input
+                className="w-20 text-right"
+                inputMode="numeric"
+                value={String(
+                  settings.mediaHttpChunkSize
+                    ? Math.round(settings.mediaHttpChunkSize / (1024 * 1024))
+                    : 0
+                )}
+                onChange={(event) => {
+                  // Collected in MB, stored in bytes; clamped to the same range the
+                  // command line clamps to.
+                  const mb = Math.min(32, Math.max(0, Math.floor(Number(event.target.value) || 0)))
+                  void patch({ mediaHttpChunkSize: mb * 1024 * 1024 })
+                }}
+              />
+              <span className="text-xs text-muted-foreground">MB</span>
+            </div>
+          </Row>
         </div>
 
         <SelectField

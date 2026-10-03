@@ -1076,6 +1076,7 @@ async function bootstrap(): Promise<void> {
       }).args,
     getYtdlpVersion: () => tools.ytdlp.version,
     getConcurrentFragments: () => settingsStore.get().mediaConcurrentFragments,
+    getHttpChunkSize: () => settingsStore.get().mediaHttpChunkSize,
     log
   })
   mediaJobs = realMediaJobs

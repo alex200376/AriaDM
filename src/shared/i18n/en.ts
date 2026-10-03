@@ -566,6 +566,9 @@ export const en = {
   'settings.media.fragments': 'Parallel segments',
   'settings.media.fragmentsHint':
     'How many HLS/DASH segments yt-dlp fetches at once. Higher is faster on segmented sites; 1 restores the default.',
+  'settings.media.chunkSize': 'HTTP chunk size (MB)',
+  'settings.media.chunkSizeHint':
+    'Split each media request into chunks of this size. Helps when a server throttles one connection; 1 MB usually works best, and 0 turns it off.',
   'playlist.title': 'Choose items',
   'playlist.items': '{count} items',
   'playlist.selected': '{count} selected',

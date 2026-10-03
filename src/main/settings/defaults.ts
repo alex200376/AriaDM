@@ -59,6 +59,12 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     // Five fragments in flight is a comfortable middle: it is several times the
     // default speed on segmented sites without hammering the origin.
     mediaConcurrentFragments: 5,
+    // Off by default: it is an extra request per chunk, so it only pays off on a
+    // host that throttles a single connection. Measured over a 1.4 MB HLS segment
+    // on such a CDN, 1 MiB gave the best median (5.7 s vs 19.2 s unchunked), but
+    // the spread was far too wide to call it a consistent win — 256 KiB and 4 MiB
+    // were both worse — so this is a knob the user turns on, not a default.
+    mediaHttpChunkSize: 0,
     ffmpegPath: '',
 
     aria2Path: '',

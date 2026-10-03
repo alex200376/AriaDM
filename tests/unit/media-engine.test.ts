@@ -90,6 +90,32 @@ describe('media error reporting', () => {
     expect(classifyMediaError('ERROR: Requested format is not available').kind).toBe('format')
   })
 
+  it('explains an X post that is hidden from signed-out visitors', () => {
+    // The measured failure: the tweet holds a 36-second video, but it is marked
+    // sensitive, so an anonymous client gets a TweetTombstone instead and yt-dlp
+    // reports it as "no video in this tweet" — which reads like the post is empty.
+    const info = classifyMediaError(
+      'ERROR: [twitter] 2105662084008792458: No video could be found in this tweet'
+    )
+    expect(info.kind).toBe('auth')
+    expect(info.action).toBe('enable-cookies')
+    expect(info.message).toContain('隱藏')
+  })
+
+  it('reads Instagram’s login page as a missing session, not as broken extraction', () => {
+    // Instagram's own wording, from its extractor. Both used to match no rule at
+    // all, so the user got the raw English sentence and a retry that could never
+    // work.
+    expect(
+      classifyMediaError('ERROR: [Instagram] abc: Main webpage is locked behind the login page').kind
+    ).toBe('auth')
+    expect(
+      classifyMediaError(
+        'ERROR: [Instagram] abc: The webpage request was redirected to the login page'
+      ).kind
+    ).toBe('auth')
+  })
+
   it('tells the user to wait when the site is throttling, not to check the network', () => {
     const info = classifyMediaError(
       'ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests'

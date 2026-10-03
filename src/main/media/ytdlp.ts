@@ -275,14 +275,20 @@ export interface HttpContext {
  *
  * Values are flattened onto one line: a newline inside a header value would let
  * a crafted cookie string smuggle in additional arguments.
+ *
+ * The Cookie header is deliberately omitted when a cookie *file* is in use. A
+ * header only rides along on requests; it never reaches yt-dlp's cookie jar, and
+ * the extractors that matter authenticate from the jar (`_get_cookies`). Sending
+ * both would also be sending the site two competing sessions, and yt-dlp itself
+ * warns that a cookies-as-header is deprecated.
  */
-export function httpHeaderArgs(context: HttpContext): string[] {
+export function httpHeaderArgs(context: HttpContext & CredentialOptions): string[] {
   const args: string[] = []
   const add = (name: string, value: string | undefined): void => {
     if (!value) return
     args.push('--add-headers', `${name}: ${value.replace(/[\r\n]+/g, ' ')}`)
   }
-  add('Cookie', context.cookieHeader)
+  if (!context.cookieFile) add('Cookie', context.cookieHeader)
   add('Referer', context.referer)
   add('User-Agent', context.userAgent)
   return args
@@ -298,6 +304,19 @@ export function httpHeaderArgs(context: HttpContext): string[] {
  */
 interface CredentialOptions {
   cookieArgs?: string[]
+  /**
+   * A Netscape cookies file holding a live session for this run.
+   *
+   * Used instead of `cookieHeader`, not alongside it: the file fills yt-dlp's
+   * cookie jar, which is where its extractors look for a session. See
+   * `media/cookie-file.ts`.
+   */
+  cookieFile?: string
+}
+
+/** `--cookies <file>` for a run that was given a session file. */
+function cookieFileArgs(options: CredentialOptions): string[] {
+  return options.cookieFile ? ['--cookies', options.cookieFile] : []
 }
 
 export function buildProbeArgs(url: string, context: HttpContext & CredentialOptions = {}): string[] {
@@ -317,6 +336,7 @@ export function buildProbeArgs(url: string, context: HttpContext & CredentialOpt
     '--socket-timeout',
     '30',
     ...(context.cookieArgs ?? []),
+    ...cookieFileArgs(context),
     ...httpHeaderArgs(context),
     url
   ]
@@ -339,6 +359,7 @@ export function buildPlaylistProbeArgs(url: string, context: HttpContext & Crede
     '--socket-timeout',
     '30',
     ...(context.cookieArgs ?? []),
+    ...cookieFileArgs(context),
     ...httpHeaderArgs(context),
     url
   ]
@@ -466,6 +487,12 @@ export async function probePlaylist(
   })
 }
 
+/** Most fragments yt-dlp will fetch at once; beyond this it stops paying off. */
+const MAX_CONCURRENT_FRAGMENTS = 16
+/** Bounds on a chunked request size, so a bad setting cannot explode a download. */
+const MIN_HTTP_CHUNK_SIZE = 256 * 1024
+const MAX_HTTP_CHUNK_SIZE = 32 * 1024 * 1024
+
 export interface YtDlpRunOptions extends HttpContext, CredentialOptions {
   binaryPath: string
   url: string
@@ -485,6 +512,16 @@ export interface YtDlpRunOptions extends HttpContext, CredentialOptions {
    * the yt-dlp default of one fragment at a time.
    */
   concurrentFragments?: number
+  /**
+   * Size of each ranged HTTP request yt-dlp makes, in bytes; 0 disables it.
+   *
+   * Every fragment of an HLS/DASH download is fetched through yt-dlp's normal
+   * HTTP downloader, so this splits each fragment into a series of ranged
+   * requests. A server that throttles a connection — which is what makes a
+   * single 1.4 MB segment crawl — sees a fresh request per chunk and speeds up
+   * accordingly. Experimental upstream; off by default.
+   */
+  httpChunkSize?: number
   /** Subtitle tracks to write, and whether to mux them into the video. */
   subtitles?: { codes: string[]; embed: boolean }
   /** Convert the audio track to this format; 'native' keeps the site's own. */
@@ -550,7 +587,20 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
   // Parallel fragments, the supported speed-up for HLS/DASH. Left out at 1 so
   // the default command line stays the default yt-dlp behaviour.
   const fragments = Math.floor(options.concurrentFragments ?? 1)
-  if (fragments > 1) args.push('--concurrent-fragments', String(Math.min(fragments, 16)))
+  if (fragments > 1) args.push('--concurrent-fragments', String(Math.min(fragments, MAX_CONCURRENT_FRAGMENTS)))
+
+  /*
+   * Chunked requests, for a server that throttles a connection.
+   *
+   * Clamped rather than trusted: a tiny chunk would turn one fragment into
+   * thousands of requests, and one above the cap would be rejected by yt-dlp's
+   * own parsing. The value is bytes; the UI collects it in MB.
+   */
+  const chunkSize = Math.floor(options.httpChunkSize ?? 0)
+  if (chunkSize > 0) {
+    const clamped = Math.min(Math.max(chunkSize, MIN_HTTP_CHUNK_SIZE), MAX_HTTP_CHUNK_SIZE)
+    args.push('--http-chunk-size', String(clamped))
+  }
 
   /*
    * A chosen subset of a playlist. `--yes-playlist` above is what lets yt-dlp
@@ -606,6 +656,7 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
   if (options.ffmpegDir) args.push('--ffmpeg-location', options.ffmpegDir)
 
   args.push(...(options.cookieArgs ?? []))
+  args.push(...cookieFileArgs(options))
   args.push(...httpHeaderArgs(options))
 
   args.push('--no-warnings')

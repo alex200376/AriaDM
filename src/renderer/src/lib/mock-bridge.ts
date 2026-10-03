@@ -157,6 +157,7 @@ let settings: Settings = {
   mediaCookiesFromBrowser: 'auto',
   mediaExtensionCookies: true,
   mediaConcurrentFragments: 5,
+  mediaHttpChunkSize: 0,
   ytdlpDetectSites: true,
   ffmpegPath: '',
   aria2Path: "C:\\AriaDM\\resources\\bin\\aria2c.exe",

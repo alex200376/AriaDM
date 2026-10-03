@@ -10,6 +10,7 @@ import { extensionOf } from '@shared/uri'
 
 import type { HistoryRecord, HistoryStore } from '../downloads/history-store'
 
+import { removeCookieFile, writeCookieFile } from './cookie-file'
 import {
   probeFormats,
   probePlaylist,
@@ -186,6 +187,13 @@ interface MediaJob {
   /** `--cookies-from-browser` arguments this job runs with, resolved once. */
   cookieArgs: string[]
   /**
+   * Netscape cookies file holding the extension's session, or ''.
+   *
+   * A file rather than a header because yt-dlp's extractors authenticate from
+   * their cookie jar. Deleted when the job reaches a terminal state.
+   */
+  cookieFile: string
+  /**
    * True when this job runs without browser credentials, because a probe already
    * proved them unusable or a launch had to give up on them.
    */
@@ -212,6 +220,19 @@ export interface MediaJobsOptions {
    * download instead of the next app start.
    */
   getConcurrentFragments?: () => number
+  /**
+   * Chunked HTTP request size for a run, in bytes; 0 disables chunking.
+   *
+   * Read per run like the others, so a change applies to the next download.
+   */
+  getHttpChunkSize?: () => number
+  /**
+   * Where a per-run cookies file is written.
+   *
+   * Defaults to a folder in the OS temp directory. The file is a credential, so
+   * the default keeps it out of the user's profile.
+   */
+  cookieDir?: string
   log(line: string): void
 }
 
@@ -281,6 +302,49 @@ export class MediaJobs extends EventEmitter {
   }
 
   /**
+   * Credentials for one run, with the live session written out as a cookies file.
+   *
+   * The extension's session arrives as a header, which yt-dlp's extractors never
+   * see (they read the cookie jar). Writing it to a file and pointing yt-dlp at
+   * it is what turns "logged in" into true for X, Instagram and the rest, so
+   * their hidden media resolves instead of reporting that the post has no video.
+   *
+   * A write failure is not fatal: the header is still sent, which is exactly the
+   * behaviour this replaces.
+   */
+  private async prepareCredentials(
+    url: string,
+    context: HttpContext
+  ): Promise<{ http: HttpContext; cookieArgs: string[]; cookieFile: string }> {
+    const { http, cookieArgs } = this.resolveCredentials(url, context)
+    let cookieFile = ''
+    if (http.cookieHeader) {
+      try {
+        cookieFile = await writeCookieFile(url, http.cookieHeader, this.options.cookieDir)
+      } catch (error) {
+        this.options.log(
+          `could not write a cookies file; using the header instead: ${(error as Error).message}`
+        )
+      }
+    }
+    return { http, cookieArgs, cookieFile }
+  }
+
+  /** Delete a cookies file. Safe to call more than once. */
+  private discardFile(file: string): Promise<void> {
+    if (!file) return Promise.resolve()
+    return removeCookieFile(file).catch(() => undefined)
+  }
+
+  /** Delete a job's cookies file and forget its path. */
+  private discardCookieFile(job: MediaJob): void {
+    const file = job.cookieFile
+    if (!file) return
+    job.cookieFile = ''
+    void this.discardFile(file)
+  }
+
+  /**
    * Turn a raw toolchain failure into a sentence for the user.
    *
    * The version is passed in because "update yt-dlp" is only actionable when the
@@ -314,11 +378,11 @@ export class MediaJobs extends EventEmitter {
     }
 
     this.verdict = { url, skipSession: false, skipStore: false }
-    const { http, cookieArgs } = this.resolveCredentials(url, context)
+    const { http, cookieArgs, cookieFile } = await this.prepareCredentials(url, context)
     const supplied = Boolean(context.cookieHeader) || cookieArgs.length > 0
 
     try {
-      const probe = await this.probeOnce(binary, url, http, cookieArgs)
+      const probe = await this.probeOnce(binary, url, http, cookieArgs, cookieFile)
       this.rememberProbe(key, { url, at: Date.now(), probe, verdict: { ...this.verdict, url } })
       return probe
     } catch (error) {
@@ -342,8 +406,11 @@ export class MediaJobs extends EventEmitter {
       this.options.log(`yt-dlp probe failed with ${kind}; retrying without ${dropped}`)
       this.verdict = { url, skipSession: !skipStore, skipStore }
 
+      // The retry resolves again so the verdict just set is applied: the
+      // credential that failed is left out, and so is its cookies file.
+      const retry = await this.prepareCredentials(url, context)
       try {
-        const probe = await this.probeOnce(binary, url, this.resolveCredentials(url, context).http, [])
+        const probe = await this.probeOnce(binary, url, retry.http, [], retry.cookieFile)
         this.rememberProbe(key, { url, at: Date.now(), probe, verdict: { ...this.verdict, url } })
         return probe
       } catch (retryError) {
@@ -351,7 +418,11 @@ export class MediaJobs extends EventEmitter {
         this.options.log(`yt-dlp probe failed again without credentials: ${retryMessage}`)
         this.forgetProbe(url)
         throw new Error(this.describe(retryMessage))
+      } finally {
+        await this.discardFile(retry.cookieFile)
       }
+    } finally {
+      await this.discardFile(cookieFile)
     }
   }
 
@@ -419,9 +490,15 @@ export class MediaJobs extends EventEmitter {
     binary: string,
     url: string,
     context: HttpContext,
-    cookieArgs: string[]
+    cookieArgs: string[],
+    cookieFile = ''
   ): Promise<MediaProbe> {
-    return probeFormats(binary, url, { hasFfmpeg: this.hasFfmpeg, ...context, cookieArgs })
+    return probeFormats(binary, url, {
+      hasFfmpeg: this.hasFfmpeg,
+      ...context,
+      cookieArgs,
+      cookieFile
+    })
   }
 
   findFormat(probe: MediaProbe, formatId: string): MediaFormatInfo | undefined {
@@ -439,8 +516,14 @@ export class MediaJobs extends EventEmitter {
   async probePlaylist(url: string, context: HttpContext = {}): Promise<MediaPlaylistInfo> {
     const binary = this.options.getBinaryPath()
     if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
-    const { http, cookieArgs } = this.resolveCredentials(url, context)
-    return probePlaylist(binary, url, { ...http, cookieArgs })
+    // The list itself is all this asks for, so the session file is written only
+    // for the duration of the request and then deleted.
+    const { http, cookieArgs, cookieFile } = await this.prepareCredentials(url, context)
+    try {
+      return await probePlaylist(binary, url, { ...http, cookieArgs, cookieFile })
+    } finally {
+      await this.discardFile(cookieFile)
+    }
   }
 
   async add(input: AddMediaInput, probe: MediaProbe, http: HttpContext = {}): Promise<{ gid: string }> {
@@ -495,7 +578,7 @@ export class MediaJobs extends EventEmitter {
     // Credentials are resolved here, once, from the probe that was just made for
     // this link: the download must not repeat a credential the probe already
     // proved unusable, and a resume must send what the first attempt sent.
-    const credentials = this.resolveCredentials(input.url, http)
+    const credentials = await this.prepareCredentials(input.url, http)
 
     const gid = `${MEDIA_GID_PREFIX}${randomUUID()}`
     const job: MediaJob = {
@@ -528,6 +611,7 @@ export class MediaJobs extends EventEmitter {
       streams: new Map(),
       http: credentials.http,
       cookieArgs: credentials.cookieArgs,
+      cookieFile: credentials.cookieFile,
       cookiesRetried: false
     }
 
@@ -591,12 +675,15 @@ export class MediaJobs extends EventEmitter {
       audioOnly: job.audioOnly,
       playlist: job.playlist,
       concurrentFragments: this.options.getConcurrentFragments?.() ?? 1,
+      httpChunkSize: this.options.getHttpChunkSize?.() ?? 0,
       ...(job.playlistItems.length > 0 ? { playlistItems: job.playlistItems } : {}),
       ...(job.subtitles ? { subtitles: job.subtitles } : {}),
       ...(job.audioFormat !== 'native' ? { audioFormat: job.audioFormat } : {}),
       overwrite: job.status === 'error',
       ...job.http,
-      ...(job.cookiesRetried ? { cookieHeader: '', cookieArgs: [] } : { cookieArgs: job.cookieArgs })
+      ...(job.cookiesRetried
+        ? { cookieHeader: '', cookieArgs: [], cookieFile: '' }
+        : { cookieArgs: job.cookieArgs, cookieFile: job.cookieFile })
     })
 
     runner.on('progress', (progress) => {
@@ -653,6 +740,8 @@ export class MediaJobs extends EventEmitter {
       job.status = 'error'
       job.speed = 0
       job.errorCode = 1
+      // The run is over, so the session file it was using is no longer needed.
+      this.discardCookieFile(job)
       // The remembered probe did not survive contact with the download, so the
       // next attempt at this link has to ask yt-dlp again.
       this.forgetProbe(job.url)
@@ -719,6 +808,8 @@ export class MediaJobs extends EventEmitter {
       }
     }
 
+    this.discardCookieFile(job)
+
     this.history.patchDeferred(job.gid, {
       status: 'complete',
       completedAt: job.completedAt,
@@ -752,6 +843,18 @@ export class MediaJobs extends EventEmitter {
     if (job.status !== 'paused' && job.status !== 'error') return
     job.errorCode = 0
     job.errorMessage = ''
+    // A failed run deleted its session file as it settled, so one is written
+    // again here, from the same header, rather than letting the retry quietly
+    // drop the session the site needs.
+    if (job.http.cookieHeader && !job.cookieFile && !job.cookiesRetried) {
+      try {
+        job.cookieFile = await writeCookieFile(job.url, job.http.cookieHeader, this.options.cookieDir)
+      } catch (error) {
+        this.options.log(
+          `could not rewrite the cookies file for the retry: ${(error as Error).message}`
+        )
+      }
+    }
     this.history.patchDeferred(gid, { status: 'active', errorCode: 0, errorMessage: '' })
     this.launch(job)
     this.emit('change')
@@ -782,6 +885,7 @@ export class MediaJobs extends EventEmitter {
       }
     }
 
+    this.discardCookieFile(job)
     this.jobs.delete(gid)
     this.history.remove([gid])
     this.emit('change')
@@ -807,7 +911,10 @@ export class MediaJobs extends EventEmitter {
   }
 
   killAll(): void {
-    for (const job of this.jobs.values()) job.runner?.kill()
+    for (const job of this.jobs.values()) {
+      job.runner?.kill()
+      this.discardCookieFile(job)
+    }
   }
 
   private toItem(job: MediaJob): DownloadItem {
