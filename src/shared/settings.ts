@@ -92,6 +92,18 @@ export const CONNECTION_PRESETS: Record<Exclude<ConnectionsPreset, 'custom'>, Co
   single: { split: 1, maxConnectionPerServer: 1, minSplitSize: 1024 * 1024 }
 }
 
+/**
+ * The connection fan-out used for a media link that resolved to a single plain
+ * file.
+ *
+ * Fixed rather than following the user's preset on purpose. This path exists for
+ * one reason — a CDN that throttles a single connection — so the whole point is
+ * many parallel ranged requests. It uses the turbo values (16 connections at a
+ * 1 MB minimum split) so a small payload still splits, and it is deliberately
+ * independent of whatever the user configured for ordinary downloads.
+ */
+export const MEDIA_DIRECT_CONNECTIONS: ConnectionsPresetValues = { ...CONNECTION_PRESETS.turbo }
+
 export interface WindowBounds {
   width: number
   height: number

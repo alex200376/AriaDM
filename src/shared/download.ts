@@ -15,6 +15,17 @@ export type DownloadStatus =
 /** Which downloader actually owns this item. */
 export type DownloadEngine = 'aria2' | 'ytdlp'
 
+/**
+ * Provenance tag for a media link that resolved to one plain file and was handed
+ * to aria2's multi-connection engine.
+ *
+ * Without it such a row is indistinguishable from an ordinary aria2 download,
+ * which is confusing for something the user asked for as a video: it explains why
+ * one video came down through aria2 and the next through yt-dlp (a segmented
+ * stream, which only yt-dlp can assemble).
+ */
+export const DIRECT_MEDIA_TAG = 'aria2-direct'
+
 export type DownloadKind = 'http' | 'ftp' | 'bittorrent' | 'metalink' | 'media'
 
 export type AddSource =

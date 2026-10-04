@@ -16,7 +16,7 @@ function input(overrides: Partial<AddDownloadInput> = {}): AddDownloadInput {
   return { uris: ['https://www.youtube.com/watch?v=abc'], engine: 'auto', ...overrides } as AddDownloadInput
 }
 
-function probeResult(directUrl = ''): MediaProbe {
+function probeResult(directUrl = '', overrides: Partial<MediaProbe> = {}): MediaProbe {
   return {
     url: 'https://www.youtube.com/watch?v=abc',
     title: 'a video',
@@ -50,7 +50,9 @@ function probeResult(directUrl = ''): MediaProbe {
     ],
     isPlaylist: false,
     extractor: directUrl ? 'generic' : 'youtube',
-    directUrl
+    directUrl,
+    formatUrls: {},
+    ...overrides
   }
 }
 
@@ -58,6 +60,7 @@ function makeRouter(
   options: {
     failProbe?: boolean
     directUrl?: string
+    probe?: Partial<MediaProbe>
     ytdlpAvailable?: boolean
     autoDetect?: boolean
     sniff?: 'media' | 'not-media' | 'unknown'
@@ -73,7 +76,7 @@ function makeRouter(
   const addMedia = vi.fn(async () => ({ gid: 'ytdlp:1' }))
   const probe = vi.fn(async () => {
     if (options.failProbe) throw new Error('unsupported url')
-    return probeResult(options.directUrl)
+    return probeResult(options.directUrl, options.probe)
   })
   const sniff = vi.fn(async () => options.sniff ?? 'not-media')
 
@@ -231,11 +234,122 @@ describe('EngineRouter', () => {
     const result = await router.add(input())
 
     // The resolved URL is what gets downloaded — not the page that redirected to it.
+    // The fixed fan-out is what beats a CDN throttling a single connection.
     expect(add).toHaveBeenCalledWith(
-      expect.objectContaining({ uris: [resolved], engine: 'aria2' })
+      expect.objectContaining({
+        uris: [resolved],
+        engine: 'aria2',
+        tags: ['aria2-direct'],
+        split: 16,
+        maxConnectionPerServer: 16,
+        minSplitSize: 1024 * 1024
+      })
     )
     // yt-dlp's single connection and per-run startup are what made this slow.
     expect(addMedia).not.toHaveBeenCalled()
     expect(result.gids).toEqual(['aria2-gid'])
+  })
+
+  it('hands a single progressive file from a recognised site to aria2', async () => {
+    const resolved = 'https://cdn.example.com/v/abc.mp4'
+    const { router, add, addMedia } = makeRouter({
+      probe: {
+        formats: [
+          {
+            formatId: 'hd',
+            label: '1080p · mp4',
+            ext: 'mp4',
+            resolution: '1080p',
+            filesize: null,
+            vcodec: 'avc1',
+            acodec: 'mp4a',
+            note: '',
+            needsFfmpeg: false
+          }
+        ],
+        formatUrls: { hd: resolved }
+      }
+    })
+
+    const result = await router.add(input({ mediaFormatId: 'hd' }))
+
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uris: [resolved],
+        engine: 'aria2',
+        out: 'a video.mp4',
+        tags: ['aria2-direct'],
+        split: 16,
+        maxConnectionPerServer: 16,
+        minSplitSize: 1024 * 1024
+      })
+    )
+    expect(addMedia).not.toHaveBeenCalled()
+    expect(result.gids).toEqual(['aria2-gid'])
+  })
+
+  it('keeps the tags it was given while marking a direct-file media link', async () => {
+    const resolved = 'https://blobs.example.com/file/abc123'
+    const { router, add } = makeRouter({ directUrl: resolved })
+
+    await router.add(input({ tags: ['keep-me'] }))
+
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: ['keep-me', 'aria2-direct'] })
+    )
+  })
+
+  it('keeps a manifest-backed stream on yt-dlp', async () => {
+    const { router, add, addMedia } = makeRouter({
+      probe: {
+        formats: [
+          {
+            formatId: 'dash',
+            label: '1080p · mp4',
+            ext: 'mp4',
+            resolution: '1080p',
+            filesize: null,
+            vcodec: 'avc1',
+            acodec: 'mp4a',
+            note: '',
+            needsFfmpeg: false
+          }
+        ],
+        // No plain-URL mapping: this format is fetched through a manifest.
+        formatUrls: {}
+      }
+    })
+
+    await router.add(input({ mediaFormatId: 'dash' }))
+
+    expect(addMedia).toHaveBeenCalledOnce()
+    expect(add).not.toHaveBeenCalled()
+  })
+
+  it('keeps a video-only format on yt-dlp even when it has a plain URL', async () => {
+    const { router, add, addMedia } = makeRouter({
+      probe: {
+        formats: [
+          {
+            formatId: 'video-only',
+            label: '1080p · mp4',
+            ext: 'mp4',
+            resolution: '1080p',
+            filesize: null,
+            vcodec: 'avc1',
+            acodec: 'none',
+            note: '',
+            needsFfmpeg: true
+          }
+        ],
+        // A URL is present, but muxing the audio back in needs ffmpeg.
+        formatUrls: { 'video-only': 'https://cdn.example.com/v/only.mp4' }
+      }
+    })
+
+    await router.add(input({ mediaFormatId: 'video-only' }))
+
+    expect(addMedia).toHaveBeenCalledOnce()
+    expect(add).not.toHaveBeenCalled()
   })
 })

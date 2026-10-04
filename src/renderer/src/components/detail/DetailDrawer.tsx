@@ -152,6 +152,15 @@ function OverviewTab({ item }: { item: DownloadItem }): JSX.Element {
         <InfoRow label={t('detail.engine')}>{item.engine === 'ytdlp' ? 'yt-dlp' : 'aria2'}</InfoRow>
         <InfoRow label={t('detail.category')}>{item.category}</InfoRow>
         <InfoRow label={t('detail.source')}>{sourceLabel(item.source)}</InfoRow>
+        {item.tags.length > 0 && (
+          <InfoRow label={t('detail.tags')}>
+            <span className="flex flex-wrap justify-end gap-1">
+              {item.tags.map((tag) => (
+                <Badge key={tag}>{tag}</Badge>
+              ))}
+            </span>
+          </InfoRow>
+        )}
         <InfoRow label={t('detail.dir')} mono>
           {item.dir}
         </InfoRow>

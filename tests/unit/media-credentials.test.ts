@@ -65,7 +65,8 @@ const PROBE = {
   formats: [],
   isPlaylist: false,
   extractor: 'youtube',
-  directUrl: ''
+  directUrl: '',
+  formatUrls: {}
 }
 
 const LOCKED = 'ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info'

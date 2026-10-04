@@ -324,6 +324,7 @@ export const en = {
   'detail.engine': 'Engine',
   'detail.category': 'Category',
   'detail.source': 'Source',
+  'detail.tags': 'Tags',
   'detail.dir': 'Folder',
   'detail.file': 'File',
   'detail.uri': 'Source link',

@@ -72,7 +72,8 @@ const PROBE = {
   formats: [format()],
   isPlaylist: false,
   extractor: 'youtube',
-  directUrl: ''
+  directUrl: '',
+  formatUrls: {}
 }
 
 function makeJobs(options: { ffmpeg?: string } = {}) {

@@ -1,4 +1,5 @@
-import type { AddDownloadInput, AddDownloadResult, Settings } from '@shared/settings'
+import { DIRECT_MEDIA_TAG } from '@shared/download'
+import { MEDIA_DIRECT_CONNECTIONS, type AddDownloadInput, type AddDownloadResult, type Settings } from '@shared/settings'
 import { defaultFormatId } from '@shared/media-formats'
 import {
   chooseEngine,
@@ -10,7 +11,7 @@ import {
 import type { DownloadManager } from './manager'
 import type { MediaJobs } from '../media/jobs'
 import type { MediaSniffer } from '../media/page-sniff'
-import type { HttpContext } from '../media/ytdlp'
+import { resolveDirectFile, type HttpContext } from '../media/ytdlp'
 
 export interface EngineRouterOptions {
   manager: DownloadManager
@@ -33,6 +34,18 @@ export interface EngineRouterOptions {
  * around and then ignored, and only the dedicated media dialog ever reached
  * yt-dlp.
  */
+/**
+ * Attach the direct-media provenance marker to a request's tags.
+ *
+ * These rows look like an ordinary aria2 download even though the user asked for
+ * a video; the marker is what makes it visible in the detail view that the link
+ * resolved to one plain file and was fetched with aria2's fan-out. Existing tags
+ * are kept, and the marker is never added twice.
+ */
+function withDirectMediaTag(tags: string[] | undefined): string[] {
+  return [...new Set([...(tags ?? []), DIRECT_MEDIA_TAG])]
+}
+
 export class EngineRouter {
   constructor(private readonly options: EngineRouterOptions) {}
 
@@ -132,8 +145,15 @@ export class EngineRouter {
       if (probe.directUrl) {
         this.options.log(`engine router: ${url} resolved to a direct file; using aria2`)
         // The engine is named rather than left to default, or the history row
-        // would claim this download was made by yt-dlp.
-        return await this.options.manager.add({ ...input, engine: 'aria2', uris: [probe.directUrl] })
+        // would claim this download was made by yt-dlp. The fixed fan-out is the
+        // point of this route: one plain file, pulled over many connections.
+        return await this.options.manager.add({
+          ...input,
+          engine: 'aria2',
+          uris: [probe.directUrl],
+          tags: withDirectMediaTag(input.tags),
+          ...MEDIA_DIRECT_CONNECTIONS
+        })
       }
 
       // A requested format is honoured only when the probe actually offered it:
@@ -143,13 +163,35 @@ export class EngineRouter {
         ? input.mediaFormatId!
         : ''
 
+      // Not `formats[0]`: on a machine without ffmpeg the best entry cannot be
+      // produced at all, and this path is the extension's "download this video" —
+      // it has to just work.
+      const formatId = requested || defaultFormatId(probe.formats, this.options.mediaJobs.hasFfmpeg)
+
+      /*
+       * The chosen format may itself be a single plain file: a site yt-dlp
+       * recognises that serves one progressive payload rather than a segmented
+       * stream. That needs no muxing, so aria2 can fetch it with its full fan-out
+       * — the same win as the bare-file case above. A format that needs merging,
+       * or any HLS/DASH manifest, resolves to null and stays with yt-dlp below.
+       */
+      const direct = resolveDirectFile(probe, formatId)
+      if (direct) {
+        this.options.log(`engine router: ${url} format ${formatId} is a direct file; using aria2`)
+        return await this.options.manager.add({
+          ...input,
+          engine: 'aria2',
+          uris: [direct.url],
+          ...(direct.out ? { out: direct.out } : {}),
+          tags: withDirectMediaTag(input.tags),
+          ...MEDIA_DIRECT_CONNECTIONS
+        })
+      }
+
       const { gid } = await this.options.mediaJobs.add(
         {
           url,
-          // Not `formats[0]`: on a machine without ffmpeg the best entry cannot
-          // be produced at all, and this path is the extension's "download this
-          // video" — it has to just work.
-          formatId: requested || defaultFormatId(probe.formats, this.options.mediaJobs.hasFfmpeg),
+          formatId,
           // A browser capture carries no directory, and aria2 hides that: it
           // falls back to the engine's own --dir, so plain handoffs landed in the
           // right place. yt-dlp is told where to write per run, so an empty value

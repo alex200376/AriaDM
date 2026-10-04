@@ -319,6 +319,7 @@ export const zhTW = {
   'detail.engine': '引擎',
   'detail.category': '分類',
   'detail.source': '來源',
+  'detail.tags': '標籤',
   'detail.dir': '儲存位置',
   'detail.file': '檔案',
   'detail.uri': '來源連結',

@@ -74,6 +74,71 @@ export interface MediaProbe {
    * reports no size for it, so the row's speed and ETA come out as noise.
    */
   directUrl: string
+  /**
+   * Each format's own URL, keyed by format id, but only for the formats that
+   * speak plain `http`/`https`.
+   *
+   * This is what lets the router hand a single progressive stream to aria2: the
+   * picker only ever needed a label and a size, so the URLs were being dropped.
+   * Anything fetched through a manifest protocol (HLS, DASH) is left out
+   * entirely — those cannot be assembled by aria2 and must stay with yt-dlp.
+   *
+   * Main-process only: these URLs are often signed and short-lived, so they are
+   * never put on a shared type that reaches the renderer.
+   */
+  formatUrls: Record<string, string>
+}
+
+/**
+ * The plain-HTTP(S) URLs behind a probe's formats, keyed by format id.
+ *
+ * Manifests (`m3u8_native`, `http_dash_segments`, ...) are deliberately excluded:
+ * they are a list of segments, not one file, and only yt-dlp can reassemble them.
+ */
+export function directFormatUrls(payload: RawProbe): Record<string, string> {
+  const urls: Record<string, string> = {}
+  for (const format of payload.formats ?? []) {
+    if (!format.format_id || !format.url) continue
+    const protocol = (format.protocol ?? '').toLowerCase()
+    if (protocol === 'http' || protocol === 'https') urls[format.format_id] = format.url
+  }
+  return urls
+}
+
+/** A single plain file a probe's chosen format resolves to. */
+export interface DirectFile {
+  url: string
+  /** A filename to save it under, or '' to let aria2 name it from the URL. */
+  out: string
+}
+
+/**
+ * The direct file behind a chosen format, when that format is one plain stream.
+ *
+ * Broader than `directPayloadUrl`, which is limited to the generic extractor's
+ * single format. A recognised site can still serve one progressive payload — an
+ * MP4 whose picture and sound are already together — and that needs no muxing, so
+ * aria2 can fetch it with its full fan-out instead of yt-dlp's single connection.
+ *
+ * Returns null for anything aria2 must not take:
+ *  - a format that needs muxing (video-only), which only yt-dlp + ffmpeg can
+ *    assemble;
+ *  - a manifest-backed format, which is a list of segments, not a file;
+ *  - a synthetic entry (`bestvideo+bestaudio/best`, `bestaudio/best`), which is a
+ *    request rather than a stream and carries no URL of its own.
+ */
+export function resolveDirectFile(probe: MediaProbe, formatId: string): DirectFile | null {
+  if (!formatId || probe.isPlaylist) return null
+
+  const format = probe.formats.find((entry) => entry.formatId === formatId)
+  if (!format || format.needsFfmpeg) return null
+
+  const url = probe.formatUrls[formatId]
+  if (!url) return null
+
+  const title = probe.title.trim()
+  const out = title ? (format.ext ? `${title}.${format.ext}` : title) : ''
+  return { url, out }
 }
 
 /**
@@ -430,7 +495,8 @@ export async function probeFormats(
         subtitles: parseSubtitles(primary),
         isPlaylist,
         extractor,
-        directUrl: directPayloadUrl(primary, extractor, isPlaylist)
+        directUrl: directPayloadUrl(primary, extractor, isPlaylist),
+        formatUrls: directFormatUrls(primary)
       })
     })
   })
