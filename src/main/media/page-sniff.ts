@@ -1,4 +1,10 @@
-import { isMediaContentType, isScannableDocument, looksLikeMediaPage, SNIFF_BYTE_LIMIT } from '@shared/media-sniff'
+import {
+  findDirectMediaUrls,
+  isMediaContentType,
+  isScannableDocument,
+  looksLikeMediaPage,
+  SNIFF_BYTE_LIMIT
+} from '@shared/media-sniff'
 
 import { pageHasMediaMetadata } from './media-metadata'
 
@@ -15,6 +21,19 @@ import { pageHasMediaMetadata } from './media-metadata'
  * must never turn a plain file into a yt-dlp download.
  */
 export type SniffVerdict = 'media' | 'not-media' | 'unknown'
+
+/**
+ * Everything one page fetch answers: whether it plays media, and the media files
+ * it points at.
+ *
+ * `mediaUrls` is what makes a page that merely links a `.mp4` work — the file is
+ * downloadable on its own, so it does not need to go through yt-dlp at all, and
+ * a page with no player in it can still be worth handing to the downloader.
+ */
+export interface PageScan {
+  verdict: SniffVerdict
+  mediaUrls: string[]
+}
 
 export interface SniffHttpContext {
   cookieHeader?: string
@@ -46,7 +65,7 @@ const BROWSER_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
 export class MediaSniffer {
-  private readonly cache = new Map<string, { at: number; verdict: SniffVerdict }>()
+  private readonly cache = new Map<string, { at: number; verdict: SniffVerdict; mediaUrls: string[] }>()
   private readonly timeoutMs: number
   private readonly cacheTtlMs: number
   private readonly cacheLimit: number
@@ -65,18 +84,30 @@ export class MediaSniffer {
 
   /** The verdict for a URL, reusing a recent answer when there is one. */
   async sniff(url: string, http: SniffHttpContext = {}): Promise<SniffVerdict> {
-    const cached = this.cache.get(url)
-    if (cached && this.now() - cached.at < this.cacheTtlMs) return cached.verdict
-
-    const verdict = await this.fetchVerdict(url, http)
-    // Failures are not cached: a transient network error must not pin a link as
-    // "not a video" for the rest of the window.
-    if (verdict !== 'unknown') this.remember(url, verdict)
-    return verdict
+    return (await this.scan(url, http)).verdict
   }
 
-  private remember(url: string, verdict: SniffVerdict): void {
-    this.cache.set(url, { at: this.now(), verdict })
+  /**
+   * The full answer for a URL: its verdict and the media files it points at.
+   *
+   * One fetch answers both, so asking for the files costs nothing extra. A caller
+   * that only needs the verdict should use `sniff`, which reads the same cache.
+   */
+  async scan(url: string, http: SniffHttpContext = {}): Promise<PageScan> {
+    const cached = this.cache.get(url)
+    if (cached && this.now() - cached.at < this.cacheTtlMs) {
+      return { verdict: cached.verdict, mediaUrls: cached.mediaUrls }
+    }
+
+    const answer = await this.fetchVerdict(url, http)
+    // Failures are not cached: a transient network error must not pin a link as
+    // "not a video" for the rest of the window.
+    if (answer.verdict !== 'unknown') this.remember(url, answer)
+    return answer
+  }
+
+  private remember(url: string, answer: PageScan): void {
+    this.cache.set(url, { at: this.now(), ...answer })
     // A plain Map is insertion-ordered, so the oldest key is the first one.
     while (this.cache.size > this.cacheLimit) {
       const oldest = this.cache.keys().next().value
@@ -85,7 +116,7 @@ export class MediaSniffer {
     }
   }
 
-  private async fetchVerdict(url: string, http: SniffHttpContext): Promise<SniffVerdict> {
+  private async fetchVerdict(url: string, http: SniffHttpContext): Promise<PageScan> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
@@ -95,18 +126,25 @@ export class MediaSniffer {
         headers: requestHeaders(url, http, this.defaultUserAgent)
       })
       const contentType = response.headers.get('content-type') ?? ''
-      if (isMediaContentType(contentType)) return 'media'
+      // The URL itself is the file, so there is nothing to scan for: the caller
+      // already holds the address it would have found.
+      if (isMediaContentType(contentType)) return { verdict: 'media', mediaUrls: [] }
       const body = await readPrefix(response, SNIFF_BYTE_LIMIT)
+      /*
+       * Only a real document is scanned for media files. A binary payload that
+       * happens to contain the bytes `.mp4` is not a page that links one, which
+       * is the same rule the marker check below applies.
+       */
+      if (!isScannableDocument(contentType, body)) return { verdict: 'not-media', mediaUrls: [] }
+      const mediaUrls = findDirectMediaUrls(body, url)
       // The cheap markers answer most pages; only when they are silent is the
       // body handed to the metadata parser, so a page that names its video in
-      // `og:video` or a JSON-LD `VideoObject` is not missed. A binary body is
-      // never parsed: a payload that happens to contain `video` is not a page.
-      if (looksLikeMediaPage(contentType, body)) return 'media'
-      if (!isScannableDocument(contentType, body)) return 'not-media'
-      return (await pageHasMediaMetadata(body)) ? 'media' : 'not-media'
+      // `og:video` or a JSON-LD `VideoObject` is not missed.
+      if (looksLikeMediaPage(contentType, body)) return { verdict: 'media', mediaUrls }
+      return { verdict: (await pageHasMediaMetadata(body)) ? 'media' : 'not-media', mediaUrls }
     } catch (error) {
       this.log(`page sniff: ${url} -> unknown (${(error as Error).message})`)
-      return 'unknown'
+      return { verdict: 'unknown', mediaUrls: [] }
     } finally {
       clearTimeout(timer)
     }

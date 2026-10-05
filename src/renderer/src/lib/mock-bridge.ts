@@ -3,7 +3,7 @@ import type { CategoryRule, Settings, SpeedProfile } from '@shared/settings'
 import type { DownloadItem, GlobalStat, HistoryRow, TickPayload, ToolkitStatus } from '@shared/download'
 import { DEFAULT_CATEGORIES } from '@shared/settings'
 import { matchMediaSite } from '@shared/media-sites'
-import { extensionOf, fileNameFromUri } from '@shared/uri'
+import { classifyUriList, extensionOf, fileNameFromUri, isSupportedUri, parseUriList } from '@shared/uri'
 
 /**
  * A stand-in for the preload bridge.
@@ -377,7 +377,11 @@ export function createMockApi(): AriaDmApi {
       },
       pauseAll: noop,
       resumeAll: noop,
-      parseUriList: async () => ({ mirrors: [], singles: [] }),
+      // The same two shared functions the main process uses, so the preview's
+      // "N downloads will be created" line tells the truth — a stub that always
+      // answered "0" made a working add look like a dead button.
+      parseUriList: async (text) =>
+        classifyUriList(parseUriList(text).filter((uri) => isSupportedUri(uri))),
       runPostAction: noop
     },
 
@@ -486,11 +490,19 @@ export function createMockApi(): AriaDmApi {
       detectMedia: async (url) => {
         await new Promise((resolve) => window.setTimeout(resolve, 250))
         const site = matchMediaSite(url)
-        if (site !== null) return { media: true, site }
+        if (site !== null) return { media: true, site, mediaUrls: [] }
         // The harness has no real page fetch, so an unknown host is guessed from
-        // its path: enough to exercise the "unknown host video page" flow.
+        // its path: enough to exercise the "unknown host video page" flow. A path
+        // that names a media file exercises the page-with-direct-media flow.
+        if (/direct|\.mp4/i.test(url)) {
+          return {
+            media: true,
+            site: null,
+            mediaUrls: ['https://cdn.example.test/media/clip-2160p.mp4']
+          }
+        }
         const media = /\.(?:html?|php)(?:[?#]|$)/i.test(url) || /\/(?:video|gif|watch)\//i.test(url)
-        return { media, site: null }
+        return { media, site: null, mediaUrls: [] }
       },
       getMediaPlaylist: async (url) => {
         await new Promise((resolve) => window.setTimeout(resolve, 500))

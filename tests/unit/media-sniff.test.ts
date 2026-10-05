@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  findDirectMediaUrls,
+  isDirectMediaUrl,
   isHtmlContentType,
   isMediaContentType,
   isScannableDocument,
   looksLikeMediaPage,
   normalizeContentType,
+  PAGE_MEDIA_LIMIT,
   SNIFF_BYTE_LIMIT
 } from '@shared/media-sniff'
 
@@ -94,5 +97,100 @@ describe('looksLikeMediaPage', () => {
     expect(looksLikeMediaPage('text/html', `${filler}<video src="x"></video>`)).toBe(false)
     // ...but a marker within the limit still counts.
     expect(looksLikeMediaPage('text/html', `<video src="x"></video>${filler}`)).toBe(true)
+  })
+})
+
+describe('isDirectMediaUrl', () => {
+  it('accepts the containers a plain downloader can fetch', () => {
+    expect(isDirectMediaUrl('https://cdn.example/clip.mp4')).toBe(true)
+    expect(isDirectMediaUrl('https://cdn.example/clip.webm?t=1')).toBe(true)
+    expect(isDirectMediaUrl('https://cdn.example/song.mp3')).toBe(true)
+    expect(isDirectMediaUrl('https://cdn.example/CLIP.MP4')).toBe(true)
+  })
+
+  it('refuses a manifest, which is not the media itself', () => {
+    // Handing an m3u8 to a plain downloader downloads a playlist, not a video.
+    expect(isDirectMediaUrl('https://cdn.example/index.m3u8?m=abc')).toBe(false)
+    expect(isDirectMediaUrl('https://cdn.example/stream.mpd')).toBe(false)
+  })
+
+  it('refuses what is not a fetchable media file at all', () => {
+    expect(isDirectMediaUrl('https://cdn.example/page')).toBe(false)
+    expect(isDirectMediaUrl('https://cdn.example/page.html')).toBe(false)
+    expect(isDirectMediaUrl('blob:https://x/1')).toBe(false)
+    expect(isDirectMediaUrl('data:video/mp4;base64,AAAA')).toBe(false)
+    expect(isDirectMediaUrl('not a url')).toBe(false)
+  })
+})
+
+describe('findDirectMediaUrls', () => {
+  const BASE = 'https://page.example/watch/123'
+
+  it('finds the file a video element points at', () => {
+    const html =
+      '<video controls src="https://cdn.example/clip.mp4"></video>'
+    expect(findDirectMediaUrls(html, BASE)).toEqual(['https://cdn.example/clip.mp4'])
+  })
+
+  it('finds a source element and resolves a relative path', () => {
+    const html = '<video><source src="/media/clip-a.mp4" type="video/mp4"></video>'
+    expect(findDirectMediaUrls(html, BASE)).toEqual(['https://page.example/media/clip-a.mp4'])
+  })
+
+  it('finds a file the page only links to', () => {
+    // The whole point: a page with no player in it still names a video file.
+    const html = '<a href="downloads/movie.mkv">Download the movie</a>'
+    expect(findDirectMediaUrls(html, BASE)).toEqual(['https://page.example/watch/downloads/movie.mkv'])
+  })
+
+  it('finds a URL buried in a script, JSON-escaped or not', () => {
+    const html =
+      '<script>var p={file:"https:\/\/cdn.example\/v\/a.webm",other:"https://cdn.example/b.mp3"}</script>'
+    expect(findDirectMediaUrls(html, BASE)).toEqual([
+      'https://cdn.example/v/a.webm',
+      'https://cdn.example/b.mp3'
+    ])
+  })
+
+  it('decodes an escaped ampersand in a query string', () => {
+    const html = '<video src="https://cdn.example/clip.mp4?a=1&amp;b=2"></video>'
+    expect(findDirectMediaUrls(html, BASE)).toEqual(['https://cdn.example/clip.mp4?a=1&b=2'])
+  })
+
+  it('keeps a manifest and an ordinary link out of the result', () => {
+    const html = [
+      '<script>hls:"https://cdn.example/index.m3u8"</script>',
+      '<a href="https://page.example/about.html">about</a>',
+      '<img src="https://cdn.example/pic.jpg">'
+    ].join('')
+    expect(findDirectMediaUrls(html, BASE)).toEqual([])
+  })
+
+  it('lists each file once, in the order it appears', () => {
+    const html = [
+      '<video src="https://cdn.example/a.mp4"></video>',
+      '<script>"https://cdn.example/a.mp4"</script>',
+      '<a href="https://cdn.example/b.mp4">b</a>'
+    ].join('')
+    expect(findDirectMediaUrls(html, BASE)).toEqual([
+      'https://cdn.example/a.mp4',
+      'https://cdn.example/b.mp4'
+    ])
+  })
+
+  it('stops at the page limit', () => {
+    const html = Array.from(
+      { length: PAGE_MEDIA_LIMIT + 10 },
+      (_, index) => `<a href="https://cdn.example/${index}.mp4">${index}</a>`
+    ).join('')
+    expect(findDirectMediaUrls(html, BASE)).toHaveLength(PAGE_MEDIA_LIMIT)
+  })
+
+  it('only scans a bounded prefix, like the marker check', () => {
+    const filler = 'x'.repeat(SNIFF_BYTE_LIMIT + 10)
+    expect(findDirectMediaUrls(`${filler}<a href="https://cdn.example/late.mp4">l</a>`, BASE)).toEqual([])
+    expect(
+      findDirectMediaUrls(`<a href="https://cdn.example/early.mp4">e</a>${filler}`, BASE)
+    ).toEqual(['https://cdn.example/early.mp4'])
   })
 })

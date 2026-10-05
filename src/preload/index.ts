@@ -92,7 +92,8 @@ const api: AriaDmApi = {
     setClipboardWatch: (enabled) => invoke(IPC.integrationsSetClipboardWatch, enabled),
     getHandoffInfo: () => invoke(IPC.integrationsGetHandoffInfo),
     rotateHandoffToken: () => invoke(IPC.integrationsRotateHandoffToken),
-    getMediaFormats: (url) => invoke(IPC.integrationsGetMediaFormats, url),
+    getMediaFormats: (url, refreshCredentials) =>
+      invoke(IPC.integrationsGetMediaFormats, url, refreshCredentials),
     detectMedia: (url) => invoke(IPC.integrationsDetectMedia, url),
     getMediaPlaylist: (url) => invoke(IPC.integrationsGetMediaPlaylist, url),
     addMedia: (input) => invoke(IPC.integrationsAddMedia, input),

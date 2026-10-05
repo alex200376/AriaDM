@@ -83,12 +83,15 @@ afterAll(() => {
   rmSync(cookieDir, { recursive: true, force: true })
 })
 
-function makeJobs(options: { cookieArgs?: string[] } = {}) {
+function makeJobs(options: { cookieArgs?: string[] | (() => string[]) } = {}) {
+  const args = options.cookieArgs
   const jobs = new MediaJobs({
     history: { upsert: vi.fn(), flush: async () => {}, patchDeferred: vi.fn(), remove: vi.fn() } as never,
     getBinaryPath: () => 'yt-dlp.exe',
     getFfmpegPath: () => '',
-    getCookieArgs: () => options.cookieArgs ?? STORE_ARGS,
+    // A function form lets a test change the setting mid-flight, the way the
+    // settings store does on the next run.
+    getCookieArgs: () => (typeof args === 'function' ? args() : (args ?? STORE_ARGS)),
     cookieDir,
     log: () => {}
   })
@@ -431,5 +434,124 @@ describe('MediaJobs probe reuse', () => {
     // ...while the newest are still there.
     await jobs.probe(urls[8]!)
     expect(state.probeFormats).toHaveBeenCalledTimes(10)
+  })
+})
+
+describe('MediaJobs host credential memory', () => {
+  /*
+   * A rejected session or an unreadable cookie store is a property of the site
+   * and of this machine, not of one video. Before the verdict was remembered per
+   * host, every new link on YouTube paid for the same rejection again and then
+   * waited on a credential-free retry — which is the wait that ran past 30 s.
+   */
+  const OTHER_VIDEO = 'https://www.youtube.com/watch?v=xyz'
+
+  /** Make the NEXT probe attempt a plain signed-in store run. */
+  function succeedWithStore(): void {
+    state.probeFormats.mockResolvedValue(PROBE)
+  }
+
+  it('skips the credentials on the next link of a host whose session was refused', async () => {
+    state.probeFormats.mockRejectedValueOnce(new Error(STALE_SESSION)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url)
+    // The first link paid for the rejection and its retry.
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+
+    succeedWithStore()
+    await jobs.probe(OTHER_VIDEO, {}, { reuse: false })
+
+    // One attempt, already without the store — no second rejection, no retry.
+    expect(state.probeFormats).toHaveBeenCalledTimes(3)
+    const last = state.probeFormats.mock.calls.at(-1)!
+    expect(last[1]).toBe(OTHER_VIDEO)
+    expect(last[2].cookieArgs).toEqual([])
+  })
+
+  it('does not carry that verdict to a different host', async () => {
+    state.probeFormats.mockRejectedValueOnce(new Error(STALE_SESSION)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+    await jobs.probe(PROBE.url)
+
+    succeedWithStore()
+    await jobs.probe('https://vimeo.com/1', {}, { reuse: false })
+
+    expect(state.probeFormats.mock.calls.at(-1)![2].cookieArgs).toEqual(STORE_ARGS)
+  })
+
+  it('tries the credentials again when the caller explicitly refreshes', async () => {
+    // The dialog's "probe again" after a fix: the remembered verdict must not
+    // answer for the user who has just repaired the thing it remembered.
+    state.probeFormats.mockRejectedValueOnce(new Error(STALE_SESSION)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+    await jobs.probe(PROBE.url)
+
+    succeedWithStore()
+    await jobs.probe(PROBE.url, {}, { reuse: false, ignoreHostVerdict: true })
+
+    expect(state.probeFormats.mock.calls.at(-1)![2].cookieArgs).toEqual(STORE_ARGS)
+  })
+
+  it('forgets the verdict when the cookie setting points somewhere else', async () => {
+    // The verdict is about one store; applying it to the next one would skip
+    // credentials the user has just switched to on purpose.
+    let storeArgs: string[] = STORE_ARGS
+    state.probeFormats.mockRejectedValueOnce(new Error(STALE_SESSION)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs({ cookieArgs: () => storeArgs })
+
+    await jobs.probe(PROBE.url)
+    expect(state.probeFormats).toHaveBeenCalledTimes(2)
+
+    storeArgs = ['--cookies-from-browser', 'firefox']
+    succeedWithStore()
+    await jobs.probe(OTHER_VIDEO, {}, { reuse: false })
+
+    expect(state.probeFormats.mock.calls.at(-1)![2].cookieArgs).toEqual([
+      '--cookies-from-browser',
+      'firefox'
+    ])
+  })
+
+  it('forgets the verdict once the credentials actually work', async () => {
+    state.probeFormats.mockRejectedValueOnce(new Error(STALE_SESSION)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+    await jobs.probe(PROBE.url)
+
+    // The user closed the browser, so the store reads again and the refreshed
+    // probe succeeds with it; the host must go back to trying credentials.
+    succeedWithStore()
+    await jobs.probe(PROBE.url, {}, { reuse: false, ignoreHostVerdict: true })
+
+    succeedWithStore()
+    await jobs.probe(OTHER_VIDEO, {}, { reuse: false })
+    expect(state.probeFormats.mock.calls.at(-1)![2].cookieArgs).toEqual(STORE_ARGS)
+  })
+})
+
+describe('MediaJobs probe timeouts', () => {
+  /*
+   * The measured failure this bounds: the credential-free retry on YouTube never
+   * answered and was only stopped by the old 45 s ceiling, so a link that could
+   * not be probed cost the user ~50 s before it said so.
+   */
+  it('gives a single attempt the default ceiling', async () => {
+    state.probeFormats.mockResolvedValue(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url)
+    expect(state.probeFormats.mock.calls[0]![2].timeoutMs).toBe(30_000)
+  })
+
+  it('gives the credential-free retry a shorter one', async () => {
+    state.probeFormats.mockRejectedValueOnce(new Error(STALE_SESSION)).mockResolvedValueOnce(PROBE)
+    const jobs = makeJobs()
+
+    await jobs.probe(PROBE.url)
+    expect(state.probeFormats.mock.calls[1]![2].timeoutMs).toBe(15_000)
+    // The retry is the attempt expected to stall, so it must be the shorter one.
+    expect(state.probeFormats.mock.calls[1]![2].timeoutMs).toBeLessThan(
+      state.probeFormats.mock.calls[0]![2].timeoutMs as number
+    )
   })
 })

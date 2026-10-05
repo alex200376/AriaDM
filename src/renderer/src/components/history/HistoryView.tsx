@@ -5,6 +5,7 @@ import type { HistoryRow } from '@shared/download'
 import { formatBytes, formatDateTime, formatRelative } from '@shared/format'
 
 import { errorSummary, kindGlyph, sourceLabel, statusLabel, statusTone } from '../../lib/labels'
+import { useT } from '../../lib/i18n'
 import { useApp } from '../../store/app-store'
 import { Badge, Button, EmptyState, IconButton, Input } from '../ui/primitives'
 
@@ -28,6 +29,7 @@ export function HistoryView(): JSX.Element {
   const clearHistory = useApp((state) => state.clearHistory)
   const retryGids = useApp((state) => state.retryGids)
   const showInFolder = useApp((state) => state.showInFolder)
+  const t = useT()
 
   // Re-query when the search term changes, debounced so typing stays smooth.
   useEffect(() => {
@@ -48,11 +50,11 @@ export function HistoryView(): JSX.Element {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜尋紀錄…"
+            placeholder={t('history.search')}
             className="h-8 text-[12px]"
           />
         </div>
-        <span className="text-[11px] text-faint">共 {total} 筆紀錄</span>
+        <span className="text-[11px] text-faint">{t('history.count', { count: total })}</span>
         <div className="flex-1" />
         <Button
           variant="danger"
@@ -61,7 +63,7 @@ export function HistoryView(): JSX.Element {
           onClick={() => void clearHistory()}
           disabled={rows.length === 0}
         >
-          清空紀錄
+          {t('history.clear')}
         </Button>
       </div>
 
@@ -69,23 +71,21 @@ export function HistoryView(): JSX.Element {
         className="grid shrink-0 items-center gap-3 border-b border-line bg-surface/60 px-3 py-2 text-[11px] font-medium text-faint"
         style={{ gridTemplateColumns: GRID }}
       >
-        <span>檔案名稱</span>
-        <span className="text-right">大小</span>
-        <span>狀態</span>
-        <span>加入時間</span>
-        <span>完成時間</span>
-        <span className="text-right">操作</span>
+        <span>{t('table.name')}</span>
+        <span className="text-right">{t('history.size')}</span>
+        <span>{t('history.status')}</span>
+        <span>{t('history.added')}</span>
+        <span>{t('history.finished')}</span>
+        <span className="text-right">{t('history.actions')}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <EmptyState
             icon={<HistoryIcon size={22} />}
-            title={rows.length === 0 ? '還沒有下載紀錄' : '沒有符合的紀錄'}
+            title={rows.length === 0 ? t('history.emptyAll') : t('history.empty')}
             body={
-              rows.length === 0
-                ? '完成的與失敗的下載都會保存在這裡，即使 aria2 已經清掉它們的結果。'
-                : '試著調整搜尋關鍵字。'
+              rows.length === 0 ? t('history.emptyAllBody') : t('history.emptySearchBody')
             }
           />
         ) : (
@@ -134,15 +134,15 @@ export function HistoryView(): JSX.Element {
 
               <div className="flex items-center justify-end gap-0.5">
                 {row.status === 'error' && row.uris.length > 0 && (
-                  <IconButton label="重試" icon={<RotateCw size={14} />} onClick={() => void retryGids([row.gid])} />
+                  <IconButton label={t('common.retry')} icon={<RotateCw size={14} />} onClick={() => void retryGids([row.gid])} />
                 )}
                 <IconButton
-                  label="開啟資料夾"
+                  label={t('table.openFolder')}
                   icon={<FolderOpen size={14} />}
                   disabled={!live.has(row.gid)}
                   onClick={() => void showInFolder(row.gid)}
                 />
-                <IconButton label="刪除紀錄" icon={<Trash2 size={14} />} onClick={() => void deleteHistory([row.gid])} />
+                <IconButton label={t('history.delete')} icon={<Trash2 size={14} />} onClick={() => void deleteHistory([row.gid])} />
               </div>
             </div>
           ))

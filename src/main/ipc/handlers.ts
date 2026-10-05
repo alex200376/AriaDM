@@ -373,39 +373,56 @@ export function registerIpcHandlers(context: HandlerContext): void {
     return handoffInfo(token)
   })
 
-  ipcMain.handle(IPC.integrationsGetMediaFormats, async (_event, url: string) => {
-    if (!settingsStore.get().ytdlpEnabled) throw new Error('影音下載功能已停用。')
-    return withExtensionCookies(context, url, async (cookieHeader) => {
-      // Building the menu is the caller asking what this link contains *now* —
-      // including when it is the dialog's "probe again" button. The answer a
-      // previous probe gave is still reused by the download that follows, which
-      // is where the second run used to be spent.
-      const probe = await mediaJobs.probe(url, { cookieHeader }, { reuse: false })
-      // One probe, three answers: the quality menu, the subtitle languages and
-      // whether the link is a playlist. The picker needs all of them together.
-      return { formats: probe.formats, subtitles: probe.subtitles, isPlaylist: probe.isPlaylist }
-    })
-  })
+  ipcMain.handle(
+    IPC.integrationsGetMediaFormats,
+    async (_event, url: string, refreshCredentials?: boolean) => {
+      if (!settingsStore.get().ytdlpEnabled) throw new Error('影音下載功能已停用。')
+      return withExtensionCookies(context, url, async (cookieHeader) => {
+        // Building the menu is the caller asking what this link contains *now* —
+        // including when it is the dialog's "probe again" button. The answer a
+        // previous probe gave is still reused by the download that follows, which
+        // is where the second run used to be spent.
+        //
+        // `refreshCredentials` is only set by an explicit retry after a fix, and
+        // is what lets it try the credentials again even though a failure was
+        // already recorded against this host.
+        const probe = await mediaJobs.probe(
+          url,
+          { cookieHeader },
+          refreshCredentials ? { reuse: false, ignoreHostVerdict: true } : { reuse: false }
+        )
+        // One probe, three answers: the quality menu, the subtitle languages and
+        // whether the link is a playlist. The picker needs all of them together.
+        return { formats: probe.formats, subtitles: probe.subtitles, isPlaylist: probe.isPlaylist }
+      })
+    }
+  )
 
   ipcMain.handle(IPC.integrationsDetectMedia, async (_event, url: string): Promise<MediaDetectResult> => {
     const settings = settingsStore.get()
     // The curated list is authoritative and free; only a host we do not know is
     // worth reading the page for.
     const site = matchMediaSite(url)
-    if (site !== null) return { media: true, site }
+    if (site !== null) return { media: true, site, mediaUrls: [] }
 
     // This is the dialog's "is this a video?" question, not the engine's
     // autonomous decision, so 自動辨識 does not gate it: the dialog shows the
     // media panel for known sites regardless, and must be able to offer to
     // install yt-dlp for an unknown host the same way.
-    if (!settings.ytdlpEnabled) return { media: false, site: null }
-    if (!needsPageSniff(url)) return { media: false, site: null }
+    if (!settings.ytdlpEnabled) return { media: false, site: null, mediaUrls: [] }
+    if (!needsPageSniff(url)) return { media: false, site: null, mediaUrls: [] }
 
-    const verdict = await context.sniffer.sniff(url, {
+    const scan = await context.sniffer.scan(url, {
       cookieHeader: context.getExtensionCookies(url),
       referer: url
     })
-    return { media: verdict === 'media', site: null }
+    // A page that only links a `.mp4` still counts: the file is downloadable on
+    // its own, and that is what the caller does with `mediaUrls`.
+    return {
+      media: scan.verdict === 'media' || scan.mediaUrls.length > 0,
+      site: null,
+      mediaUrls: scan.mediaUrls
+    }
   })
 
   ipcMain.handle(IPC.integrationsGetMediaPlaylist, async (_event, url: string) => {

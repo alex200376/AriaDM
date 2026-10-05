@@ -102,6 +102,23 @@
   }
 
   /**
+   * Whether the video the panel belongs to is in picture-in-picture.
+   *
+   * Once a video is in PiP it is a floating system window with its own controls,
+   * and the panel — positioned over the element's box — landed on top of that
+   * window's close button. There is nothing to annotate in that state either, so
+   * the panel keeps away until the video comes back to the page.
+   */
+  function inPictureInPicture() {
+    const pip = document.pictureInPictureElement
+    if (!pip) return false
+    // The anchor is what the panel follows, so it decides on its own; the scan is
+    // only a fallback for a pointer event that lands before the first `place`.
+    if (anchor && anchor.isConnected) return pip === anchor
+    return pip === findMainVideo()
+  }
+
+  /**
    * The address of the video the panel is over, or '' when there is none.
    *
    * The rule itself lives in `urls.js`, where it can be tested: it decides which
@@ -327,7 +344,7 @@
     anchor = video
 
     const element = ensurePanel()
-    if (!video) {
+    if (!video || inPictureInPicture()) {
       element.dataset.visible = 'false'
       visible = false
       return
@@ -375,6 +392,19 @@
    * player's box is immune to both.
    */
   function onPointerMove(event) {
+    // A player in picture-in-picture has its controls in a floating window the
+    // panel must not cover, so hovering the page never brings it back.
+    if (inPictureInPicture()) {
+      // Only pay for this once: `place` also parks the panel, after which there
+      // is nothing on screen for a pointer event to restore.
+      if (visible || state !== 'idle') {
+        closeMenu()
+        setState('idle')
+        if (panel) panel.dataset.visible = 'false'
+        visible = false
+      }
+      return
+    }
     if (!anchor || !anchor.isConnected) anchor = findMainVideo()
     if (!anchor) {
       hideSoon()

@@ -15,6 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { cn } from '../lib/cn'
+import { useT } from '../lib/i18n'
 import { useApp, type ViewKey } from '../store/app-store'
 
 interface Command {
@@ -39,6 +40,7 @@ export function CommandPalette(): JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const settings = useApp((state) => state.settings)
+  const t = useT()
 
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
@@ -61,17 +63,19 @@ export function CommandPalette(): JSX.Element | null {
 
   const commands = useMemo<Command[]>(() => {
     const store = useApp.getState()
+    // Keywords stay bilingual on purpose: they are matched, not read, and a user
+    // who types either language should find the command.
     const views: { key: ViewKey; label: string }[] = [
-      { key: 'all', label: '檢視：全部下載' },
-      { key: 'active', label: '檢視：下載中' },
-      { key: 'complete', label: '檢視：已完成' },
-      { key: 'error', label: '檢視：錯誤' }
+      { key: 'all', label: t('command.view', { name: t('nav.all') }) },
+      { key: 'active', label: t('command.view', { name: t('nav.active') }) },
+      { key: 'complete', label: t('command.view', { name: t('nav.complete') }) },
+      { key: 'error', label: t('command.view', { name: t('nav.error') }) }
     ]
 
     return [
       {
         id: 'add',
-        label: '新增下載',
+        label: t('command.add'),
         hint: 'Ctrl+N',
         icon: <Plus size={15} />,
         keywords: 'add url new download 新增 下載',
@@ -79,63 +83,63 @@ export function CommandPalette(): JSX.Element | null {
       },
       {
         id: 'resume-all',
-        label: '全部開始',
+        label: t('command.resumeAll'),
         icon: <Play size={15} />,
         keywords: 'resume start all 開始 繼續',
         run: () => store.resumeAll()
       },
       {
         id: 'pause-all',
-        label: '全部暫停',
+        label: t('command.pauseAll'),
         icon: <Pause size={15} />,
         keywords: 'pause all 暫停',
         run: () => store.pauseAll()
       },
       {
         id: 'clear-completed',
-        label: '清除已完成',
+        label: t('command.clearCompleted'),
         icon: <Eraser size={15} />,
         keywords: 'clear completed purge 清除 已完成',
         run: () => store.clearCompleted()
       },
       {
         id: 'history',
-        label: '開啟下載紀錄',
+        label: t('command.history'),
         icon: <History size={15} />,
         keywords: 'history log 紀錄 歷史',
         run: () => store.setView('history')
       },
       {
         id: 'settings',
-        label: '開啟設定',
+        label: t('command.settings'),
         icon: <SettingsIcon size={15} />,
         keywords: 'settings preferences 設定',
         run: () => store.openSettings()
       },
       {
         id: 'profiles',
-        label: '速度設定檔',
+        label: t('command.profiles'),
         icon: <Gauge size={15} />,
         keywords: 'speed profile limit 限速 設定檔',
         run: () => store.openSettings('downloads')
       },
       {
         id: 'theme',
-        label: settings?.theme === 'dark' ? '切換為淺色主題' : '切換為深色主題',
+        label: settings?.theme === 'dark' ? t('command.themeLight') : t('command.themeDark'),
         icon: settings?.theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />,
         keywords: 'theme dark light 主題 深色 淺色',
         run: () => store.patchSettings({ theme: settings?.theme === 'dark' ? 'light' : 'dark' })
       },
       {
         id: 'restart-engine',
-        label: '重新啟動 aria2 引擎',
+        label: t('command.restartEngine'),
         icon: <RefreshCw size={15} />,
         keywords: 'restart engine aria2 重啟 引擎',
-        run: () => store.runAction('重啟引擎', () => window.api.engine.restart())
+        run: () => store.runAction(t('settings.engine.restartAction'), () => window.api.engine.restart())
       },
       {
         id: 'open-log',
-        label: '開啟 aria2 日誌',
+        label: t('command.openLog'),
         icon: <Activity size={15} />,
         keywords: 'log aria2 日誌',
         run: () => window.api.engine.openLog()
@@ -148,7 +152,7 @@ export function CommandPalette(): JSX.Element | null {
         run: () => store.setView(view.key)
       }))
     ]
-  }, [settings?.theme])
+  }, [settings?.theme, t])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -192,12 +196,14 @@ export function CommandPalette(): JSX.Element | null {
               runAt(index)
             }
           }}
-          placeholder="輸入指令…"
+          placeholder={t('command.placeholder')}
           className="w-full border-b border-line bg-transparent px-4 py-3 text-[13.5px] text-fg placeholder:text-faint focus:outline-none"
         />
 
         <div className="max-h-80 overflow-y-auto p-1.5">
-          {filtered.length === 0 && <p className="px-3 py-6 text-center text-[12px] text-faint">沒有符合的指令</p>}
+          {filtered.length === 0 && (
+            <p className="px-3 py-6 text-center text-[12px] text-faint">{t('command.empty')}</p>
+          )}
 
           {filtered.map((command, position) => (
             <button

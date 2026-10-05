@@ -122,6 +122,35 @@ const PROBE_REUSE_MS = 120_000
 /** How many probe answers may be remembered at once; the newest are kept. */
 const PROBE_CACHE_LIMIT = 8
 
+/**
+ * How long a "these credentials do not work for this host" conclusion is kept.
+ *
+ * A rejected session or an unreadable cookie store is a property of the site and
+ * of this machine, not of one video, so it has to outlive the probe that found
+ * it — otherwise every new link on the same host pays for the same failing
+ * attempt again. Ten minutes covers a browsing session, and is short enough that
+ * fixing the cause (closing the browser, logging back in) takes effect without
+ * restarting the app.
+ */
+const HOST_VERDICT_MS = 10 * 60_000
+
+/**
+ * How long the credential-free retry may run.
+ *
+ * This is the one attempt with no session at all, which is exactly the case a
+ * site stalls on: measured runs hung until the old 45 s ceiling and returned
+ * nothing. A retry that has not answered in this long is not going to.
+ */
+const RETRY_TIMEOUT_MS = 15_000
+
+/**
+ * How long a single format probe may run.
+ *
+ * A healthy extraction finishes in a few seconds, so the ceiling only decides
+ * how long a *broken* one makes the user wait. Lowered from 45 s for that reason.
+ */
+const PROBE_TIMEOUT_MS = 30_000
+
 /** A probe's answer, kept so the download it was made for need not repeat it. */
 interface CachedProbe {
   url: string
@@ -145,6 +174,21 @@ interface CredentialVerdict {
   skipSession: boolean
   /** The on-disk browser store is what failed, so do not read it again. */
   skipStore: boolean
+}
+
+/** A credential verdict remembered for a whole host, and when it was learned. */
+interface HostVerdict {
+  skipSession: boolean
+  skipStore: boolean
+  /**
+   * Which browser store the verdict was about.
+   *
+   * The answer depends on the store, so changing the cookie setting (or pointing
+   * it at a different browser) has to invalidate the memory — otherwise the new
+   * store would be skipped on the strength of a verdict about the old one.
+   */
+  storeKey: string
+  at: number
 }
 
 interface MediaJob {
@@ -261,6 +305,17 @@ export class MediaJobs extends EventEmitter {
   private readonly probeCache = new Map<string, CachedProbe>()
 
   /**
+   * Credential verdicts remembered per host.
+   *
+   * The per-link verdict below is only consulted for the link that produced it,
+   * and the quality menu deliberately re-probes with `reuse: false`, so without
+   * this the failing credential attempt was replayed on every probe of every link
+   * on that host — one wasted round trip plus, on a stalling site, a retry that
+   * burned the whole timeout.
+   */
+  private readonly hostVerdicts = new Map<string, HostVerdict>()
+
+  /**
    * Probes currently running, keyed like the cache.
    *
    * The menu's probe and the download that follows it can overlap — an optimistic
@@ -304,11 +359,69 @@ export class MediaJobs extends EventEmitter {
     url: string,
     context: HttpContext
   ): { http: HttpContext; cookieArgs: string[] } {
-    const skip = this.verdict.url === url ? this.verdict : { skipSession: false, skipStore: false }
+    const skip = this.verdictFor(url)
     const cookieArgs =
       context.cookieHeader || skip.skipStore ? [] : this.options.getCookieArgs?.() ?? []
     const http = skip.skipSession ? { ...context, cookieHeader: '' } : context
     return { http, cookieArgs }
+  }
+
+  /** The host a link belongs to, lower-cased, or '' when it cannot be parsed. */
+  private hostKey(url: string): string {
+    try {
+      return new URL(url).host.toLowerCase()
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * What is known about the credentials for this link.
+   *
+   * An exact verdict for this link wins; otherwise the host's remembered one
+   * applies. That fallback is the whole point: it stops a *new* video on a host
+   * that already rejected the session from repeating the rejection.
+   */
+  private verdictFor(url: string): { skipSession: boolean; skipStore: boolean } {
+    if (this.verdict.url === url) return this.verdict
+    return this.hostVerdictFor(url)
+  }
+
+  /** The browser-cookie arguments in force, as a comparable string. */
+  private storeKey(): string {
+    return (this.options.getCookieArgs?.() ?? []).join('\u0000')
+  }
+
+  /** A still-fresh verdict remembered for this host, expired entries removed. */
+  private hostVerdictFor(url: string): { skipSession: boolean; skipStore: boolean } {
+    const none = { skipSession: false, skipStore: false }
+    const host = this.hostKey(url)
+    if (host === '') return none
+    const remembered = this.hostVerdicts.get(host)
+    if (!remembered) return none
+    // Expired, or about a credential source that is no longer the one in use.
+    if (Date.now() - remembered.at > HOST_VERDICT_MS || remembered.storeKey !== this.storeKey()) {
+      this.hostVerdicts.delete(host)
+      return none
+    }
+    return { skipSession: remembered.skipSession, skipStore: remembered.skipStore }
+  }
+
+  /** Keep a credential failure for its whole host, so the next link skips it. */
+  private rememberHostVerdict(
+    url: string,
+    verdict: { skipSession: boolean; skipStore: boolean }
+  ): void {
+    const host = this.hostKey(url)
+    if (host !== '') {
+      this.hostVerdicts.set(host, { ...verdict, storeKey: this.storeKey(), at: Date.now() })
+    }
+  }
+
+  /** Forget a host's verdict, once its credentials are seen working again. */
+  private forgetHostVerdict(url: string): void {
+    const host = this.hostKey(url)
+    if (host !== '') this.hostVerdicts.delete(host)
   }
 
   /**
@@ -377,7 +490,11 @@ export class MediaJobs extends EventEmitter {
    * refresh button means exactly that, and a menu that hands back a remembered
    * answer to a button labelled *probe again* would be lying about what it did.
    */
-  async probe(url: string, context: HttpContext = {}, options: { reuse?: boolean } = {}): Promise<MediaProbe> {
+  async probe(
+    url: string,
+    context: HttpContext = {},
+    options: { reuse?: boolean; ignoreHostVerdict?: boolean } = {}
+  ): Promise<MediaProbe> {
     const binary = this.options.getBinaryPath()
     if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
 
@@ -387,16 +504,24 @@ export class MediaJobs extends EventEmitter {
       if (cached) return cached
     }
 
-    // One run, however many callers asked for it at the same time.
-    const pending = this.probeInFlight.get(key)
-    if (pending) return pending
+    /*
+     * One run, however many callers asked for it at the same time. An explicit
+     * "probe again with credentials" is the exception: it exists to re-ask a
+     * question the remembered verdict already answered, so it must not be handed
+     * that run's answer. The identity check below keeps the two from clearing
+     * each other's entry.
+     */
+    if (!options.ignoreHostVerdict) {
+      const pending = this.probeInFlight.get(key)
+      if (pending) return pending
+    }
 
-    const run = this.runProbe(binary, url, context, key)
+    const run = this.runProbe(binary, url, context, key, options.ignoreHostVerdict ?? false)
     this.probeInFlight.set(key, run)
     try {
       return await run
     } finally {
-      this.probeInFlight.delete(key)
+      if (this.probeInFlight.get(key) === run) this.probeInFlight.delete(key)
     }
   }
 
@@ -405,14 +530,31 @@ export class MediaJobs extends EventEmitter {
     binary: string,
     url: string,
     context: HttpContext,
-    key: string
+    key: string,
+    ignoreHostVerdict = false
   ): Promise<MediaProbe> {
-    this.verdict = { url, skipSession: false, skipStore: false }
+    /*
+     * A verdict already known for this host seeds the very first attempt, so a
+     * host that rejected this session is not asked to reject it again. An
+     * explicit "probe again" from the user ignores the memory instead, which is
+     * what lets the dialog's fix-it buttons actually retry the credentials.
+     */
+    this.verdict = ignoreHostVerdict
+      ? { url, skipSession: false, skipStore: false }
+      : { url, ...this.hostVerdictFor(url) }
     const { http, cookieArgs, cookieFile } = await this.prepareCredentials(url, context)
-    const supplied = Boolean(context.cookieHeader) || cookieArgs.length > 0
+    /*
+     * What was actually sent decides whether a retry has anything left to drop.
+     * Reading the raw context instead would make a run whose credentials the
+     * host verdict already stripped look like it had some, and retry a request
+     * that never carried them.
+     */
+    const supplied = Boolean(http.cookieHeader) || cookieArgs.length > 0
 
     try {
       const probe = await this.probeOnce(binary, url, http, cookieArgs, cookieFile)
+      // Credentials that worked clear whatever an earlier failure remembered.
+      if (supplied) this.forgetHostVerdict(url)
       this.rememberProbe(key, { url, at: Date.now(), probe, verdict: { ...this.verdict, url } })
       return probe
     } catch (error) {
@@ -435,12 +577,22 @@ export class MediaJobs extends EventEmitter {
       const dropped = skipStore ? 'cookies' : 'session'
       this.options.log(`yt-dlp probe failed with ${kind}; retrying without ${dropped}`)
       this.verdict = { url, skipSession: !skipStore, skipStore }
+      // Remembered for the whole host: the same session and the same store fail
+      // for every link there, and re-learning that per link doubled every probe.
+      this.rememberHostVerdict(url, { skipSession: this.verdict.skipSession, skipStore })
 
       // The retry resolves again so the verdict just set is applied: the
       // credential that failed is left out, and so is its cookies file.
       const retry = await this.prepareCredentials(url, context)
       try {
-        const probe = await this.probeOnce(binary, url, retry.http, [], retry.cookieFile)
+        const probe = await this.probeOnce(
+          binary,
+          url,
+          retry.http,
+          [],
+          retry.cookieFile,
+          RETRY_TIMEOUT_MS
+        )
         this.rememberProbe(key, { url, at: Date.now(), probe, verdict: { ...this.verdict, url } })
         return probe
       } catch (retryError) {
@@ -521,13 +673,15 @@ export class MediaJobs extends EventEmitter {
     url: string,
     context: HttpContext,
     cookieArgs: string[],
-    cookieFile = ''
+    cookieFile = '',
+    timeoutMs = PROBE_TIMEOUT_MS
   ): Promise<MediaProbe> {
     return probeFormats(binary, url, {
       hasFfmpeg: this.hasFfmpeg,
       ...context,
       cookieArgs,
-      cookieFile
+      cookieFile,
+      timeoutMs
     })
   }
 

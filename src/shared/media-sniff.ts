@@ -43,6 +43,107 @@ export const MEDIA_PAGE_MARKERS: RegExp[] = [
   /twitter:player:stream/i
 ]
 
+/**
+ * Extensions of media that can be fetched as a plain file.
+ *
+ * Deliberately excludes the streaming containers (`.m3u8`, `.mpd`): a manifest
+ * is not the media itself, and handing one to a plain downloader is exactly what
+ * the yt-dlp path exists to avoid.
+ */
+const DIRECT_MEDIA_EXTENSIONS = new Set([
+  'mp4',
+  'm4v',
+  'webm',
+  'mkv',
+  'mov',
+  'avi',
+  'flv',
+  'wmv',
+  'mpg',
+  'mpeg',
+  'ogv',
+  'mp3',
+  'm4a',
+  'aac',
+  'flac',
+  'opus',
+  'ogg',
+  'oga',
+  'wav',
+  'weba'
+])
+
+/** How many files one page may contribute, so a listing cannot flood the queue. */
+export const PAGE_MEDIA_LIMIT = 50
+
+/** The lowercased extension of a URL's last path segment, or ''. */
+function mediaExtensionOf(pathname: string): string {
+  const last = pathname.slice(pathname.lastIndexOf('/') + 1)
+  const dot = last.lastIndexOf('.')
+  return dot < 0 ? '' : last.slice(dot + 1).toLowerCase()
+}
+
+/**
+ * True when a URL is a media *file* — something a plain downloader can fetch
+ * without knowing anything about the page it came from.
+ */
+export function isDirectMediaUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+  return DIRECT_MEDIA_EXTENSIONS.has(mediaExtensionOf(parsed.pathname))
+}
+
+/**
+ * The media files a page points at, in the order they appear.
+ *
+ * This is what makes a plain page that just *contains* a video file work: the
+ * file itself is the download, and it can go straight to the multi-connection
+ * engine rather than being rediscovered by yt-dlp from the page URL. Both markup
+ * (`src`, `href`, `content`) and bare URLs are read, because a script-built
+ * player keeps the address in its own setup rather than in the element it
+ * renders; JSON-escaped slashes are unescaped first for the same reason.
+ *
+ * Pure, so the judgement is unit-tested without a network — the fetching lives
+ * in `src/main/media/page-sniff.ts`.
+ */
+export function findDirectMediaUrls(html: string, baseUrl: string): string[] {
+  const text = (html.length > SNIFF_BYTE_LIMIT ? html.slice(0, SNIFF_BYTE_LIMIT) : html).replace(
+    /\\\//g,
+    '/'
+  )
+  const found = new Set<string>()
+
+  const consider = (raw: string): void => {
+    if (found.size >= PAGE_MEDIA_LIMIT) return
+    const candidate = raw.trim().replace(/&amp;/g, '&')
+    if (candidate === '') return
+    let absolute: string
+    try {
+      // A bare path (`/media/a.mp4`) resolves against the page it was found on.
+      absolute = new URL(candidate, baseUrl).toString()
+    } catch {
+      return
+    }
+    if (isDirectMediaUrl(absolute) && !found.has(absolute)) found.add(absolute)
+  }
+
+  for (const match of text.matchAll(
+    /\b(?:src|href|data-src|data-href|data-url|content)\s*=\s*["']([^"']+)["']/gi
+  )) {
+    consider(match[1]!)
+  }
+  for (const match of text.matchAll(/https?:\/\/[^\s"'<>\\]+/gi)) {
+    consider(match[0]!)
+  }
+
+  return [...found]
+}
+
 /** Lowercase media type without its parameters, or ''. */
 export function normalizeContentType(contentType: string): string {
   return (contentType ?? '').split(';')[0]!.trim().toLowerCase()

@@ -1,4 +1,4 @@
-import { Copy, FolderOpen, Link2, Pause, Play, RotateCw, Trash2, X } from 'lucide-react'
+import { Copy, ExternalLink, FolderOpen, Link2, Pause, Play, RotateCw, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { DownloadItem, PeerInfo, PieceMap, ServerInfo } from '@shared/download'
@@ -670,9 +670,13 @@ export function DetailDrawer(): JSX.Element | null {
             onClick={() => void (isError ? retryGids([item.gid]) : resumeGids([item.gid]))}
           />
         )}
+        {/* Open file used to reuse the Play triangle, which sits right beside the
+            Start button and made the two look like the same action. It is an
+            export-affordance rather than a queue control, so it borrows the
+            ExternalLink icon the download row already uses for opening a file. */}
         <IconButton
           label={t('detail.openFile')}
-          icon={<Play size={15} />}
+          icon={<ExternalLink size={15} />}
           disabled={!isComplete}
           onClick={() => void openFile(item.gid)}
         />

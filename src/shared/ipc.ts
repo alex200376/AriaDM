@@ -336,6 +336,14 @@ export interface AddMediaResult {
 export interface MediaDetectResult {
   media: boolean
   site: string | null
+  /**
+   * Media files found in the page, as absolute URLs.
+   *
+   * A page that embeds a plain video file is best served by downloading that
+   * file directly (the multi-connection engine can split it), rather than by
+   * handing the page to yt-dlp and letting it find the same address again.
+   */
+  mediaUrls: string[]
 }
 
 /**
@@ -410,7 +418,15 @@ export interface AriaDmApi {
     setClipboardWatch(enabled: boolean): Promise<void>
     getHandoffInfo(): Promise<HandoffInfo>
     rotateHandoffToken(): Promise<HandoffInfo>
-    getMediaFormats(url: string): Promise<MediaInfo>
+    /**
+     * Ask what a link contains, so the quality picker can be filled in.
+     *
+     * `refreshCredentials` is the dialog's "probe again" after a fix: it makes the
+     * probe ignore the credential verdict remembered for that host, so a session
+     * the user has since repaired is actually tried again instead of being
+     * skipped as a known failure.
+     */
+    getMediaFormats(url: string, refreshCredentials?: boolean): Promise<MediaInfo>
     /**
      * Decide whether a pasted link is a video page, including on a host the
      * curated list does not know — by reading a little of the page.

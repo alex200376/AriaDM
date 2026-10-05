@@ -21,6 +21,7 @@ import { fileNameFromUri, isListFileName, parseUriList } from '@shared/uri'
 
 import { useApp } from '../../store/app-store'
 import { cn } from '../../lib/cn'
+import { useT } from '../../lib/i18n'
 import { Badge, Button, Field, Input, Modal, Row, SelectField, TextArea, Toggle } from '../ui/primitives'
 import { PlaylistPicker } from './PlaylistPicker'
 
@@ -65,6 +66,7 @@ export function AddUrlDialog(): JSX.Element | null {
   const runAction = useApp((state) => state.runAction)
   const refreshToolkits = useApp((state) => state.refreshToolkits)
   const patchSettings = useApp((state) => state.patchSettings)
+  const t = useT()
 
   const [text, setText] = useState('')
   const [torrent, setTorrent] = useState<{ name: string; base64: string } | null>(null)
@@ -123,6 +125,30 @@ export function AddUrlDialog(): JSX.Element | null {
   const formatTouched = useRef(false)
   /** A page sniff found a video on a host the curated list does not know. */
   const [sniffedMedia, setSniffedMedia] = useState(false)
+  /**
+   * Media files a sniffed page points at (`.mp4` and friends).
+   *
+   * These are the download themselves: a page that embeds a plain video file is
+   * served better by fetching that file than by handing the page to yt-dlp to
+   * find the same address again, and unlike a page they can be split across
+   * connections.
+   */
+  const [pageMedia, setPageMedia] = useState<string[]>([])
+  /** Seconds the in-flight probe has been running, so the wait has a visible size. */
+  const [probeElapsed, setProbeElapsed] = useState(0)
+  /**
+   * The user chose to stop watching this probe.
+   *
+   * It only stops the *waiting*: the request is already in flight and its answer
+   * is still applied when it lands (and is remembered for the download that
+   * follows), so stopping costs nothing and cannot leave a stale menu behind.
+   */
+  const [probeStopped, setProbeStopped] = useState(false)
+  /**
+   * Set by a fix-it action, so the next probe re-tries the credentials it has
+   * just changed instead of skipping them as a failure it already remembers.
+   */
+  const refreshCredentials = useRef(false)
 
   const open = dialog === 'add'
 
@@ -154,7 +180,11 @@ export function AddUrlDialog(): JSX.Element | null {
     setForceAria2(false)
     setInstalling('')
     setSniffedMedia(false)
+    setPageMedia([])
     autoInstallTried.current = false
+    setProbeStopped(false)
+    setProbeElapsed(0)
+    refreshCredentials.current = false
   }, [open, seed, settings?.downloadDir, settings?.connectionsPreset])
 
   const uris = useMemo(() => parseUriList(text), [text])
@@ -185,17 +215,26 @@ export function AddUrlDialog(): JSX.Element | null {
   useEffect(() => {
     if (!open || sniffTarget === '' || !needsPageSniff(sniffTarget)) {
       setSniffedMedia(false)
+      setPageMedia([])
       return
     }
     let cancelled = false
     setSniffedMedia(false)
+    setPageMedia([])
     void window.api.integrations
       .detectMedia(sniffTarget)
       .then((result) => {
-        if (!cancelled) setSniffedMedia(result.media)
+        if (cancelled) return
+        // Files the page points at win over handing the page to yt-dlp, so the
+        // media panel (and its quality picker) stays out of the way for them.
+        const files = result.mediaUrls ?? []
+        setPageMedia(files)
+        setSniffedMedia(files.length === 0 && result.media)
       })
       .catch(() => {
-        if (!cancelled) setSniffedMedia(false)
+        if (cancelled) return
+        setSniffedMedia(false)
+        setPageMedia([])
       })
     return () => {
       cancelled = true
@@ -216,19 +255,23 @@ export function AddUrlDialog(): JSX.Element | null {
         await window.api.integrations.downloadToolkit(kind)
         await refreshToolkits()
         pushToast({
-          title: kind === 'ytdlp' ? 'yt-dlp 已就緒' : 'ffmpeg 已就緒',
-          body: '影音下載現在可以使用了',
+          title: kind === 'ytdlp' ? t('add.engineReady') : t('add.ffmpegReady'),
+          body: t('add.engineReadyBody'),
           tone: 'success'
         })
         return true
       } catch (error) {
-        pushToast({ title: '安裝失敗', body: classifyMediaError((error as Error).message).message, tone: 'error' })
+        pushToast({
+          title: t('add.installFailed'),
+          body: classifyMediaError((error as Error).message).message,
+          tone: 'error'
+        })
         return false
       } finally {
         setInstalling('')
       }
     },
-    [pushToast, refreshToolkits]
+    [pushToast, refreshToolkits, t]
   )
 
   // Autosetup: a recognised media page with no engine gets one, with no detour
@@ -261,6 +304,9 @@ export function AddUrlDialog(): JSX.Element | null {
    * are about, and what stops a batch from silently losing its video links.
    */
   const aria2Urls = useMemo(() => {
+    // Media files found in a page are ordinary files, so they are what aria2
+    // receives — not the page that links them.
+    if (pageMedia.length > 0) return pageMedia
     // The single video page that goes to yt-dlp is not also queued in aria2 —
     // whether the list recognised it or the page sniff did.
     if (mediaSite !== null || (sniffedMedia && uris.length === 1)) return useYtDlp ? [] : uris
@@ -269,7 +315,7 @@ export function AddUrlDialog(): JSX.Element | null {
     // dropped on the floor.
     if (useYtDlp || (hasYtDlp && !forceAria2)) return mediaSplit.plain
     return uris
-  }, [useYtDlp, mediaSite, hasYtDlp, forceAria2, uris, mediaSplit])
+  }, [pageMedia, useYtDlp, mediaSite, hasYtDlp, forceAria2, uris, mediaSplit])
   /** Only the aria2 links are classified; a video page is not a file. */
   const aria2Text = useMemo(() => aria2Urls.join('\n'), [aria2Urls])
 
@@ -326,6 +372,7 @@ export function AddUrlDialog(): JSX.Element | null {
 
     let cancelled = false
     setProbing(true)
+    setProbeStopped(false)
     setMediaError(null)
     setFormats(null)
     // A fresh link starts from a fresh default, so a choice made for the previous
@@ -334,8 +381,12 @@ export function AddUrlDialog(): JSX.Element | null {
     setFormatId(provisionalFormatId(hasFfmpeg, audioOnly))
 
     const timer = window.setTimeout(() => {
+      // Read and clear: a retry after a fix applies to the run it triggered and
+      // must not leak into the next link's probe.
+      const refresh = refreshCredentials.current
+      refreshCredentials.current = false
       void window.api.integrations
-        .getMediaFormats(probeUrl)
+        .getMediaFormats(probeUrl, refresh)
         .then((result) => {
           if (cancelled) return
           setFormats(result.formats)
@@ -346,7 +397,12 @@ export function AddUrlDialog(): JSX.Element | null {
             // Nothing was found to download, so the provisional default is a lie:
             // clear it and let the error below take the form over.
             setFormatId('')
-            setMediaError({ kind: 'unknown', message: '這個連結找不到可下載的格式。', action: 'retry', actionLabel: '重新偵測' })
+            setMediaError({
+              kind: 'unknown',
+              message: t('add.noFormats'),
+              action: 'retry',
+              actionLabel: t('add.retryProbe')
+            })
           } else if (!formatTouched.current) {
             // The best entry is only usable with ffmpeg; without it the picker
             // opens on the best single-file format instead of on a download that
@@ -357,13 +413,25 @@ export function AddUrlDialog(): JSX.Element | null {
         })
         .catch((error: Error) => {
           if (cancelled) return
-          // The default was only ever provisional; a failed probe must not leave
-          // a submittable download behind.
-          setFormatId('')
-          setMediaError(classifyMediaError(error.message, { ytdlpVersion: toolkits?.ytdlp.version ?? '' }))
+          /*
+           * The provisional default is deliberately kept. Clearing it disabled
+           * the primary button, so a link whose probe failed — a stalled
+           * extraction, a site that refuses to answer — could not be downloaded
+           * at all, not even at the best quality the user came for. The error
+           * banner explains what happened and offers the fix, and the download
+           * stays available so a failed probe is a warning rather than a dead end.
+           */
+          setMediaError(
+            classifyMediaError(error.message, { ytdlpVersion: toolkits?.ytdlp.version ?? '' })
+          )
         })
         .finally(() => {
-          if (!cancelled) setProbing(false)
+          if (!cancelled) {
+            setProbing(false)
+            // The answer is in, so a stopped wait is over and the normal
+            // "formats are ready" text takes the line back.
+            setProbeStopped(false)
+          }
         })
     }, PROBE_DEBOUNCE_MS)
 
@@ -372,6 +440,22 @@ export function AddUrlDialog(): JSX.Element | null {
       window.clearTimeout(timer)
     }
   }, [open, useYtDlp, probeUrl, probeNonce, hasFfmpeg, toolkits?.ytdlp.version])
+
+  /**
+   * Tick while a probe is in flight, so a probe that is taking its time says so
+   * instead of looking like a hang.
+   */
+  useEffect(() => {
+    if (!probing) {
+      setProbeElapsed(0)
+      return
+    }
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      setProbeElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [probing])
 
   /**
    * The rows the format picker offers.
@@ -452,6 +536,9 @@ export function AddUrlDialog(): JSX.Element | null {
    * just reports a failure.
    */
   const fixMediaError = (action: MediaErrorAction): void => {
+    // The user is retrying after changing something, so the remembered "these
+    // credentials do not work here" verdict must not answer for them.
+    refreshCredentials.current = true
     switch (action) {
       case 'enable-cookies':
         void patchSettings({ mediaCookiesFromBrowser: 'auto' }).then(() => setProbeNonce((value) => value + 1))
@@ -481,7 +568,7 @@ export function AddUrlDialog(): JSX.Element | null {
    */
   const submitMedia = async (): Promise<boolean> => {
     if (!settings || !formatId || mediaTargets.length === 0) return true
-    return runAction('加入影音下載', async () => {
+    return runAction(t('add.actionQueue'), async () => {
       const gids: string[] = []
       const failures: { url: string; message: string }[] = []
       for (const url of mediaTargets) {
@@ -507,13 +594,13 @@ export function AddUrlDialog(): JSX.Element | null {
       if (gids.length === 0 && failures.length > 0) throw new Error(failures[0]!.message)
 
       pushToast({
-        title: '已交給 yt-dlp 下載',
-        body: `${gids.length} 個項目`,
+        title: t('add.mediaQueued'),
+        body: t('add.mediaQueuedBody', { count: gids.length }),
         tone: 'success'
       })
       if (failures.length > 0) {
         pushToast({
-          title: `有 ${failures.length} 個連結失敗`,
+          title: t('add.failedCount', { count: failures.length }),
           body: failures[0]!.message,
           tone: 'error'
         })
@@ -544,7 +631,7 @@ export function AddUrlDialog(): JSX.Element | null {
       setPlaylistEntries(info.entries)
     } catch (error) {
       pushToast({
-        title: '讀取播放清單失敗',
+        title: t('add.playlistFailed'),
         body: classifyMediaError((error as Error).message).message,
         tone: 'error'
       })
@@ -630,37 +717,47 @@ export function AddUrlDialog(): JSX.Element | null {
   }
 
   const footerNote = torrent
-    ? `種子檔：${torrent.name}`
+    ? t('add.torrentFooter', { name: torrent.name })
     : metalink
-      ? `Metalink：${metalink.name}`
+      ? t('add.metalinkFooter', { name: metalink.name })
       : useYtDlp
         ? probing
-          ? '正在偵測可用格式…'
+          ? t('add.footer.probing')
           : formatId
             ? mediaTargets.length > 1
-              ? `將由 yt-dlp 下載 ${mediaTargets.length} 個影音項目${aria2Urls.length > 0 ? `，另有 ${aria2Urls.length} 個一般下載` : ''}`
-              : '將由 yt-dlp 下載並轉存'
-            : '偵測不到可用格式'
+              ? `${t('add.targets', { count: mediaTargets.length })}${
+                  aria2Urls.length > 0
+                    ? t('add.targetsPlain', { count: aria2Urls.length })
+                    : ''
+                }`
+              : t('add.footer.media')
+            : t('add.footer.noFormats')
         : uris.length > 0
-          ? `將建立 ${downloadCount} 個下載${mirrorCount > 0 ? `（其中 ${mirrorCount} 組為多鏡像）` : ''}`
-          : '尚未輸入連結'
+          ? `${t('add.footer.count', { count: downloadCount })}${
+              mirrorCount > 0 ? t('add.footer.mirrors', { count: mirrorCount }) : ''
+            }`
+          : t('add.footer.none')
 
   return (
     <>
     <Modal
       open={open && !pickerOpen}
-      title="新增下載"
-      subtitle="貼上任何連結即可，影音網站的內容會自動交給 yt-dlp"
+      title={t('add.title')}
+      subtitle={t('add.subtitle')}
       onClose={closeDialog}
       width="max-w-3xl"
       footer={
         <>
           <span className="mr-auto text-[11px] text-faint">{footerNote}</span>
           <Button variant="ghost" onClick={closeDialog}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button variant="primary" disabled={!canSubmit} onClick={() => void submit()}>
-            {useYtDlp ? (mediaTargets.length > 1 ? `下載 ${mediaTargets.length} 個影片` : '下載影片') : '開始下載'}
+            {useYtDlp
+              ? mediaTargets.length > 1
+                ? t('add.submitCount', { count: mediaTargets.length })
+                : t('add.submitMedia')
+              : t('add.submit')}
           </Button>
         </>
       }
@@ -680,37 +777,65 @@ export function AddUrlDialog(): JSX.Element | null {
         >
           <div className="mb-2 flex items-center gap-2 text-[11.5px] text-muted">
             <Link2 size={13} />
-            <span>每一行一個連結</span>
+            <span>{t('add.urisLabel')}</span>
             <div className="flex-1" />
             <span className="flex items-center gap-1 text-faint">
               <FileUp size={12} />
-              可拖入 .torrent / .metalink
+              {t('add.dropHint')}
             </span>
           </div>
           <TextArea
             rows={5}
             value={text}
             onChange={(event) => setText(event.target.value)}
-            placeholder={'https://example.com/file.zip\nhttps://www.youtube.com/watch?v=...\nmagnet:?xt=urn:btih:...'}
+            placeholder={t('add.placeholder')}
             autoFocus
           />
         </div>
 
         {torrent && (
           <div className="flex items-center justify-between rounded-lg border border-ok/30 bg-ok/10 px-3 py-2">
-            <span className="text-[12px] text-fg">已載入種子檔：{torrent.name}</span>
+            <span className="text-[12px] text-fg">
+              {t('add.torrentLoaded', { name: torrent.name })}
+            </span>
             <Button variant="ghost" size="sm" onClick={() => setTorrent(null)}>
-              移除
+              {t('common.remove')}
             </Button>
           </div>
         )}
 
         {metalink && (
           <div className="flex items-center justify-between rounded-lg border border-info/30 bg-info/10 px-3 py-2">
-            <span className="text-[12px] text-fg">已載入 Metalink：{metalink.name}</span>
+            <span className="text-[12px] text-fg">
+              {t('add.metalinkLoaded', { name: metalink.name })}
+            </span>
             <Button variant="ghost" size="sm" onClick={() => setMetalink(null)}>
-              移除
+              {t('common.remove')}
             </Button>
+          </div>
+        )}
+
+        {pageMedia.length > 0 && (
+          <div className="rounded-xl border border-brand/30 bg-brand/10 px-3 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Sparkles size={14} className="text-brand" />
+              <span className="text-[12.5px] font-medium text-fg">
+                {t('add.foundFiles', { count: pageMedia.length })}
+              </span>
+              <Badge tone="brand">{t('add.directBadge')}</Badge>
+            </div>
+            <ul className="mt-1.5 space-y-0.5">
+              {pageMedia.slice(0, 5).map((url) => (
+                <li key={url} className="truncate font-mono text-[10.5px] text-muted" title={url}>
+                  {url}
+                </li>
+              ))}
+              {pageMedia.length > 5 && (
+                <li className="text-[10.5px] text-faint">
+                  {t('add.foundFilesMore', { count: pageMedia.length - 5 })}
+                </li>
+              )}
+            </ul>
           </div>
         )}
 
@@ -722,25 +847,48 @@ export function AddUrlDialog(): JSX.Element | null {
                   because the format picked below applies to every one of them. */}
               <span className="text-[12.5px] font-medium text-fg">
                 {mediaSite !== null
-                  ? '偵測到影音網站'
+                  ? t('add.mediaDetected')
                   : batchMedia
-                    ? `偵測到 ${mediaTargets.length} 個影音連結`
-                    : '偵測到影音內容'}
+                    ? t('add.batchDetected', { count: mediaTargets.length })
+                    : t('add.autoDetected')}
               </span>
-              <Badge tone="brand">{mediaSite ?? (batchMedia ? '多筆' : '自動偵測')}</Badge>
+              <Badge tone="brand">
+                {mediaSite ?? (batchMedia ? t('add.batchBadge') : t('add.autoBadge'))}
+              </Badge>
               {aria2Urls.length > 0 && uris.length > 1 && (
-                <Badge tone="muted">另有 {aria2Urls.length} 個一般下載</Badge>
+                <Badge tone="muted">{t('add.alsoPlain', { count: aria2Urls.length })}</Badge>
               )}
               {forceAria2 ? (
-                <Badge tone="muted">一般下載</Badge>
+                <Badge tone="muted">{t('add.plainBadge')}</Badge>
               ) : (
                 <Badge tone={hasYtDlp ? 'brand' : 'warn'}>yt-dlp</Badge>
               )}
               <div className="flex-1" />
-              {probing && (
+              {probing && !probeStopped && (
                 <span className="flex items-center gap-1.5 text-[11px] text-muted">
                   <Loader2 size={12} className="animate-spin" />
-                  正在偵測格式…
+                  {probeElapsed > 0
+                    ? t('add.probingSeconds', { count: probeElapsed })
+                    : t('add.mediaDetecting')}
+                  <button
+                    type="button"
+                    onClick={() => setProbeStopped(true)}
+                    className="text-brand hover:underline"
+                  >
+                    {t('add.stopWaiting')}
+                  </button>
+                </span>
+              )}
+              {probing && probeStopped && (
+                <span className="flex items-center gap-1.5 text-[11px] text-muted">
+                  {t('add.stoppedWaiting')}
+                  <button
+                    type="button"
+                    onClick={() => setProbeNonce((value) => value + 1)}
+                    className="text-brand hover:underline"
+                  >
+                    {t('add.retryProbe')}
+                  </button>
                 </span>
               )}
               <button
@@ -748,16 +896,24 @@ export function AddUrlDialog(): JSX.Element | null {
                 onClick={() => setForceAria2((value) => !value)}
                 className="text-[11px] text-brand hover:underline"
               >
-                {forceAria2 ? '改用影音下載' : '改用一般下載'}
+                {forceAria2 ? t('add.mediaUseYtDlp') : t('add.mediaUseAria2')}
               </button>
             </div>
+
+            {probing && !probeStopped && probeElapsed >= 6 && (
+              <p className="mt-2.5 rounded-lg border border-line bg-elevated/30 px-3 py-2 text-[11.5px] leading-relaxed text-muted">
+                {t('add.probeSlow')}
+              </p>
+            )}
 
             {!hasYtDlp && !forceAria2 && (
               <div className="mt-2.5 flex flex-wrap items-center gap-2 rounded-lg border border-warn/25 bg-warn/10 px-3 py-2">
                 <span className="text-[11.5px] leading-relaxed text-warn">
                   {installing === 'ytdlp'
-                    ? '正在安裝影音引擎（yt-dlp）…安裝完成後會自動偵測格式。'
-                    : `尚未安裝 yt-dlp，${uris.length > 1 ? '這些影音連結' : '這個連結'}目前只能改用一般下載；影音網站的實際檔案是短效的串流網址，通常會失敗。`}
+                    ? t('add.installingEngine')
+                    : t('add.engineMissing', {
+                        target: uris.length > 1 ? t('add.linkMany') : t('add.linkOne')
+                      })}
                 </span>
                 {installing === 'ytdlp' ? (
                   <Loader2 size={14} className="animate-spin text-warn" />
@@ -768,7 +924,7 @@ export function AddUrlDialog(): JSX.Element | null {
                     icon={<Sparkles size={13} />}
                     onClick={() => void installToolkit('ytdlp')}
                   >
-                    立即安裝
+                    {t('add.installNow')}
                   </Button>
                 )}
               </div>
@@ -782,9 +938,10 @@ export function AddUrlDialog(): JSX.Element | null {
                   mediaError.kind === 'cookies-missing' ||
                   mediaError.kind === 'cookies-locked' ||
                   mediaError.kind === 'cookies-undecryptable') && (
-                  <span className="text-[11px] leading-relaxed text-muted">
-                    也可以在「設定 → 整合與工具 → 影音下載」指定要用哪個瀏覽器的 Cookie。
-                  </span>
+                  <span className="text-[11px] leading-relaxed text-muted">{t('add.cookiesHint')}</span>
+                )}
+                {formatId !== '' && (
+                  <span className="text-[11px] leading-relaxed text-muted">{t('add.canStillTry')}</span>
                 )}
                 {mediaError.action && (
                   <Button
@@ -800,7 +957,7 @@ export function AddUrlDialog(): JSX.Element | null {
                     }
                     onClick={() => fixMediaError(mediaError.action!)}
                   >
-                    {mediaError.actionLabel ?? '重試'}
+                    {mediaError.actionLabel ?? t('common.retry')}
                   </Button>
                 )}
               </div>
@@ -810,8 +967,8 @@ export function AddUrlDialog(): JSX.Element | null {
               <>
                 <div className="mt-2.5 grid grid-cols-2 gap-3">
                   <SelectField
-                    label={probing ? '下載格式（偵測畫質中…）' : '下載格式'}
-                    hint="預設為最佳畫質；標示「需 ffmpeg」的格式需要合併音訊與視訊"
+                    label={probing ? t('add.formatProbing') : t('add.format')}
+                    hint={t('add.formatHint')}
                     value={formatId}
                     options={choiceList.map((format) => ({
                       value: format.formatId,
@@ -822,7 +979,7 @@ export function AddUrlDialog(): JSX.Element | null {
                       setFormatId(value)
                     }}
                   />
-                  <Field label="儲存位置">
+                  <Field label={t('add.dir')}>
                     <div className="flex gap-2">
                       <Input value={dir} onChange={(event) => setDir(event.target.value)} />
                       <Button
@@ -839,7 +996,7 @@ export function AddUrlDialog(): JSX.Element | null {
                 </div>
 
                 <div className="mt-1 grid grid-cols-2 gap-x-6 border-t border-brand/20 pt-1">
-                  <Row label="純音訊" hint="只保留音軌">
+                  <Row label={t('add.audioOnly')} hint={t('add.audioOnlyHint')}>
                     <Toggle
                       checked={audioOnly}
                       onChange={(next) => {
@@ -852,17 +1009,17 @@ export function AddUrlDialog(): JSX.Element | null {
                           setFormatId(formats?.[0]?.formatId ?? provisionalFormatId(hasFfmpeg, false))
                         }
                       }}
-                      label="純音訊"
+                      label={t('add.audioOnly')}
                     />
                   </Row>
                   <Row
-                    label="播放清單"
+                    label={t('add.playlist')}
                     hint={
                       selectedItems.length > 0
-                        ? `已選擇 ${selectedItems.length} 個項目`
+                        ? t('add.playlistChosen', { count: selectedItems.length })
                         : isPlaylist
-                          ? '已偵測到播放清單，可選擇部分項目'
-                          : '展開清單中的所有項目'
+                          ? t('add.playlistDetected')
+                          : t('add.playlistHint')
                     }
                   >
                     {isPlaylist ? (
@@ -876,15 +1033,15 @@ export function AddUrlDialog(): JSX.Element | null {
                               setPlaylist(false)
                             }}
                           >
-                            清除
+                            {t('add.playlistClear')}
                           </button>
                         )}
                         <Button variant="secondary" size="sm" onClick={() => void openPlaylistPicker()}>
-                          選擇項目…
+                          {t('add.playlistChoose')}
                         </Button>
                       </div>
                     ) : (
-                      <Toggle checked={playlist} onChange={setPlaylist} label="播放清單" />
+                      <Toggle checked={playlist} onChange={setPlaylist} label={t('add.playlist')} />
                     )}
                   </Row>
                 </div>
@@ -892,11 +1049,11 @@ export function AddUrlDialog(): JSX.Element | null {
                 {audioOnly && (
                   <SelectField
                     className="mt-2"
-                    label="音訊格式"
-                    hint="轉換格式需要 ffmpeg；「原始音軌」直接保留網站提供的格式"
+                    label={t('add.audioFormat')}
+                    hint={t('add.audioFormatHint')}
                     value={audioFormat}
                     options={[
-                      { value: 'native', label: '原始音軌（不轉換）' },
+                      { value: 'native', label: t('add.audio.native') },
                       { value: 'mp3', label: 'MP3' },
                       { value: 'm4a', label: 'M4A' },
                       { value: 'flac', label: 'FLAC' },
@@ -911,8 +1068,8 @@ export function AddUrlDialog(): JSX.Element | null {
                   <div className="mt-2 border-t border-brand/20 pt-2">
                     <div className="flex items-center gap-2 text-[11.5px] text-muted">
                       <Captions size={13} />
-                      <span>字幕語言</span>
-                      <span className="text-faint">（未選則不另外存字幕）</span>
+                      <span>{t('add.subtitleLang')}</span>
+                      <span className="text-faint">{t('add.subtitleHint')}</span>
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       {subtitleTracks.map((track) => {
@@ -934,14 +1091,18 @@ export function AddUrlDialog(): JSX.Element | null {
                             )}
                           >
                             {track.code}
-                            {track.auto ? ' · 自動' : ''}
+                            {track.auto ? t('add.subtitleAuto') : ''}
                           </button>
                         )
                       })}
                     </div>
                     {subtitleLangs.length > 0 && (
-                      <Row label="嵌入字幕" hint="需要 ffmpeg；關閉則另存成 .srt 字幕檔">
-                        <Toggle checked={embedSubtitles} onChange={setEmbedSubtitles} label="嵌入字幕" />
+                      <Row label={t('add.embedSubtitles')} hint={t('add.embedSubtitlesHint')}>
+                        <Toggle
+                          checked={embedSubtitles}
+                          onChange={setEmbedSubtitles}
+                          label={t('add.embedSubtitles')}
+                        />
                       </Row>
                     )}
                   </div>
@@ -949,7 +1110,7 @@ export function AddUrlDialog(): JSX.Element | null {
 
                 {needsFfmpeg && !hasFfmpeg && (
                   <p className="rounded-lg border border-warn/25 bg-warn/10 px-3 py-2 text-[11.5px] leading-relaxed text-warn">
-                    尚未安裝 ffmpeg，無法合併此格式的音訊與視訊。請改選含音軌的格式，或到「設定」安裝 ffmpeg。
+                    {t('add.needsFfmpeg')}
                   </p>
                 )}
               </>
@@ -961,18 +1122,18 @@ export function AddUrlDialog(): JSX.Element | null {
           <>
             <div className="grid grid-cols-2 gap-4">
               <Field
-                label="另存檔名"
-                hint={isTorrent ? '種子下載由中繼資料決定檔名' : '留空則沿用伺服器提供的檔名'}
+                label={t('add.saveAs')}
+                hint={isTorrent ? t('add.saveAsTorrent') : t('add.saveAsHint')}
               >
                 <Input
                   value={out}
                   onChange={(event) => setOut(event.target.value)}
-                  placeholder={uris[0] ? fileNameFromUri(uris[0]) : '自動'}
+                  placeholder={uris[0] ? fileNameFromUri(uris[0]) : t('add.placeholderAuto')}
                   disabled={isTorrent}
                 />
               </Field>
 
-              <Field label="儲存位置">
+              <Field label={t('add.dir')}>
                 <div className="flex gap-2">
                   <Input value={dir} onChange={(event) => setDir(event.target.value)} />
                   <Button
@@ -988,31 +1149,31 @@ export function AddUrlDialog(): JSX.Element | null {
               </Field>
 
               <SelectField
-                label="分類"
+                label={t('add.category')}
                 value={category || AUTO_CATEGORY}
                 options={[
-                  { value: AUTO_CATEGORY, label: '自動判斷' },
+                  { value: AUTO_CATEGORY, label: t('add.categoryAuto') },
                   ...(settings?.categories ?? []).map((entry) => ({ value: entry.id, label: entry.name }))
                 ]}
                 onValueChange={(value) => setCategory(value === AUTO_CATEGORY ? '' : value)}
               />
 
               <SelectField
-                label="連線數預設"
+                label={t('add.connections')}
                 value={preset}
                 options={[
-                  { value: 'standard', label: '標準（8 連線）' },
-                  { value: 'steady', label: '穩健（4 連線）' },
-                  { value: 'turbo', label: '極速（16 連線）' },
-                  { value: 'single', label: '單線（1 連線）' }
+                  { value: 'standard', label: t('add.preset.standard') },
+                  { value: 'steady', label: t('add.preset.steady') },
+                  { value: 'turbo', label: t('add.preset.turbo') },
+                  { value: 'single', label: t('add.preset.single') }
                 ]}
                 onValueChange={(value) => setPreset(value as ConnectionsPreset)}
               />
             </div>
 
             <div className="rounded-lg border border-line bg-elevated/30 px-3 py-1">
-              <Row label="加入佇列後手動開始" hint="不立即開始下載，排在佇列最後">
-                <Toggle checked={paused} onChange={setPaused} label="加入佇列" />
+              <Row label={t('add.queueOnly')} hint={t('add.queueOnlyHint')}>
+                <Toggle checked={paused} onChange={setPaused} label={t('add.queueOnly')} />
               </Row>
             </div>
 
@@ -1023,42 +1184,54 @@ export function AddUrlDialog(): JSX.Element | null {
                 className="flex items-center gap-1.5 text-[12px] text-brand hover:underline"
               >
                 <Settings2 size={13} />
-                {advanced ? '收起進階選項' : '展開進階選項'}
+                {advanced ? t('common.advanced.hide') : t('common.advanced.show')}
               </button>
 
               {advanced && (
                 <div className="mt-3 space-y-4 rounded-lg border border-line bg-elevated/30 p-3">
                   <div className="grid grid-cols-2 gap-4">
-                    <Field label="Referer" hint="部分網站會檢查來源頁面">
-                      <Input value={referer} onChange={(event) => setReferer(event.target.value)} placeholder="自動" />
+                    <Field label="Referer" hint={t('add.refererHint')}>
+                      <Input
+                        value={referer}
+                        onChange={(event) => setReferer(event.target.value)}
+                        placeholder={t('add.placeholderAuto')}
+                      />
                     </Field>
-                    <Field label="User-Agent" hint="留空則使用設定中的預設值">
-                      <Input value={userAgent} onChange={(event) => setUserAgent(event.target.value)} placeholder="預設" />
+                    <Field label="User-Agent" hint={t('add.userAgentHint')}>
+                      <Input
+                        value={userAgent}
+                        onChange={(event) => setUserAgent(event.target.value)}
+                        placeholder={t('add.placeholderDefault')}
+                      />
                     </Field>
-                    <Field label="Cookie" hint="完整的 Cookie 標頭內容">
+                    <Field label="Cookie" hint={t('add.cookieHint')}>
                       <Input
                         value={cookies}
                         onChange={(event) => setCookies(event.target.value)}
                         placeholder="key=value; key2=value2"
                       />
                     </Field>
-                    <Field label="單檔限速 (MB/s)" hint="留空代表不限速">
-                      <Input value={maxLimit} onChange={(event) => setMaxLimit(event.target.value)} placeholder="不限速" />
+                    <Field label={t('add.limit')} hint={t('add.limitHint')}>
+                      <Input
+                        value={maxLimit}
+                        onChange={(event) => setMaxLimit(event.target.value)}
+                        placeholder={t('common.unlimited')}
+                      />
                     </Field>
-                    <Field label="HTTP 使用者名稱">
+                    <Field label={t('add.httpUser')}>
                       <Input value={username} onChange={(event) => setUsername(event.target.value)} />
                     </Field>
-                    <Field label="HTTP 密碼">
+                    <Field label={t('add.httpPassword')}>
                       <Input
                         type="password"
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                       />
                     </Field>
-                    <Field label="代理伺服器" hint="例如 http://127.0.0.1:8080">
+                    <Field label={t('add.proxy')} hint={t('add.proxyHint')}>
                       <Input value={proxy} onChange={(event) => setProxy(event.target.value)} />
                     </Field>
-                    <Field label="自訂標頭" hint="每行一個，格式為 Name: value">
+                    <Field label={t('add.headers')} hint={t('add.headersHint')}>
                       <TextArea
                         rows={3}
                         value={headers}
@@ -1075,7 +1248,7 @@ export function AddUrlDialog(): JSX.Element | null {
 
         {uris.length > 1 && mirrorCount > 0 && (
           <p className="rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-[11.5px] leading-relaxed text-info">
-            偵測到相同檔名的連結，已自動視為同一個檔案的多個鏡像來源；aria2 會自動選擇較快的伺服器。
+            {t('add.mirrorNotice')}
           </p>
         )}
       </div>
