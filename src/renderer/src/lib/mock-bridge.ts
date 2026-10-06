@@ -146,6 +146,9 @@ let settings: Settings = {
   backgroundBlur: 0,
   backgroundDim: 40,
   backgroundOpacity: 88,
+  backgroundZoom: 100,
+  backgroundPositionX: 50,
+  backgroundPositionY: 50,
   density: 'comfortable',
   closeToTray: true,
   startMinimised: false,
@@ -608,6 +611,15 @@ export function createMockApi(): AriaDmApi {
       repair: async () => ({ checked: 0, removed: 0, kept: 0, bytesFreed: 0 })
     },
 
+    // The browser has no window for the app to control: the buttons are there so
+    // the merged caption row can be reviewed, and they do nothing.
+    window: {
+      minimise: noop,
+      toggleMaximise: noop,
+      close: noop,
+      isMaximised: async () => false
+    },
+
     catcher: {
       // In the browser-only dev server there is no popup window and no capture
       // behind it. Returning a preview capture lets the popup's own document be
@@ -635,6 +647,7 @@ export function createMockApi(): AriaDmApi {
       toast: () => () => {},
       navigate: () => () => {},
       catcherUpdate: () => () => {},
+      windowState: () => () => {},
       updateProgress: (handler) => {
         updateListeners.add(handler)
         return () => updateListeners.delete(handler)

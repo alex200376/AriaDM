@@ -34,6 +34,14 @@ const api: AriaDmApi = {
     chromium: process.versions.chrome ?? ''
   },
 
+  /** The app draws its own caption buttons, so it drives the window directly. */
+  window: {
+    minimise: () => invoke(IPC.windowMinimise),
+    toggleMaximise: () => invoke(IPC.windowToggleMaximise),
+    close: () => invoke(IPC.windowClose),
+    isMaximised: () => invoke(IPC.windowIsMaximised)
+  },
+
   engine: {
     getStatus: () => invoke(IPC.engineGetStatus),
     restart: () => invoke(IPC.engineRestart),
@@ -133,7 +141,8 @@ const api: AriaDmApi = {
     toast: (handler) => subscribe(IPC.eventToast, handler),
     navigate: (handler) => subscribe(IPC.eventNavigate, handler),
     catcherUpdate: (handler) => subscribe(IPC.eventCatcher, handler),
-    updateProgress: (handler) => subscribe(IPC.eventUpdateProgress, handler)
+    updateProgress: (handler) => subscribe(IPC.eventUpdateProgress, handler),
+    windowState: (handler) => subscribe(IPC.eventWindowState, handler)
   }
 }
 

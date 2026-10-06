@@ -47,10 +47,15 @@ export function StatusBar(): JSX.Element {
           narrow window's status area say the same number twice. */}
       <div className="flex-1" />
 
-      <span className="flex items-center gap-1.5" title={engine.lastError || engine.message || engineLabel(engine.state)}>
-        <span className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[tone]}`} />
-        <span>{engineLabel(engine.state)}</span>
-      </span>
+      {/* A dot rather than the state's name: the state is not something a user
+          reads while watching a transfer, and the caption already carries the
+          same dot. The tooltip still says which state it is. */}
+      <span
+        role="status"
+        aria-label={engineLabel(engine.state)}
+        title={engine.lastError || engine.message || engineLabel(engine.state)}
+        className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[tone]}`}
+      />
     </footer>
   )
 }

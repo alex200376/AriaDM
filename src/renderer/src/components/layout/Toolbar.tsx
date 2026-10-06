@@ -77,6 +77,10 @@ const CATEGORY_ICONS: Record<string, ReactElement> = {
  * the category filter and the search box. Everything that acts on the whole
  * queue lives in the `⋯` menu, which keeps the row from growing with every new
  * feature (and keeps it usable in a small window).
+ *
+ * It is rendered inside the caption row (see `TitleBar`), so the controls are
+ * marked `no-drag` individually and the gaps between them keep dragging the
+ * window. Marking the whole row instead would leave nothing to grab.
  */
 export function Toolbar(): JSX.Element {
   const selection = useApp((state) => state.selection)
@@ -127,15 +131,23 @@ export function Toolbar(): JSX.Element {
   const selectedSpeed = selectedItems.reduce((sum, item) => sum + item.downloadSpeed, 0)
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-3 py-2">
-      <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => openDialog('add')}>
+    /* `flex-[1_1_30rem]`: beside the caption when the window is wide enough, on
+       its own line below it when it is not. */
+    <div className="flex min-w-0 flex-[1_1_30rem] items-center gap-1.5 overflow-hidden">
+      <Button
+        variant="primary"
+        size="sm"
+        className="no-drag"
+        icon={<Plus size={14} />}
+        onClick={() => openDialog('add')}
+      >
         {t('toolbar.add')}
       </Button>
 
       <Select value={category} onValueChange={setCategory}>
         <SelectTrigger
           aria-label={t('toolbar.category')}
-          className="h-7 w-auto min-w-[7.5rem] max-w-[11rem] shrink gap-1.5 px-2.5 text-[12px]"
+          className="no-drag h-7 w-auto min-w-[7.5rem] max-w-[11rem] shrink gap-1.5 px-2.5 text-[12px]"
         >
           {/* Radix mirrors the selected item's children into `SelectValue` when
               it has none of its own, which put the icon and the count on screen
@@ -170,6 +182,7 @@ export function Toolbar(): JSX.Element {
       {category !== ALL_CATEGORIES && (
         <IconButton
           label={t('toolbar.categoryClear')}
+          className="no-drag"
           icon={<X size={13} />}
           onClick={() => setCategory(ALL_CATEGORIES)}
         />
@@ -177,8 +190,12 @@ export function Toolbar(): JSX.Element {
 
       {hasSelection && (
         <>
-          <div className="mx-0.5 h-5 w-px bg-line" />
-          <span className="text-tabular whitespace-nowrap text-[11px] text-muted">
+          {/* The separator belongs to the summary beside it, so both step aside
+              together in a narrow window. */}
+          <div className="toolbar-compact mx-0.5 h-5 w-px bg-line" />
+          {/* Shrinks and ellipsises before anything can be pushed off the row;
+              the numbers after the count are the part worth losing. */}
+          <span className="text-tabular min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted">
             {t('toolbar.selected', { count: selection.length })}
             {selectedRemaining > 0 && ` · ${t('toolbar.selectedRemaining', { size: formatBytes(selectedRemaining) })}`}
             {selectedSpeed > 0 && ` · ${formatSpeed(selectedSpeed)}`}
@@ -186,6 +203,7 @@ export function Toolbar(): JSX.Element {
           <Button
             variant="danger"
             size="sm"
+            className="no-drag"
             icon={<Trash2 size={13} />}
             onClick={() => void removeGids(selection, false)}
           >
@@ -193,15 +211,21 @@ export function Toolbar(): JSX.Element {
           </Button>
           <IconButton
             label={t('toolbar.deselect')}
+            className="no-drag"
             icon={<X size={14} />}
             onClick={() => useApp.getState().setSelection([])}
           />
         </>
       )}
 
-      <div className="min-w-2 flex-1" />
+      {/* Pushes the search and the queue-wide controls to the right; `min-w-0`
+          lets it vanish rather than squeeze them when the window is tight. */}
+      <div className="min-w-0 flex-1" />
 
-      <div className="relative w-40 min-w-[7rem] flex-1 sm:w-52 sm:flex-none lg:w-60">
+      {/* Keeps its full width when there is room and gives it back first when
+          there is not, which is what keeps the row on one line: everything else
+          here is a button that has to stay legible and clickable. */}
+      <div className="no-drag toolbar-search relative min-w-[4.5rem]">
         <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
         <Input
           value={search}
@@ -228,10 +252,18 @@ export function Toolbar(): JSX.Element {
           void patchSettings({ globalDownloadLimit: Number(value) })
         }}
       >
-        <SelectTrigger aria-label={t('toolbar.limit')} className="h-8 w-auto shrink-0 gap-1.5 px-2.5 text-[12px]">
+        <SelectTrigger
+          aria-label={t('toolbar.limit')}
+          className="no-drag h-8 w-auto shrink-0 gap-1.5 px-2.5 text-[12px]"
+        >
           <span className="flex items-center gap-1.5">
             <Gauge size={13} className="text-faint" />
-            <SelectValue />
+            {/* The gauge alone still says what this control is, and the trigger
+                keeps its `aria-label`, so a narrow window loses the word rather
+                than the control. */}
+            <span className="toolbar-compact">
+              <SelectValue />
+            </span>
           </span>
         </SelectTrigger>
         <SelectContent className="min-w-[11rem]">
@@ -246,7 +278,7 @@ export function Toolbar(): JSX.Element {
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <IconButton label={t('toolbar.more')} icon={<MoreHorizontal size={15} />} />
+          <IconButton label={t('toolbar.more')} className="no-drag" icon={<MoreHorizontal size={15} />} />
         </DropdownMenuTrigger>
         <DropdownMenuContent>
           <DropdownMenuItem disabled={actionsDisabled} onSelect={() => void resumeAll()}>

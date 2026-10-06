@@ -60,7 +60,10 @@ export function useLiveData(): void {
       wallpaper,
       blur: settings.backgroundBlur,
       dim: settings.backgroundDim,
-      opacity: settings.backgroundOpacity
+      opacity: settings.backgroundOpacity,
+      zoom: settings.backgroundZoom,
+      positionX: settings.backgroundPositionX,
+      positionY: settings.backgroundPositionY
     })
   }, [settings, wallpaper])
 }

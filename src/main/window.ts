@@ -16,6 +16,8 @@ export interface CreateWindowOptions {
 /** Matches the renderer's dark background so launch does not flash white. */
 export const BACKGROUND = '#0b0d12'
 
+
+
 export function resolvePreloadPath(): string {
   // electron-vite emits the preload as CommonJS (.cjs) so it stays loadable under
   // a sandboxed renderer even though the package itself is ESM.
@@ -62,10 +64,11 @@ export function createMainWindow(options: CreateWindowOptions): BrowserWindow {
     // in development, but it is what makes the real mark show up in the taskbar.
     icon: options.iconPath,
     autoHideMenuBar: true,
-    // A hidden title bar with an overlay keeps the native window controls while
-    // letting the app draw its own chrome.
+    // The title bar is hidden and the app draws the whole caption row itself,
+    // minimise/maximise/close included. That is what lets the caption share a
+    // single strip with the queue toolbar — and why the buttons follow the theme,
+    // which a native overlay painted by Electron in one fixed colour cannot.
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: BACKGROUND, symbolColor: '#c7cbd6', height: 40 },
     webPreferences: {
       preload: resolvePreloadPath(),
       // The renderer is untrusted UI: it reaches the main process only through

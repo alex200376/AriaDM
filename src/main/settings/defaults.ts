@@ -36,6 +36,10 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     backgroundBlur: 0,
     backgroundDim: 40,
     backgroundOpacity: 88,
+    // Zoomed to fit and centred: what the picture does with no crop at all.
+    backgroundZoom: 100,
+    backgroundPositionX: 50,
+    backgroundPositionY: 50,
     density: 'comfortable',
 
     closeToTray: true,

@@ -23,8 +23,9 @@ import type { AppPaths, CategoryRule, ScheduleRule, SpeedProfile } from '@shared
 import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
 import { formatBytes, formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
+import { MAX_WALLPAPER_ZOOM, MIN_WALLPAPER_ZOOM } from '@shared/wallpaper'
 
-import { paintAccent, paintWallpaperAmounts } from '../../lib/appearance'
+import { paintAccent, paintWallpaperPreview, type WallpaperAdjust } from '../../lib/appearance'
 import { cn } from '../../lib/cn'
 import { engineLabel, engineTone, type Tone } from '../../lib/labels'
 import { useApp, type SettingsTab } from '../../store/app-store'
@@ -234,12 +235,14 @@ function GeneralTab(): JSX.Element {
 
   if (!settings) return <></>
 
-  const previewAmounts = (patchAmounts: { blur?: number; dim?: number; opacity?: number }): void => {
-    paintWallpaperAmounts(document.documentElement, {
-      blur: patchAmounts.blur ?? settings.backgroundBlur,
-      dim: patchAmounts.dim ?? settings.backgroundDim,
-      opacity: patchAmounts.opacity ?? settings.backgroundOpacity
-    })
+  /**
+   * Follow the pointer while a slider is being dragged.
+   *
+   * The wallpaper module keeps the picture it last painted, so only the field
+   * that changed has to be named here; the rest comes from what is on screen.
+   */
+  const previewWallpaper = (change: Partial<WallpaperAdjust>): void => {
+    paintWallpaperPreview(document.documentElement, change)
   }
 
   const chooseBackground = (): void => {
@@ -365,40 +368,101 @@ function GeneralTab(): JSX.Element {
             </div>
           </Field>
 
-          {/* The three knobs only matter with a picture behind them, so they
-              appear with one. */}
+          {/*
+            * Cropping, then the amounts that make the picture usable behind
+            * text. Both groups only mean anything with a picture behind them,
+            * so they appear with one — and in this order, because cropping the
+            * picture is what the preview is judged on and the fade and blur are
+            * adjustments to an already reasonable picture.
+            */}
           {settings.backgroundImage.length > 0 && (
             <div className="space-y-3 rounded-lg border border-line bg-elevated/30 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">
+                  {t('settings.backgroundCrop')}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<RotateCcw size={13} />}
+                  onClick={() =>
+                    void patch({
+                      backgroundZoom: 100,
+                      backgroundPositionX: 50,
+                      backgroundPositionY: 50
+                    })
+                  }
+                >
+                  {t('settings.backgroundCropReset')}
+                </Button>
+              </div>
               <Slider
-                label={t('settings.backgroundOpacity')}
-                value={settings.backgroundOpacity}
-                min={30}
+                label={t('settings.backgroundZoom')}
+                value={settings.backgroundZoom}
+                min={MIN_WALLPAPER_ZOOM}
+                max={MAX_WALLPAPER_ZOOM}
+                step={5}
+                suffix="%"
+                onPreview={(value) => previewWallpaper({ zoom: value })}
+                onCommit={(value) => void patch({ backgroundZoom: value })}
+              />
+              <Slider
+                label={t('settings.backgroundPositionX')}
+                value={settings.backgroundPositionX}
+                min={0}
                 max={100}
                 suffix="%"
-                onPreview={(value) => previewAmounts({ opacity: value })}
-                onCommit={(value) => void patch({ backgroundOpacity: value })}
+                onPreview={(value) => previewWallpaper({ positionX: value })}
+                onCommit={(value) => void patch({ backgroundPositionX: value })}
               />
               <Slider
-                label={t('settings.backgroundBlur')}
-                value={settings.backgroundBlur}
+                label={t('settings.backgroundPositionY')}
+                value={settings.backgroundPositionY}
                 min={0}
-                max={30}
-                suffix="px"
-                onPreview={(value) => previewAmounts({ blur: value })}
-                onCommit={(value) => void patch({ backgroundBlur: value })}
-              />
-              <Slider
-                label={t('settings.backgroundDim')}
-                value={settings.backgroundDim}
-                min={0}
-                max={80}
+                max={100}
                 suffix="%"
-                onPreview={(value) => previewAmounts({ dim: value })}
-                onCommit={(value) => void patch({ backgroundDim: value })}
+                onPreview={(value) => previewWallpaper({ positionY: value })}
+                onCommit={(value) => void patch({ backgroundPositionY: value })}
               />
               <p className="text-[11px] leading-relaxed text-faint">
-                {t('settings.backgroundOpacityHint')}
+                {t('settings.backgroundZoomHint')}
               </p>
+              <p className="text-[11px] leading-relaxed text-faint">
+                {t('settings.backgroundPositionHint')}
+              </p>
+
+              <div className="space-y-3 border-t border-line pt-3">
+                <Slider
+                  label={t('settings.backgroundOpacity')}
+                  value={settings.backgroundOpacity}
+                  min={30}
+                  max={100}
+                  suffix="%"
+                  onPreview={(value) => previewWallpaper({ opacity: value })}
+                  onCommit={(value) => void patch({ backgroundOpacity: value })}
+                />
+                <Slider
+                  label={t('settings.backgroundBlur')}
+                  value={settings.backgroundBlur}
+                  min={0}
+                  max={30}
+                  suffix="px"
+                  onPreview={(value) => previewWallpaper({ blur: value })}
+                  onCommit={(value) => void patch({ backgroundBlur: value })}
+                />
+                <Slider
+                  label={t('settings.backgroundDim')}
+                  value={settings.backgroundDim}
+                  min={0}
+                  max={80}
+                  suffix="%"
+                  onPreview={(value) => previewWallpaper({ dim: value })}
+                  onCommit={(value) => void patch({ backgroundDim: value })}
+                />
+                <p className="text-[11px] leading-relaxed text-faint">
+                  {t('settings.backgroundOpacityHint')}
+                </p>
+              </div>
             </div>
           )}
 

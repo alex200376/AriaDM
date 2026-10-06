@@ -30,7 +30,10 @@ function applyLook(info: CatcherInfo): void {
     wallpaper: '',
     blur: 0,
     dim: 0,
-    opacity: 100
+    opacity: 100,
+    zoom: 100,
+    positionX: 50,
+    positionY: 50
   })
 }
 

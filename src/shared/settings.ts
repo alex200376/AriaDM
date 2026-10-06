@@ -156,6 +156,19 @@ export interface Settings {
    * percent. 100 is an opaque window with a hidden wallpaper.
    */
   backgroundOpacity: number
+  /**
+   * Wallpaper zoom in percent, 100–300.
+   *
+   * 100 is the smallest scale that still fills the window, so the picture is
+   * never smaller than the window and the theme never shows through beside it.
+   * This is what cropping means here: zoom in, then choose which part of the
+   * picture the window shows with the two positions below.
+   */
+  backgroundZoom: number
+  /** Horizontal crop position: 0 is the picture's left edge, 100 its right. */
+  backgroundPositionX: number
+  /** Vertical crop position: 0 is the picture's top edge, 100 its bottom. */
+  backgroundPositionY: number
   density: 'compact' | 'comfortable'
 
   closeToTray: boolean

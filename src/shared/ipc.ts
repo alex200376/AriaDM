@@ -98,6 +98,11 @@ export const IPC = {
   appOpenExternal: 'app:openExternal',
   /** Show a file or folder in the OS file manager. */
   appReveal: 'app:reveal',
+  /** Window controls, drawn by the app because the window has no title bar. */
+  windowMinimise: 'window:minimise',
+  windowToggleMaximise: 'window:toggleMaximise',
+  windowClose: 'window:close',
+  windowIsMaximised: 'window:isMaximised',
   updateCheck: 'update:check',
   updateDownload: 'update:download',
   updateInstall: 'update:install',
@@ -119,7 +124,8 @@ export const IPC = {
   eventToast: 'event:toast',
   eventNavigate: 'event:navigate',
   eventCatcher: 'event:catcherUpdate',
-  eventUpdateProgress: 'event:updateProgress'
+  eventUpdateProgress: 'event:updateProgress',
+  eventWindowState: 'event:windowState'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]
@@ -322,6 +328,16 @@ export interface NavigationPayload {
   gid?: string
 }
 
+/**
+ * Whether the main window is maximised.
+ *
+ * The app draws its own window buttons, so it also has to know which one to
+ * show: the maximised window's button restores, and the restored one's maximises.
+ */
+export interface WindowStatePayload {
+  maximised: boolean
+}
+
 export interface UriListClassification {
   /** Groups of URIs sharing a filename, so they are mirrors of one download. */
   mirrors: string[][]
@@ -465,6 +481,21 @@ export interface AriaDmApi {
     reveal(target: string): Promise<void>
   }
 
+  /**
+   * The window controls the app draws itself, in the caption row.
+   *
+   * A hidden title bar means no native buttons, so these are the only way to
+   * minimise, resize or close the window — and they are why the caption can be
+   * merged with the queue toolbar into one strip.
+   */
+  window: {
+    minimise(): Promise<void>
+    toggleMaximise(): Promise<void>
+    /** The same path as the native close button: settings decide tray or quit. */
+    close(): Promise<void>
+    isMaximised(): Promise<boolean>
+  }
+
   update: {
     /** Ask GitHub Releases for the newest published version. */
     check(): Promise<UpdateInfo>
@@ -507,6 +538,8 @@ export interface AriaDmApi {
     catcherUpdate(handler: (info: CatcherInfo) => void): () => void
     /** Progress of an in-app update download. */
     updateProgress(handler: (progress: UpdateProgress) => void): () => void
+    /** Maximised or restored, so the middle window button shows the right icon. */
+    windowState(handler: (state: WindowStatePayload) => void): () => void
   }
 }
 

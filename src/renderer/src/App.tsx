@@ -255,9 +255,19 @@ export default function App(): JSX.Element {
     </Button>
   )
 
+  // The views the queue toolbar belongs to. It renders inside the caption row, so
+  // the two places that ask about it share one answer.
+  const queueView =
+    view === 'all' ||
+    view === 'active' ||
+    view === 'waiting' ||
+    view === 'paused' ||
+    view === 'complete' ||
+    view === 'error'
+
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      <TitleBar />
+      <TitleBar>{queueView && <Toolbar />}</TitleBar>
       <EngineBanner />
 
       {/* `relative` anchors the detail drawer, which floats over the list instead
@@ -267,12 +277,7 @@ export default function App(): JSX.Element {
         <Sidebar />
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {(view === 'all' || view === 'active' || view === 'waiting' || view === 'paused' || view === 'complete' || view === 'error') && (
-            <>
-              <Toolbar />
-              <DownloadTable items={visible} emptyAction={emptyAction} />
-            </>
-          )}
+          {queueView && <DownloadTable items={visible} emptyAction={emptyAction} />}
 
           {view === 'history' && <HistoryView />}
           {view === 'settings' && <SettingsView />}

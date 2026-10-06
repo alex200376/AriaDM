@@ -1,6 +1,13 @@
 import fs from 'node:fs'
 
-import { clipboard, dialog, ipcMain, shell, type BrowserWindow } from 'electron'
+import {
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  shell,
+  type IpcMainInvokeEvent
+} from 'electron'
 
 import type { AppPaths, CategoryRule, DeepPartial, ScheduleRule, Settings, SpeedProfile } from '@shared/settings'
 import type { DownloadItem, GlobalStat } from '@shared/download'
@@ -495,6 +502,34 @@ export function registerIpcHandlers(context: HandlerContext): void {
     if (!/^https?:\/\//i.test(url)) throw new Error('僅允許開啟 http(s) 連結。')
     await shell.openExternal(url)
   })
+
+  /**
+   * The caption buttons the app draws itself.
+   *
+   * Each one acts on the window the request came from rather than on a captured
+   * reference, so the same handlers serve every window the app may open.
+   */
+  const senderWindow = (event: IpcMainInvokeEvent): BrowserWindow | null =>
+    BrowserWindow.fromWebContents(event.sender)
+
+  ipcMain.handle(IPC.windowMinimise, (event) => {
+    senderWindow(event)?.minimize()
+  })
+
+  ipcMain.handle(IPC.windowToggleMaximise, (event) => {
+    const window = senderWindow(event)
+    if (!window) return
+    if (window.isMaximized()) window.unmaximize()
+    else window.maximize()
+  })
+
+  ipcMain.handle(IPC.windowClose, (event) => {
+    // `close` rather than `destroy`: the close handler decides between hiding to
+    // the tray and quitting, which is exactly what the native button did.
+    senderWindow(event)?.close()
+  })
+
+  ipcMain.handle(IPC.windowIsMaximised, (event) => senderWindow(event)?.isMaximized() ?? false)
 
   ipcMain.handle(IPC.appReveal, async (_event, target: string) => {
     if (typeof target !== 'string' || !target) throw new Error('缺少要開啟的路徑。')

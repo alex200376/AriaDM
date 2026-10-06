@@ -379,12 +379,26 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  // The caption buttons are the app's own, so the window has to report its state
+  // for the middle one to show restore rather than maximise. `did-finish-load`
+  // covers the window starting out maximised, where the `maximize` event fires
+  // before there is a renderer listening.
+  const sendWindowState = (): void => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return
+    window.webContents.send(IPC.eventWindowState, { maximised: window.isMaximized() })
+  }
+  window.on('maximize', sendWindowState)
+  window.on('unmaximize', sendWindowState)
+  window.webContents.on('did-finish-load', sendWindowState)
+
   window.on('closed', () => {
     mainWindow = null
   })
 
   return window
 }
+
+
 
 function trayIconImage(): Electron.NativeImage {
   const candidates = ['tray@3x.png', 'tray@2x.png', 'tray.png']

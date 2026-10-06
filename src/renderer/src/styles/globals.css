@@ -303,13 +303,20 @@
   display: none;
   pointer-events: none;
   background-image: var(--wallpaper-image, none);
-  background-position: center;
-  background-size: cover;
   background-repeat: no-repeat;
-  /* Blur bleeds past the edges otherwise, leaving a pale rim on a dark picture.
-     The small scale pushes that bleed off-screen. */
+  /*
+   * Sized and positioned by the renderer, from the picture's real pixel size.
+   *
+   * `cover` cannot be cropped — it holds the scale the browser picked — and a
+   * `transform` would scale the pan range with the zoom, leaving a strip of
+   * background along an edge. The fallbacks below still fill the window when the
+   * picture has not been measured yet, or could not be decoded at all.
+   */
+  background-position: var(--wallpaper-position, center);
+  background-size: var(--wallpaper-size, cover);
+  /* Blur bleeds past the edges otherwise, leaving a pale rim on a dark picture;
+     the overscan baked into `--wallpaper-size` is what pushes that off-screen. */
   filter: blur(var(--wallpaper-blur, 0px));
-  transform: scale(1.06);
 }
 
 /**
@@ -359,6 +366,37 @@
 [data-wallpaper='on'] .bg-surface,
 [data-wallpaper='on'] .bg-elevated {
   background-color: rgb(var(--surface) / var(--app-alpha, 0.88));
+}
+
+/*
+ * One row of chrome.
+ *
+ * The caption and the queue toolbar share a strip, so what has to give in a
+ * narrow window is decided here rather than in the components. Only words and
+ * widths give: a hidden control is one the user cannot reach, which is why the
+ * limit keeps its gauge icon, its tooltip and its `aria-label` when the label
+ * beside it goes.
+ */
+.toolbar-search {
+  width: 11rem;
+}
+
+@media (max-width: 1180px) {
+  .toolbar-compact {
+    display: none;
+  }
+
+  .toolbar-search {
+    width: 9rem;
+  }
+}
+
+/* The wordmark is the last word to go: the taskbar names the window anyway, and
+   by here the row has no room left for an identity. */
+@media (max-width: 980px) {
+  .chrome-brand {
+    display: none;
+  }
 }
 
 /* Respect the OS setting; a download manager is often left open all day. */

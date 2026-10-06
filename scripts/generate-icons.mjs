@@ -24,6 +24,10 @@ async function main() {
 
   const outputs = [
     ['app.png', 512],
+    // The mark in the title bar. Its own size rather than the 512px app icon:
+    // the renderer bundles what it draws, and 512px of artwork for a 20px mark
+    // would be a third of a megabyte of bundle for nothing.
+    ['mark.png', 64],
     ['tray.png', 16],
     ['tray@2x.png', 32],
     ['tray@3x.png', 48]
