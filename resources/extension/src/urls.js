@@ -224,6 +224,63 @@
     return links
   }
 
+  /** True when a URL names a media file at a plain address. */
+  function mediaFileAddress(href) {
+    if (!href) return false
+    let parsed
+    try {
+      parsed = new URL(href)
+    } catch {
+      return false
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+
+    const last = parsed.pathname.split('/').filter(Boolean).pop() || ''
+    const dot = last.lastIndexOf('.')
+    if (dot <= 0) return false
+    return MEDIA_FILE_EXTENSIONS.has(last.slice(dot + 1).toLowerCase())
+  }
+
+  /**
+   * A media file the page's own markup links, found the way a card is found.
+   *
+   * This is the site's own "download this video" button: an <a href="...mp4">
+   * inside the player's card, which nothing here used to read. On a page the app
+   * cannot fetch at all — a bot check answers every non-browser request with 403 —
+   * the link the site itself offers is the only address on the page that is worth
+   * anything, and it is exact where the page URL is useless.
+   *
+   * The walk and its limits are the same ones that find a video's post: the button
+   * sits beside the player inside the card, so a search that starts at the player
+   * and stops when its container stops looking like a card cannot wander into
+   * somebody else's video.
+   */
+  function linkedMediaAddress(video, location, options) {
+    if (!video) return ''
+
+    const maxDepth = (options && options.maxDepth) || MAX_CARD_DEPTH
+    const maxScale = (options && options.maxScale) || MAX_CARD_SCALE
+    const document = location.ownerDocument || (typeof globalThis.document !== 'undefined' ? globalThis.document : null)
+
+    const box = video.getBoundingClientRect()
+    const area = box.width * box.height
+    let node = video
+
+    for (let depth = 0; node && depth < maxDepth; depth += 1) {
+      for (const href of linksWithin(node)) {
+        if (mediaFileAddress(href)) return href.split('#')[0]
+      }
+
+      const parent = node.parentElement
+      if (!parent || (document && (parent === document.body || parent === document.documentElement))) break
+      const rect = parent.getBoundingClientRect()
+      if (area > 0 && rect.width * rect.height > area * maxScale) break
+      node = parent
+    }
+
+    return ''
+  }
+
   /**
    * The address of the video a player is showing.
    *
@@ -258,7 +315,15 @@
   function itemUrlNear(video, location, options) {
     const pageUrl = location.href
     if (isItemUrl(location.hostname, pageUrl)) return pageUrl
-    if (!patternFor(location.hostname)) return playedAddress(video) || pageUrl
+    if (!patternFor(location.hostname)) {
+      /*
+       * Three answers, best first. What the browser is playing is exact and needs
+       * nothing read. Then the media file the page's own button points at, which is
+       * the one address left on a page the app is not allowed to fetch. Only then
+       * the page itself, which is what this always did.
+       */
+      return playedAddress(video) || linkedMediaAddress(video, location, options) || pageUrl
+    }
     if (!video) return ''
 
     const maxDepth = (options && options.maxDepth) || MAX_CARD_DEPTH
@@ -297,6 +362,8 @@
     isItemUrl,
     itemUrlNear,
     playedAddress,
+    mediaFileAddress,
+    linkedMediaAddress,
     MAX_CARD_DEPTH,
     MAX_CARD_SCALE
   }

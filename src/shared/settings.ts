@@ -137,6 +137,25 @@ export interface Settings {
   /** 'system' follows the OS locale; the other values pin a shipped locale. */
   language: LanguageSetting
   accent: string
+  /**
+   * A colour the user picked, as `#rrggbb`, overriding the `accent` palette.
+   *
+   * Empty means "use the palette entry above", which is also what the reset
+   * button writes, so the two customisation controls stay independent: a user
+   * who picks orange and then wants the violet back only has to clear this.
+   */
+  customAccent: string
+  /** Absolute path to a wallpaper for the main window; '' paints the flat theme. */
+  backgroundImage: string
+  /** Wallpaper blur in pixels, 0–30. Hides compression artefacts in a big photo. */
+  backgroundBlur: number
+  /** How much the wallpaper is darkened, 0–80 percent. Text needs this. */
+  backgroundDim: number
+  /**
+   * How much of its own colour the app paints over the wallpaper, 30–100
+   * percent. 100 is an opaque window with a hidden wallpaper.
+   */
+  backgroundOpacity: number
   density: 'compact' | 'comfortable'
 
   closeToTray: boolean

@@ -842,6 +842,14 @@ export class YtDlpRunner extends EventEmitter {
   private child: ChildProcess | null = null
   private stderrTail: string[] = []
   private settled = false
+  /**
+   * True once the caller deliberately stopped this run.
+   *
+   * Kept apart from settled, which records that the run is over: a killed
+   * process still emits its exit a moment later, and that event must not be
+   * reported as a failure. See kill.
+   */
+  private stopped = false
 
   constructor(private readonly options: YtDlpRunOptions) {
     super()
@@ -855,7 +863,17 @@ export class YtDlpRunner extends EventEmitter {
     const args = buildDownloadArgs(this.options)
     this.emit('log', `yt-dlp ${args.join(' ')}`)
 
-    const child = spawn(this.options.binaryPath, args, { windowsHide: true })
+    const child = spawn(this.options.binaryPath, args, {
+      windowsHide: true,
+      /*
+       * Its own process group on POSIX, so a stop can take the whole tree. yt-dlp
+       * spawns ffmpeg to remux HLS and to merge a video with its audio, and that
+       * child outlives a signal sent to yt-dlp alone: it keeps downloading and
+       * keeps writing the file the user just asked to stop. Windows has no group
+       * to signal and uses taskkill instead; see killTree.
+       */
+      detached: process.platform !== 'win32'
+    })
     this.child = child
 
     let buffer = ''
@@ -876,13 +894,13 @@ export class YtDlpRunner extends EventEmitter {
     })
 
     child.on('error', (error) => {
-      if (this.settled) return
+      if (this.settled || this.stopped) return
       this.settled = true
       this.emit('failed', `無法執行 yt-dlp：${error.message}`)
     })
 
     child.on('exit', (code) => {
-      if (this.settled) return
+      if (this.settled || this.stopped) return
       this.settled = true
       this.child = null
       if (code === 0) {
@@ -895,6 +913,9 @@ export class YtDlpRunner extends EventEmitter {
   }
 
   private handleStdoutLine(line: string): void {
+    // A process being killed goes on printing for a moment, and a paused job must
+    // not keep reporting progress it is no longer making.
+    if (this.stopped) return
     const trimmed = line.trim()
     if (!trimmed) return
 
@@ -914,13 +935,50 @@ export class YtDlpRunner extends EventEmitter {
   }
 
   /**
-   * Terminate. yt-dlp writes into a `.part` file, so a kill loses only the last
-   * flush and the next run can continue from it.
+   * Stop the run, and stop what it started. yt-dlp writes into a `.part` file, so
+   * a kill loses only the last flush and the next run can continue from it.
+   *
+   * The tree is what has to go, not the process: see killTree. The runner also
+   * goes quiet first, so a job the user just paused stops moving instead of
+   * reporting the progress of a download that is being torn down.
    */
   kill(): void {
-    if (!this.child) return
+    if (this.stopped) return
+    this.stopped = true
+    const child = this.child
+    this.child = null
+    if (child && child.pid !== undefined) killTree(child.pid)
+  }
+}
+
+/**
+ * Terminate a process and everything it started.
+ *
+ * Windows has no process group to signal, so child.kill() reaches exactly one
+ * process - and the one that matters here is a grandchild: yt-dlp runs ffmpeg for
+ * merging and for HLS remuxing, and it survives yt-dlp's death with the part file
+ * still open. taskkill /T walks the tree and /F skips the polite request a
+ * windowless process cannot answer. Elsewhere the child is spawned detached, so
+ * the negative pid names its group.
+ */
+export function killTree(pid: number): void {
+  if (process.platform === 'win32') {
     try {
-      this.child.kill()
+      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }).once(
+        'error',
+        () => undefined
+      )
+    } catch {
+      // Nothing left to kill.
+    }
+    return
+  }
+
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL')
     } catch {
       // Already gone.
     }

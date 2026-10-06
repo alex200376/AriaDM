@@ -85,7 +85,9 @@ const api: AriaDmApi = {
     deleteCategory: (id) => invoke(IPC.settingsDeleteCategory, id),
     applyProfile: (id) => invoke(IPC.settingsApplyProfile, id),
     getPaths: () => invoke(IPC.settingsGetPaths),
-    chooseDirectory: (defaultPath) => invoke(IPC.settingsChooseDirectory, defaultPath)
+    chooseDirectory: (defaultPath) => invoke(IPC.settingsChooseDirectory, defaultPath),
+    chooseImage: (defaultPath) => invoke(IPC.settingsChooseImage, defaultPath),
+    readImage: (path) => invoke(IPC.settingsReadImage, path)
   },
 
   integrations: {
@@ -99,7 +101,7 @@ const api: AriaDmApi = {
     addMedia: (input) => invoke(IPC.integrationsAddMedia, input),
     checkToolkits: () => invoke(IPC.integrationsCheckToolkits),
     downloadToolkit: (kind) => invoke(IPC.integrationsDownloadToolkit, kind),
-    openExtensionFolder: () => invoke(IPC.integrationsOpenExtensionFolder),
+    openExtensionFolder: (browser) => invoke(IPC.integrationsOpenExtensionFolder, browser),
     systemPower: (action) => invoke(IPC.integrationsSystemPower, action),
     dismissDetected: () => invoke(IPC.integrationsDismissDetected)
   },

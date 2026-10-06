@@ -691,7 +691,8 @@ async function restartHandoff(): Promise<void> {
           count: result.gids.length,
           locale: localeFromSetting(settings.language, app.getLocale()),
           theme: settings.theme,
-          accent: settings.accent
+          accent: settings.accent,
+          customAccent: settings.customAccent
         })
       }
 

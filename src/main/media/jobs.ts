@@ -914,6 +914,18 @@ export class MediaJobs extends EventEmitter {
     runner.on('failed', (message) => {
       job.runner = null
       this.cancelProgressNotify()
+
+      /*
+       * Only a run that is still supposed to be going can fail.
+       *
+       * Stopping a download kills its process, and that process goes on to emit
+       * its exit a moment later — which arrived here as a failure and turned the
+       * row the user had just paused into "error". The runner itself stays silent
+       * once stopped; this is the second line of defence, for a job that was
+       * paused or removed while a real failure was already on its way.
+       */
+      if (job.status !== 'active') return
+
       const kind = classifyMediaError(message).kind
 
       /*

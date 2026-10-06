@@ -26,6 +26,8 @@ import type { HandoffServer } from '../integrations/handoff-api'
 import type { ClipboardWatcher } from '../integrations/clipboard-watch'
 import { isMediaGid, type MediaJobs } from '../media/jobs'
 import type { MediaSniffer } from '../media/page-sniff'
+import { extensionFolderFor } from '../integrations/extension-folder'
+import { IMAGE_EXTENSIONS, readImageDataUrl } from '../settings/background-image'
 import type { SettingsStore } from '../settings/store'
 import type { ToolkitManager } from '../toolkit'
 import type { UpdateManager } from '../update/update-manager'
@@ -358,6 +360,22 @@ export function registerIpcHandlers(context: HandlerContext): void {
     return result.filePaths[0]!
   })
 
+  ipcMain.handle(IPC.settingsChooseImage, async (_event, defaultPath?: string) => {
+    const window = context.getWindow()
+    const options: Electron.OpenDialogOptions = {
+      defaultPath,
+      properties: ['openFile'],
+      filters: [{ name: '圖片', extensions: IMAGE_EXTENSIONS }]
+    }
+    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]!
+  })
+
+  // Reading is on demand rather than pushed with every settings patch: the image
+  // is only needed when it changes, and the reader remembers the last one.
+  ipcMain.handle(IPC.settingsReadImage, (_event, file: string) => readImageDataUrl(file))
+
   // ---- integrations --------------------------------------------------------
 
   ipcMain.handle(IPC.integrationsSetClipboardWatch, async (_event, enabled: boolean) => {
@@ -456,8 +474,8 @@ export function registerIpcHandlers(context: HandlerContext): void {
     return toolkit.status()
   })
 
-  ipcMain.handle(IPC.integrationsOpenExtensionFolder, async () => {
-    const error = await shell.openPath(context.extensionDir)
+  ipcMain.handle(IPC.integrationsOpenExtensionFolder, async (_event, browser?: 'chrome' | 'firefox') => {
+    const error = await shell.openPath(extensionFolderFor(context.extensionDir, browser))
     if (error) throw new Error(error)
   })
 

@@ -77,6 +77,10 @@ export const IPC = {
   settingsApplyProfile: 'settings:applyProfile',
   settingsGetPaths: 'settings:getPaths',
   settingsChooseDirectory: 'settings:chooseDirectory',
+  /** Pick a wallpaper file; images only. */
+  settingsChooseImage: 'settings:chooseImage',
+  /** Read a wallpaper file into a data URL the CSP already permits. */
+  settingsReadImage: 'settings:readImage',
 
   integrationsSetClipboardWatch: 'integrations:setClipboardWatch',
   integrationsGetHandoffInfo: 'integrations:getHandoffInfo',
@@ -168,6 +172,8 @@ export interface CatcherInfo {
   locale: Locale
   theme: 'dark' | 'light' | 'system'
   accent: string
+  /** A colour the user picked, overriding `accent`; '' uses the palette. */
+  customAccent: string
 }
 
 /**
@@ -412,6 +418,13 @@ export interface AriaDmApi {
     applyProfile(id: string): Promise<Settings>
     getPaths(): Promise<AppPaths>
     chooseDirectory(defaultPath?: string): Promise<string | null>
+    /** Pick an image; null when the user cancels. */
+    chooseImage(defaultPath?: string): Promise<string | null>
+    /**
+     * The wallpaper as a data URL, or null when the file is gone, too large or
+     * not an image. Only ever called with a path from `chooseImage` or settings.
+     */
+    readImage(path: string): Promise<string | null>
   }
 
   integrations: {
@@ -437,7 +450,11 @@ export interface AriaDmApi {
     addMedia(input: AddMediaInput): Promise<AddMediaResult>
     checkToolkits(): Promise<ToolkitStatus>
     downloadToolkit(kind: 'aria2' | 'ytdlp' | 'ffmpeg'): Promise<ToolkitStatus>
-    openExtensionFolder(): Promise<void>
+    /**
+     * Open the build folder for one browser, so "load unpacked" has something
+     * to pick. Only the subfolder has a manifest.
+     */
+    openExtensionFolder(browser: 'chrome' | 'firefox'): Promise<void>
     systemPower(action: SystemPowerAction): Promise<void>
     dismissDetected(): Promise<void>
   }

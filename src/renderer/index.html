@@ -15,6 +15,10 @@
     <title>AriaDM</title>
   </head>
   <body>
+    <!-- The wallpaper layer. It stays in the markup rather than being created by
+         script so the picture is already painted when React mounts, and it is
+         inert: no pointer events, no layout. -->
+    <div id="app-wallpaper" aria-hidden="true"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

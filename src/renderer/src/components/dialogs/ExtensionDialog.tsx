@@ -40,6 +40,14 @@ export function ExtensionDialog(): JSX.Element | null {
     })
   }
 
+  const openFolder = (browser: 'chrome' | 'firefox'): void => {
+    void useApp
+      .getState()
+      .runAction(t('extension.openFolder'), async () => {
+        await window.api.integrations.openExtensionFolder(browser)
+      })
+  }
+
   return (
     <Modal
       open={open}
@@ -49,18 +57,22 @@ export function ExtensionDialog(): JSX.Element | null {
       width="max-w-2xl"
       footer={
         <>
+          {/* One button per build. Each opens the subfolder that actually holds a
+              manifest, because that is the folder "load unpacked" must be
+              pointed at. */}
           <Button
             variant="secondary"
             icon={<FolderOpen size={14} />}
-            onClick={() => {
-              void useApp
-                .getState()
-                .runAction(t('extension.openFolder'), async () => {
-                  await window.api.integrations.openExtensionFolder()
-                })
-            }}
+            onClick={() => openFolder('chrome')}
           >
-            {t('extension.openFolder')}
+            {t('extension.openChromeFolder')}
+          </Button>
+          <Button
+            variant="secondary"
+            icon={<FolderOpen size={14} />}
+            onClick={() => openFolder('firefox')}
+          >
+            {t('extension.openFirefoxFolder')}
           </Button>
           <Button variant="primary" onClick={closeDialog}>
             {t('extension.done')}

@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react'
-import { forwardRef, useEffect } from 'react'
+import { forwardRef, useEffect, useState } from 'react'
 
 import { cn } from '../../lib/cn'
 import type { Tone } from '../../lib/labels'
@@ -262,6 +262,79 @@ export function Row({
       </div>
       <div className="shrink-0">{children}</div>
     </div>
+  )
+}
+
+/**
+ * A labelled range input.
+ *
+ * Two callbacks rather than one because a drag emits an event per pixel:
+ * `onPreview` paints the change straight away (a CSS variable, no round trip),
+ * and `onCommit` writes it once the drag ends — otherwise one two-second drag
+ * would turn into a hundred writes of settings.json.
+ *
+ * The handle keeps following the draft until settings report the committed
+ * value, so it never snaps back during the moment between release and the write
+ * landing.
+ */
+export function Slider({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  suffix,
+  onPreview,
+  onCommit
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step?: number
+  suffix?: string
+  onPreview?: (value: number) => void
+  onCommit: (value: number) => void
+}): JSX.Element {
+  const [draft, setDraft] = useState<number | null>(null)
+  const shown = draft ?? value
+
+  useEffect(() => {
+    if (draft !== null && value === draft) setDraft(null)
+  }, [draft, value])
+
+  const commit = (): void => {
+    if (draft === null) return
+    if (draft === value) setDraft(null)
+    else onCommit(draft)
+  }
+
+  return (
+    <label className="block space-y-1.5">
+      <span className="flex items-center justify-between text-[12px] font-medium text-muted">
+        <span>{label}</span>
+        <span className="text-tabular text-fg">
+          {shown}
+          {suffix}
+        </span>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={shown}
+        onChange={(event) => {
+          const next = Number(event.target.value)
+          setDraft(next)
+          onPreview?.(next)
+        }}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-brand"
+      />
+    </label>
   )
 }
 

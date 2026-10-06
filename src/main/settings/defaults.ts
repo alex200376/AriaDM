@@ -29,6 +29,13 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     // default: English users get English, everyone else keeps what they had.
     language: 'system',
     accent: 'violet',
+    // No custom colour and no wallpaper until asked for: both are opt-in, and a
+    // default picture would be one more thing to ship and to explain.
+    customAccent: '',
+    backgroundImage: '',
+    backgroundBlur: 0,
+    backgroundDim: 40,
+    backgroundOpacity: 88,
     density: 'comfortable',
 
     closeToTray: true,

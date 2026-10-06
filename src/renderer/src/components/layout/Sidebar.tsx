@@ -3,7 +3,6 @@ import {
   ArrowDownToLine,
   CheckCircle2,
   Clock,
-  Gauge,
   History,
   List,
   Pause,
@@ -60,7 +59,6 @@ function NavItem({
 export function Sidebar(): JSX.Element {
   const items = useApp((state) => state.items)
   const view = useApp((state) => state.view)
-  const settingsTab = useApp((state) => state.settingsTab)
   const setView = useApp((state) => state.setView)
   const openSettings = useApp((state) => state.openSettings)
 
@@ -108,16 +106,13 @@ export function Sidebar(): JSX.Element {
             active={view === 'history'}
             onClick={() => setView('history')}
           />
-          <NavItem
-            icon={<Gauge size={15} />}
-            label={t('nav.profiles')}
-            active={view === 'settings' && settingsTab === 'downloads'}
-            onClick={() => openSettings('downloads')}
-          />
+          {/* One entry, not two. Speed profiles used to have their own row that
+              opened a different tab of the same settings page, which read as two
+              destinations and then landed in the same place. */}
           <NavItem
             icon={<SettingsIcon size={15} />}
             label={t('nav.settings')}
-            active={view === 'settings' && settingsTab !== 'downloads'}
+            active={view === 'settings'}
             onClick={() => openSettings('general')}
           />
         </nav>

@@ -58,6 +58,14 @@ export interface AppState {
   engine: EngineStatus
   speedSeries: SpeedSample[]
   settings: Settings | null
+  /**
+   * The wallpaper as a data URL, or '' when none is set.
+   *
+   * It is state rather than a render-time fetch because the renderer's CSP only
+   * permits `data:` images, so the picture has to come from the main process —
+   * and that is a file read worth doing once per change instead of per paint.
+   */
+  wallpaper: string
   paths: AppPaths | null
   toolkits: ToolkitStatus | null
   handoff: HandoffInfo | null
@@ -151,6 +159,26 @@ const emptyEngine: EngineStatus = {
 
 let toastCounter = 0
 
+/**
+ * The last wallpaper read, keyed by the path it came from.
+ *
+ * Settings are re-read on every window focus, and a wallpaper is a file read plus
+ * a base64 round trip through IPC. Remembering the last answer means those
+ * refreshes cost nothing while the path is unchanged — including the common case
+ * of no wallpaper at all, which is keyed as ''.
+ */
+let loadedWallpaper: { path: string; dataUrl: string } = { path: '', dataUrl: '' }
+
+async function loadWallpaper(settings: Settings): Promise<string> {
+  const path = settings.backgroundImage
+  if (path === loadedWallpaper.path) return loadedWallpaper.dataUrl
+  // A read that fails (deleted file, unexpected format) is remembered as "none"
+  // rather than retried on every refresh; Settings reports it where it is chosen.
+  const dataUrl = path.length > 0 ? await window.api.settings.readImage(path).catch(() => null) : null
+  loadedWallpaper = { path, dataUrl: dataUrl ?? '' }
+  return loadedWallpaper.dataUrl
+}
+
 /** Keep the module-level locale in step with the persisted language setting. */
 function syncLocale(settings: Settings | null | undefined): void {
   setLocale(localeFromSetting(settings?.language, typeof navigator === 'undefined' ? null : navigator.language))
@@ -165,6 +193,7 @@ export const useApp = create<AppState>((set, get) => ({
   engine: emptyEngine,
   speedSeries: [],
   settings: null,
+  wallpaper: '',
   paths: null,
   toolkits: null,
   handoff: null,
@@ -194,8 +223,9 @@ export const useApp = create<AppState>((set, get) => ({
         window.api.downloads.list()
       ])
       const handoff = await window.api.integrations.getHandoffInfo()
+      const wallpaper = await loadWallpaper(settings)
       syncLocale(settings)
-      set({ settings, paths, toolkits, handoff, items, ready: true, bootstrapError: '' })
+      set({ settings, wallpaper, paths, toolkits, handoff, items, ready: true, bootstrapError: '' })
     } catch (error) {
       set({ bootstrapError: (error as Error).message, ready: true })
     }
@@ -205,7 +235,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const settings = await window.api.settings.get()
       syncLocale(settings)
-      set({ settings })
+      set({ settings, wallpaper: await loadWallpaper(settings) })
     } catch {
       // A settings refresh failing is never worth interrupting the user for.
     }
@@ -231,7 +261,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const settings = await window.api.settings.patch(patch)
       syncLocale(settings)
-      set({ settings, lastActionError: '' })
+      set({ settings, wallpaper: await loadWallpaper(settings), lastActionError: '' })
     } catch (error) {
       get().pushToast({ title: t('toast.settingsFailed'), body: (error as Error).message, tone: 'error' })
     }

@@ -15,6 +15,8 @@ interface Urls {
   looksLikeItemPage(url: string): boolean
   isItemUrl(hostname: string, url: string): boolean
   playedAddress(video: unknown): string
+  mediaFileAddress(href: unknown): boolean
+  linkedMediaAddress(video: unknown, location: unknown, options?: unknown): string
   itemUrlNear(video: unknown, location: unknown, options?: unknown): string
 }
 
@@ -194,8 +196,20 @@ interface FakeNode {
   getBoundingClientRect(): { width: number; height: number }
 }
 
-function collectLinks(target: FakeNode): { href: string }[] {
-  return [...target.anchors.map((href) => ({ href })), ...target.children.flatMap(collectLinks)]
+/**
+ * Every anchor a real querySelectorAll('a[href]') would find *under* this node.
+ *
+ * The node's own href is not included — the DOM does not return the element from
+ * its own subtree query, and linksWithin checks that case itself. A child that is
+ * an anchor is included, which is what makes a download button beside the player
+ * findable at all.
+ */
+function collectLinks(target: FakeNode): { href: string; src?: string }[] {
+  const nested = target.children.flatMap((child) => [
+    ...(child.href ? [{ href: child.href }] : []),
+    ...collectLinks(child)
+  ])
+  return [...target.anchors.map((href) => ({ href })), ...nested]
 }
 
 /**
@@ -413,5 +427,74 @@ describe('itemUrlNear', () => {
   it('answers "no video here" when a ruled site has no player', () => {
     const body = node({ side: 2000 })
     expect(urls.itemUrlNear(null, page('https://x.com/home', body, body))).toBe('')
+  })
+
+  it('falls back to the media file the page’s own button links', () => {
+    // The reported case: a post page behind a bot check. The app cannot fetch it at
+    // all — every non-browser request gets 403 — and the player itself plays from a
+    // blob, so the address the site's own download button carries is the only one
+    // on the page that can work.
+    const video = node({ side: 100, currentSrc: 'blob:https://example.com/abcd' })
+    const button = node({ href: 'https://cdn.example/v/clip.mp4', side: 120 })
+    const card = node({ side: 200 }, [video, button])
+    const body = node({ side: 2000 }, [card])
+
+    expect(urls.itemUrlNear(video, page('https://example.com/post/1', body, body))).toBe(
+      'https://cdn.example/v/clip.mp4'
+    )
+  })
+
+  it('prefers what is playing over the button when both are there', () => {
+    const video = node({ side: 100, currentSrc: 'https://cdn.example/v/playing.mp4' })
+    const button = node({ href: 'https://cdn.example/v/other.mp4', side: 120 })
+    const card = node({ side: 200 }, [video, button])
+    const body = node({ side: 2000 }, [card])
+
+    expect(urls.itemUrlNear(video, page('https://example.com/post/1', body, body))).toBe(
+      'https://cdn.example/v/playing.mp4'
+    )
+  })
+
+  it('still sends the page when there is neither an address nor a media link', () => {
+    const video = node({ side: 100, currentSrc: 'blob:https://example.com/abcd' })
+    const body = node({ side: 2000 }, [video])
+
+    expect(urls.itemUrlNear(video, page('https://example.com/post/1', body, body))).toBe(
+      'https://example.com/post/1'
+    )
+  })
+
+  it('never lets a media link change what a ruled site sends', () => {
+    // On a site with a rule the player's *page* is what the app needs; a file
+    // beside the player there is a preview or a fragment, not the download.
+    const video = node({ side: 100 })
+    const button = node({ href: 'https://cdn.example/v/preview.mp4', side: 120 })
+    const card = node(
+      { anchors: ['https://www.youtube.com/watch?v=A14Q0fej6Hg'], side: 200 },
+      [video, button]
+    )
+    const body = node({ side: 2000 }, [card])
+
+    expect(urls.itemUrlNear(video, page('https://www.youtube.com/', body, body))).toBe(
+      'https://www.youtube.com/watch?v=A14Q0fej6Hg'
+    )
+  })
+})
+
+describe('mediaFileAddress', () => {
+  it('accepts what a download can be', () => {
+    expect(urls.mediaFileAddress('https://cdn.example/v/clip.mp4')).toBe(true)
+    expect(urls.mediaFileAddress('https://cdn.example/hls/index.m3u8')).toBe(true)
+    expect(urls.mediaFileAddress('https://cdn.example/song.mp3?x=1')).toBe(true)
+    expect(urls.mediaFileAddress('https://cdn.example/v/CLIP.MP4')).toBe(true)
+  })
+
+  it('refuses a page, a stream, and nothing at all', () => {
+    expect(urls.mediaFileAddress('https://example.com/post/1')).toBe(false)
+    expect(urls.mediaFileAddress('https://example.com/watch/1.html')).toBe(false)
+    expect(urls.mediaFileAddress('blob:https://example.com/abcd')).toBe(false)
+    expect(urls.mediaFileAddress('mediastream:1')).toBe(false)
+    expect(urls.mediaFileAddress('')).toBe(false)
+    expect(urls.mediaFileAddress(undefined)).toBe(false)
   })
 })

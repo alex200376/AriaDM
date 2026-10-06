@@ -284,6 +284,83 @@
   }
 }
 
+/**
+ * Custom wallpaper.
+ *
+ * The picture lives in its own fixed layer behind the app rather than on `body`,
+ * because the window's colour comes from a token that every card and row also
+ * derives from — repainting `body` alone would leave an opaque app on top of the
+ * picture. With the layer behind it, the app's own fills become translucent and
+ * the picture shows through the whole chrome at once.
+ *
+ * The element is always present; `data-wallpaper` decides whether it is shown, so
+ * turning the wallpaper off costs no DOM work and cannot leave a stale layer.
+ */
+#app-wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: none;
+  pointer-events: none;
+  background-image: var(--wallpaper-image, none);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  /* Blur bleeds past the edges otherwise, leaving a pale rim on a dark picture.
+     The small scale pushes that bleed off-screen. */
+  filter: blur(var(--wallpaper-blur, 0px));
+  transform: scale(1.06);
+}
+
+/**
+ * The fade layer, in the theme's own background colour rather than black.
+ *
+ * "Dim the picture" is one idea in a dark theme and the opposite one in a light
+ * theme, where a dark wallpaper under dark text is what makes the UI unreadable.
+ * Tinting toward `--bg` does the right thing in both: it darkens a busy photo on
+ * a dark background and washes it out on a light one.
+ */
+#app-wallpaper::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: rgb(var(--bg) / var(--wallpaper-dim, 0.4));
+}
+
+[data-wallpaper='on'] #app-wallpaper {
+  display: block;
+}
+
+/* The app's own colour has to give way, or the layer behind it stays hidden. */
+[data-wallpaper='on'] body {
+  background-color: transparent;
+}
+
+/* Lifted above the wallpaper layer, which is otherwise painted over everything
+   that is not positioned. */
+[data-wallpaper='on'] #root {
+  position: relative;
+  z-index: 1;
+}
+
+/**
+ * Unlayered on purpose: plain CSS outranks everything inside a `@layer`, which is
+ * what lets these beat the generated Tailwind utilities without `!important`.
+ *
+ * Only the opaque forms are listed. `bg-elevated/30` and friends already carry an
+ * alpha and keep compositing over the glass, which is what preserves the layering
+ * of a card inside a panel.
+ */
+[data-wallpaper='on'] .bg-bg {
+  background-color: rgb(var(--bg) / var(--app-alpha, 0.88));
+}
+
+[data-wallpaper='on'] .panel,
+[data-wallpaper='on'] .bg-surface,
+[data-wallpaper='on'] .bg-elevated {
+  background-color: rgb(var(--surface) / var(--app-alpha, 0.88));
+}
+
 /* Respect the OS setting; a download manager is often left open all day. */
 @media (prefers-reduced-motion: reduce) {
   *,

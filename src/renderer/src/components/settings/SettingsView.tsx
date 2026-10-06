@@ -6,11 +6,13 @@ import {
   FolderOpen,
   Gauge,
   Globe,
+  ImagePlus,
   Info,
   Loader2,
   Plug,
   Plus,
   RefreshCw,
+  RotateCcw,
   SlidersHorizontal,
   Trash2,
   Wrench
@@ -22,6 +24,7 @@ import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
 import { formatBytes, formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
 
+import { paintAccent, paintWallpaperAmounts } from '../../lib/appearance'
 import { cn } from '../../lib/cn'
 import { engineLabel, engineTone, type Tone } from '../../lib/labels'
 import { useApp, type SettingsTab } from '../../store/app-store'
@@ -34,6 +37,7 @@ import {
   Row,
   SectionTitle,
   SelectField,
+  Slider,
   TONE_DOT,
   Toggle
 } from '../ui/primitives'
@@ -76,6 +80,31 @@ function Advanced({ label, children }: { label: string; children: ReactNode }): 
 }
 
 const ACCENTS = ['violet', 'blue', 'emerald', 'amber', 'rose', 'cyan', 'slate']
+
+/**
+ * The presets in hex, matching the `[data-accent]` rules in globals.css.
+ *
+ * The colour picker cannot read a CSS variable, and `input[type=color]` rejects
+ * anything that is not `#rrggbb`, so the map is what lets it open on the colour
+ * already in use instead of dropping to black.
+ */
+const ACCENT_HEX: Record<string, string> = {
+  violet: '#7c5cff',
+  blue: '#3b82f6',
+  emerald: '#10b981',
+  amber: '#f59e0b',
+  rose: '#f43f5e',
+  cyan: '#06b6d4',
+  slate: '#64748b'
+}
+
+const FALLBACK_ACCENT_HEX = '#7c5cff'
+
+/** Just the file name of a path, for a control that shows one. */
+function fileNameOf(file: string): string {
+  if (file.length === 0) return ''
+  return file.split(/[\\/]/).pop() ?? file
+}
 
 /** Day index 0 is Sunday, matching `Date.getDay()` and the schedule model. */
 const WEEKDAY_KEYS: TranslationKey[] = [
@@ -176,7 +205,58 @@ const IPV6_MODE_OPTIONS: LocalisableOption[] = [
 function GeneralTab(): JSX.Element {
   const settings = useApp((state) => state.settings)
   const patch = useApp((state) => state.patchSettings)
+  const pushToast = useApp((state) => state.pushToast)
+  const runAction = useApp((state) => state.runAction)
+
+  /**
+   * The colour the picker is showing.
+   *
+   * Kept locally because the native picker fires on every nudge, and one write
+   * of settings.json per nudge is not worth it: the value is previewed straight
+   * onto the root element and written 250 ms after the drag settles.
+   */
+  const [accentDraft, setAccentDraft] = useState<string | null>(null)
+
+  const storedAccent = settings?.customAccent ?? ''
+  const paletteAccent = settings?.accent ?? ''
+
+  // Once the write lands there is nothing left to preview, so the control goes
+  // back to reading the saved value. Hooks run before the early return below.
+  useEffect(() => {
+    setAccentDraft(null)
+  }, [storedAccent, paletteAccent])
+
+  useEffect(() => {
+    if (accentDraft === null) return undefined
+    const timer = window.setTimeout(() => void patch({ customAccent: accentDraft }), 250)
+    return () => window.clearTimeout(timer)
+  }, [accentDraft, patch])
+
   if (!settings) return <></>
+
+  const previewAmounts = (patchAmounts: { blur?: number; dim?: number; opacity?: number }): void => {
+    paintWallpaperAmounts(document.documentElement, {
+      blur: patchAmounts.blur ?? settings.backgroundBlur,
+      dim: patchAmounts.dim ?? settings.backgroundDim,
+      opacity: patchAmounts.opacity ?? settings.backgroundOpacity
+    })
+  }
+
+  const chooseBackground = (): void => {
+    void runAction(t('settings.background'), async () => {
+      const chosen = await window.api.settings.chooseImage(settings.backgroundImage || undefined)
+      if (!chosen) return
+      // Reading it before saving is the only way to know it will actually paint:
+      // a file that is too large or of an unsupported type would otherwise be
+      // accepted, stored, and then never appear.
+      const dataUrl = await window.api.settings.readImage(chosen).catch(() => null)
+      if (!dataUrl) {
+        pushToast({ title: t('settings.backgroundFailed'), body: '', tone: 'warn' })
+        return
+      }
+      await patch({ backgroundImage: chosen })
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -208,24 +288,119 @@ function GeneralTab(): JSX.Element {
             onValueChange={(value) => void patch({ theme: value as never })}
           />
 
-          <Field label={t('settings.accent')}>
-            <div className="flex gap-2">
+          <Field label={t('settings.accent')} hint={t('settings.accentHint')}>
+            {/* Wraps on purpose: seven presets, a divider, the picker and the
+                reset button do not fit one line of a narrow settings column. */}
+            <div className="flex flex-wrap items-center gap-2">
               {ACCENTS.map((accent) => (
                 <button
                   key={accent}
                   type="button"
                   aria-label={accent}
-                  onClick={() => void patch({ accent })}
+                  onClick={() => void patch({ accent, customAccent: '' })}
                   data-accent={accent}
                   className={cn(
                     'h-7 w-7 rounded-full border-2 transition-transform',
-                    settings.accent === accent ? 'border-fg scale-110' : 'border-transparent'
+                    settings.customAccent.length === 0 && settings.accent === accent
+                      ? 'border-fg scale-110'
+                      : 'border-transparent'
                   )}
                   style={{ backgroundColor: `rgb(var(--brand))` }}
                 />
               ))}
+
+              <span className="mx-0.5 h-5 w-px bg-line" />
+
+              {/* A full palette would be a lot of UI for the one colour this app
+                  uses, and the OS picker is already there. */}
+              <input
+                type="color"
+                aria-label={t('settings.customAccent')}
+                value={accentDraft ?? (settings.customAccent || ACCENT_HEX[settings.accent] || FALLBACK_ACCENT_HEX)}
+                onChange={(event) => {
+                  setAccentDraft(event.target.value)
+                  paintAccent(document.documentElement, event.target.value)
+                }}
+                className="h-7 w-9 cursor-pointer rounded-md border-2 border-line bg-transparent p-0.5"
+              />
+
+              {settings.customAccent.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<RotateCcw size={13} />}
+                  onClick={() => void patch({ customAccent: '' })}
+                >
+                  {t('settings.customAccentReset')}
+                </Button>
+              )}
             </div>
           </Field>
+
+          <Field label={t('settings.background')} hint={t('settings.backgroundHint')}>
+            <div className="flex gap-2">
+              <Input
+                readOnly
+                value={fileNameOf(settings.backgroundImage)}
+                placeholder={t('settings.backgroundNone')}
+                className="text-[12px]"
+              />
+              <Button
+                variant="secondary"
+                icon={<ImagePlus size={14} />}
+                onClick={chooseBackground}
+              >
+                {settings.backgroundImage
+                  ? t('settings.backgroundChange')
+                  : t('settings.backgroundChoose')}
+              </Button>
+              {settings.backgroundImage.length > 0 && (
+                <Button
+                  variant="ghost"
+                  icon={<Trash2 size={14} />}
+                  aria-label={t('settings.backgroundRemove')}
+                  onClick={() => void patch({ backgroundImage: '' })}
+                />
+              )}
+            </div>
+          </Field>
+
+          {/* The three knobs only matter with a picture behind them, so they
+              appear with one. */}
+          {settings.backgroundImage.length > 0 && (
+            <div className="space-y-3 rounded-lg border border-line bg-elevated/30 p-3">
+              <Slider
+                label={t('settings.backgroundOpacity')}
+                value={settings.backgroundOpacity}
+                min={30}
+                max={100}
+                suffix="%"
+                onPreview={(value) => previewAmounts({ opacity: value })}
+                onCommit={(value) => void patch({ backgroundOpacity: value })}
+              />
+              <Slider
+                label={t('settings.backgroundBlur')}
+                value={settings.backgroundBlur}
+                min={0}
+                max={30}
+                suffix="px"
+                onPreview={(value) => previewAmounts({ blur: value })}
+                onCommit={(value) => void patch({ backgroundBlur: value })}
+              />
+              <Slider
+                label={t('settings.backgroundDim')}
+                value={settings.backgroundDim}
+                min={0}
+                max={80}
+                suffix="%"
+                onPreview={(value) => previewAmounts({ dim: value })}
+                onCommit={(value) => void patch({ backgroundDim: value })}
+              />
+              <p className="text-[11px] leading-relaxed text-faint">
+                {t('settings.backgroundOpacityHint')}
+              </p>
+            </div>
+          )}
 
           <SelectField
             label={t('settings.density')}
@@ -353,15 +528,10 @@ function NetworkTab(): JSX.Element {
 
       <section>
         <SectionTitle>{t('settings.globalLimit')}</SectionTitle>
+        {/* The download limit is not here: it has a live control in the toolbar,
+            where the current rate is visible beside it. Two inputs for one
+            setting meant a change made in one place looked lost in the other. */}
         <div className="grid grid-cols-2 gap-4">
-          <Field label={t('settings.downloadLimit')} hint={t('settings.downloadLimitHint')}>
-            <Input
-              type="number"
-              min={0}
-              value={settings.globalDownloadLimit}
-              onChange={(event) => void patch({ globalDownloadLimit: Number(event.target.value) })}
-            />
-          </Field>
           <Field label={t('settings.uploadLimit')} hint={t('settings.uploadLimitHint')}>
             <Input
               type="number"
@@ -370,10 +540,10 @@ function NetworkTab(): JSX.Element {
               onChange={(event) => void patch({ globalUploadLimit: Number(event.target.value) })}
             />
           </Field>
+          <div className="self-end pb-1 text-[11px] leading-relaxed text-faint">
+            {t('settings.downloadLimitToolbar')}
+          </div>
         </div>
-        <p className="mt-2 text-[11px] text-faint">
-          {t('settings.currentLimit', { value: formatSpeed(settings.globalDownloadLimit) })}
-        </p>
       </section>
 
       <section>

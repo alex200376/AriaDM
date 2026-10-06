@@ -141,6 +141,11 @@ let settings: Settings = {
   theme: 'dark',
   language: 'system',
   accent: 'violet',
+  customAccent: '',
+  backgroundImage: '',
+  backgroundBlur: 0,
+  backgroundDim: 40,
+  backgroundOpacity: 88,
   density: 'comfortable',
   closeToTray: true,
   startMinimised: false,
@@ -288,6 +293,29 @@ let toolkit: ToolkitStatus = {
 }
 
 const noop = async (): Promise<void> => {}
+
+/**
+ * A stand-in wallpaper for the browser-only preview.
+ *
+ * In the app the main process reads whatever picture the user picked and hands
+ * the renderer a data URL. Here the "file" is an inline gradient, so the
+ * appearance controls can be reviewed — and screenshotted — without an Electron
+ * window.
+ */
+const MOCK_WALLPAPER =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900">' +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0%" stop-color="#1b1035"/>' +
+      '<stop offset="45%" stop-color="#4b1d6b"/>' +
+      '<stop offset="100%" stop-color="#0b2a4a"/>' +
+      '</linearGradient></defs>' +
+      '<rect width="1600" height="900" fill="url(#g)"/>' +
+      '<circle cx="1240" cy="180" r="240" fill="#7c5cff" opacity="0.35"/>' +
+      '<circle cx="260" cy="720" r="300" fill="#06b6d4" opacity="0.22"/>' +
+      '</svg>'
+  )
 
 export function createMockApi(): AriaDmApi {
   return {
@@ -446,7 +474,9 @@ export function createMockApi(): AriaDmApi {
         extensions: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\extensions',
         updateLog: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\update.log'
       }),
-      chooseDirectory: async () => 'C:\\Users\\WOW\\Downloads\\Chosen'
+      chooseDirectory: async () => 'C:\\Users\\WOW\\Downloads\\Chosen',
+      chooseImage: async () => 'C:\\Users\\WOW\\Pictures\\wallpaper.svg',
+      readImage: async () => MOCK_WALLPAPER
     },
 
     integrations: {
@@ -589,7 +619,8 @@ export function createMockApi(): AriaDmApi {
         count: 1,
         locale: 'zh-TW' as const,
         theme: 'dark' as const,
-        accent: 'violet'
+        accent: 'violet',
+        customAccent: ''
       }),
       resolve: async () => {}
     },

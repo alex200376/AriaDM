@@ -5,6 +5,7 @@ import { resolveLocale, setLocale } from '@shared/i18n'
 import type { AriaDmApi, CatcherInfo } from '@shared/ipc'
 
 import { CatchPopup } from './components/catcher/CatchPopup'
+import { applyAppearance } from './lib/appearance'
 import './styles/globals.css'
 
 /**
@@ -15,19 +16,22 @@ import './styles/globals.css'
  * not the accent colour. The main process resolves those once and hands them
  * over with the capture, so the popup looks like part of the same app.
  */
-function applyAppearance(info: CatcherInfo): void {
+function applyLook(info: CatcherInfo): void {
   setLocale(info.locale)
 
-  const root = document.documentElement
-  root.setAttribute('data-accent', info.accent)
-
-  const media = window.matchMedia('(prefers-color-scheme: dark)')
-  const apply = (): void => {
-    const dark = info.theme === 'dark' || (info.theme === 'system' && media.matches)
-    root.classList.toggle('dark', dark)
-  }
-  apply()
-  if (info.theme === 'system') media.addEventListener('change', apply)
+  // No wallpaper here: the popup is a small floating card, and a picture behind
+  // a 460px window would be noise. The accent still follows the main window, so
+  // a custom colour does not look like a different app.
+  applyAppearance(document.documentElement, {
+    theme: info.theme,
+    accent: info.accent,
+    customAccent: info.customAccent,
+    density: 'comfortable',
+    wallpaper: '',
+    blur: 0,
+    dim: 0,
+    opacity: 100
+  })
 }
 
 async function start(): Promise<void> {
@@ -39,7 +43,7 @@ async function start(): Promise<void> {
   }
 
   const info = await window.api.catcher.get().catch(() => null)
-  if (info) applyAppearance(info)
+  if (info) applyLook(info)
   else setLocale(resolveLocale(navigator.language))
 
   const container = document.getElementById('root')

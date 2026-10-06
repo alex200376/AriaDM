@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 
 import { useApp } from '../store/app-store'
+import { applyAppearance } from './appearance'
 
 /**
  * Wires main-process events into the store, and applies the theme tokens that
@@ -42,36 +43,26 @@ export function useLiveData(): void {
     }
   }, [])
 
-  const theme = useApp((state) => state.settings?.theme ?? 'dark')
-  const accent = useApp((state) => state.settings?.accent ?? 'violet')
-  const density = useApp((state) => state.settings?.density ?? 'comfortable')
+  const settings = useApp((state) => state.settings)
+  const wallpaper = useApp((state) => state.wallpaper)
 
-  // Reflect the theme onto the document element. `system` follows the OS via a
-  // media query, which is what a user selecting it means.
+  // One effect for the whole look: theme, accent (including a custom colour),
+  // density and the wallpaper all live on the same element, so applying them
+  // together means a change can never land half-way. `system` follows the OS via
+  // a media query, which is what a user selecting it means.
   useEffect(() => {
-    const root = document.documentElement
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-
-    const apply = (): void => {
-      const dark = theme === 'dark' || (theme === 'system' && media.matches)
-      root.classList.toggle('dark', dark)
-    }
-
-    apply()
-    if (theme === 'system') {
-      media.addEventListener('change', apply)
-      return () => media.removeEventListener('change', apply)
-    }
-    return undefined
-  }, [theme])
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-accent', accent)
-  }, [accent])
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-density', density)
-  }, [density])
+    if (!settings) return undefined
+    return applyAppearance(document.documentElement, {
+      theme: settings.theme,
+      accent: settings.accent,
+      customAccent: settings.customAccent,
+      density: settings.density,
+      wallpaper,
+      blur: settings.backgroundBlur,
+      dim: settings.backgroundDim,
+      opacity: settings.backgroundOpacity
+    })
+  }, [settings, wallpaper])
 }
 
 /** Re-sync settings when the window regains focus, in case the tray changed them. */

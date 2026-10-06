@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({ runners: [] as FakeRunnerLike[] }))
 
 interface FakeRunnerLike {
   options: Record<string, unknown>
+  killed: boolean
   emit(event: string, ...args: unknown[]): boolean
 }
 
@@ -37,8 +38,11 @@ vi.mock('../../src/main/media/ytdlp', async () => {
       this.options = options
       state.runners.push(this)
     }
+    killed = false
     start(): void {}
-    kill(): void {}
+    kill(): void {
+      this.killed = true
+    }
   }
   // buildDownloadArgs/parseProgressLine are asserted in their own cases below, so
   // the mock has to hand the real implementations through.
@@ -448,5 +452,38 @@ describe('the title carried from the page into the run', () => {
 
     expect(optionsOf(0).titleHint).toBeUndefined()
     expect(jobs.get(gid)!.name).toBe('a video')
+  })
+})
+
+describe('stopping a media download', () => {
+  it('tells the run to stop, and stays paused when its process reports a failure', async () => {
+    // Two things had to be true at once. The run has to be told to stop — it is
+    // the runner that takes the whole tree, including the ffmpeg doing the merge,
+    // which is what kept downloading after the row said "paused". And the exit
+    // that arrives a moment later must not be read as a failure: it used to flip
+    // the paused row to "error".
+    const jobs = makeJobs()
+    const { gid } = await jobs.add(addInput('312'), PROBE as never)
+
+    await jobs.pause(gid)
+
+    expect(state.runners[0]!.killed).toBe(true)
+    expect(jobs.get(gid)!.status).toBe('paused')
+
+    state.runners[0]!.emit('failed', 'yt-dlp 結束，代碼 1')
+    expect(jobs.get(gid)!.status).toBe('paused')
+    expect(jobs.get(gid)!.errorMessage).toBe('')
+  })
+
+  it('still resumes from a pause, continuing the same download', async () => {
+    const jobs = makeJobs()
+    const { gid } = await jobs.add(addInput('312'), PROBE as never)
+
+    await jobs.pause(gid)
+    await jobs.resume(gid)
+
+    expect(jobs.get(gid)!.status).toBe('active')
+    expect(state.runners).toHaveLength(2)
+    expect(optionsOf(1).titleHint).toBeUndefined()
   })
 })

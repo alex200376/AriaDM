@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Zap } from 'lucide-react'
 
-import { formatBytes, formatSpeed } from '@shared/format'
+import { formatSpeed } from '@shared/format'
 import { t } from '@shared/i18n'
 
 import { useEasedNumber } from '../../hooks/useEased'
@@ -13,15 +13,11 @@ export function StatusBar(): JSX.Element {
   const global = useApp((state) => state.global)
   const engine = useApp((state) => state.engine)
   const series = useApp((state) => state.speedSeries)
-  const items = useApp((state) => state.items)
 
   const download = useEasedNumber(global.downloadSpeed)
   const upload = useEasedNumber(global.uploadSpeed)
 
   const peak = series.reduce((max, sample) => Math.max(max, sample.download), 0)
-  const totalCompleted = items
-    .filter((item) => item.status === 'complete')
-    .reduce((sum, item) => sum + item.totalLength, 0)
 
   const tone = engineTone(engine.state)
 
@@ -46,22 +42,14 @@ export function StatusBar(): JSX.Element {
         <span className="text-tabular">{formatSpeed(peak)}</span>
       </span>
 
-      <span className="hidden text-faint xl:inline">
-        {t('statusBar.completed', { size: formatBytes(totalCompleted) })}
-      </span>
-
+      {/* The queue's counts and the finished total live in the title bar and the
+          sidebar. This bar is about *throughput*, and repeating them here made a
+          narrow window's status area say the same number twice. */}
       <div className="flex-1" />
-
-      <span className="hidden text-faint lg:inline">
-        {t('statusBar.active', { count: global.numActive })} ·{' '}
-        {t('statusBar.queued', { count: global.numWaiting })} ·{' '}
-        {t('statusBar.finished', { count: global.numStopped })}
-      </span>
 
       <span className="flex items-center gap-1.5" title={engine.lastError || engine.message || engineLabel(engine.state)}>
         <span className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[tone]}`} />
         <span>{engineLabel(engine.state)}</span>
-        {engine.port !== null && <span className="text-faint">:{engine.port}</span>}
       </span>
     </footer>
   )
