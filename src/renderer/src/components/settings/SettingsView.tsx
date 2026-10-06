@@ -18,7 +18,7 @@ import {
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { AppPaths, CategoryRule, ScheduleRule, SpeedProfile } from '@shared/settings'
-import type { UpdateInfo, UpdateInstallKind, UpdateProgress } from '@shared/ipc'
+import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
 import { formatBytes, formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
 
@@ -1270,10 +1270,15 @@ function ToolsTab(): JSX.Element {
   )
 }
 
-/** Locations worth showing straight away, in the order they get used. */
-const PRIMARY_PATH_KEYS: (keyof AppPaths)[] = ['downloads', 'userData', 'bin']
+/**
+ * Locations worth showing straight away: where files land and where the logs
+ * are. Everything else (app data, tool binaries, session files) only gets read
+ * out during a bug report, so it stays behind "show other locations".
+ */
+const PRIMARY_PATH_KEYS: (keyof AppPaths)[] = ['downloads', 'logs']
 const SECONDARY_PATH_KEYS: (keyof AppPaths)[] = [
-  'logs',
+  'userData',
+  'bin',
   'settings',
   'updateLog',
   'appLog',
@@ -1282,21 +1287,6 @@ const SECONDARY_PATH_KEYS: (keyof AppPaths)[] = [
   'aria2Log',
   'extensions'
 ]
-
-const LIMITATION_KEYS: TranslationKey[] = [
-  'settings.about.limit1',
-  'settings.about.limit2',
-  'settings.about.limit3',
-  'settings.about.limit4',
-  'settings.about.limit5'
-]
-
-const INSTALL_KIND_KEYS: Record<UpdateInstallKind, TranslationKey> = {
-  machine: 'settings.about.installKind.machine',
-  user: 'settings.about.installKind.user',
-  portable: 'settings.about.installKind.portable',
-  dev: 'settings.about.installKind.dev'
-}
 
 /** Human labels for the paths, instead of the raw keys the object is keyed by. */
 const PATH_LABEL_KEYS: Record<keyof AppPaths, TranslationKey> = {
@@ -1322,33 +1312,49 @@ const PATH_LABEL_KEYS: Record<keyof AppPaths, TranslationKey> = {
  */
 let checkedForUpdatesThisSession = false
 
-/** A label/value pair in the compact version grid. */
-function ComponentRow({ label, value, ok }: { label: string; value: string; ok: boolean }): JSX.Element {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="truncate text-faint">{label}</span>
-      <span className={cn('truncate font-mono', ok ? 'text-fg' : 'text-warn')}>{value}</span>
-    </div>
-  )
-}
+/**
+ * What that one check answered, kept beside the flag.
+ *
+ * The tab unmounts whenever another panel is opened, and without this the
+ * revisit came back to an empty status line — a dot with nothing after it,
+ * because the flag had already spent the check. Cached here, a return visit
+ * shows the answer immediately and still does not re-hit the release API.
+ */
+let lastUpdateCheck: UpdateInfo | null = null
 
 function AboutTab(): JSX.Element {
   const paths = useApp((state) => state.paths)
-  const toolkits = useApp((state) => state.toolkits)
   const engine = useApp((state) => state.engine)
-  const version = engine.version
-  const [update, setUpdate] = useState<UpdateInfo | null>(null)
-  const [checking, setChecking] = useState(false)
+  const [update, setUpdate] = useState<UpdateInfo | null>(lastUpdateCheck)
+  // A check that has not started yet reads as "checking" rather than as an
+  // empty card, so the first frame after opening the tab already says something.
+  const [checking, setChecking] = useState(!lastUpdateCheck && !checkedForUpdatesThisSession)
   const [progress, setProgress] = useState<UpdateProgress | null>(null)
   const [installing, setInstalling] = useState(false)
   const [failure, setFailure] = useState('')
   const [notice, setNotice] = useState('')
   const [showAllPaths, setShowAllPaths] = useState(false)
-  const [showLimitations, setShowLimitations] = useState(false)
+  const [showTrouble, setShowTrouble] = useState(false)
 
   // The main process reports download progress on its own channel, so the bar
   // advances even while the button's own promise is still pending.
   useEffect(() => window.api.on.updateProgress(setProgress), [])
+
+  /**
+   * The support tools fold away until they are needed, so a healthy update card
+   * is one status line and one button. The moment something goes wrong they open
+   * themselves — the user should not have to discover the way out.
+   */
+  const broken = Boolean(failure || update?.error || progress?.phase === 'error')
+  useEffect(() => {
+    if (broken) setShowTrouble(true)
+  }, [broken])
+
+  /** Record a result both as component state and as the session's answer. */
+  const applyUpdate = useCallback((info: UpdateInfo | null): void => {
+    lastUpdateCheck = info
+    setUpdate(info)
+  }, [])
 
   const checkForUpdates = useCallback(async (): Promise<void> => {
     setChecking(true)
@@ -1356,9 +1362,9 @@ function AboutTab(): JSX.Element {
     setNotice('')
     setProgress(null)
     try {
-      setUpdate(await window.api.update.check())
+      applyUpdate(await window.api.update.check())
     } catch (error) {
-      setUpdate({
+      applyUpdate({
         current: window.api.version,
         latest: null,
         available: false,
@@ -1375,7 +1381,7 @@ function AboutTab(): JSX.Element {
     } finally {
       setChecking(false)
     }
-  }, [])
+  }, [applyUpdate])
 
   useEffect(() => {
     if (checkedForUpdatesThisSession) return
@@ -1471,16 +1477,15 @@ function AboutTab(): JSX.Element {
       // The repair may have deleted the installer this tab is still offering, so
       // resync. A failed re-check must not hide that the repair itself worked.
       try {
-        setUpdate(await window.api.update.check())
+        applyUpdate(await window.api.update.check())
       } catch {
-        setUpdate((previous) => (previous ? { ...previous, pendingInstaller: null } : previous))
+        applyUpdate(lastUpdateCheck ? { ...lastUpdateCheck, pendingInstaller: null } : lastUpdateCheck)
       }
     } catch (error) {
       setFailure((error as Error).message)
     }
   }
 
-  const installKindLabel = update ? t(INSTALL_KIND_KEYS[update.installKind]) : t('common.dash')
   const engineRunning = engine.state === 'ready'
   const pathEntries = paths
     ? [...PRIMARY_PATH_KEYS, ...(showAllPaths ? SECONDARY_PATH_KEYS : [])].map((key) => ({ key, value: paths[key] }))
@@ -1525,8 +1530,10 @@ function AboutTab(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      {/* Identity, one version, and the two facts that explain most of the rest
-          of the app: is the engine up, and how is this copy installed. */}
+      {/* Identity and nothing else: the name, the version, and whether the
+          engine is up. Component versions live in Integrations → Tools, and
+          platform/install details only matter in a bug report, which Copy
+          diagnostics already covers. */}
       <section className="rounded-xl border border-line bg-elevated/30 p-4">
         <div className="flex items-start gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand/15 text-brand">
@@ -1540,29 +1547,7 @@ function AboutTab(): JSX.Element {
                 {engineRunning ? t('settings.about.engineRunning') : t('settings.about.engineStopped')}
               </Badge>
             </div>
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">{t('settings.about.tagline')}</p>
           </div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1 border-t border-line pt-3 text-[11.5px]">
-          <ComponentRow
-            label={t('settings.about.engine')}
-            value={version || toolkits?.aria2.version || t('common.dash')}
-            ok={Boolean(version || toolkits?.aria2.present)}
-          />
-          <ComponentRow
-            label="yt-dlp"
-            value={toolkits?.ytdlp.version || t('common.dash')}
-            ok={Boolean(toolkits?.ytdlp.present)}
-          />
-          <ComponentRow
-            label="ffmpeg"
-            value={toolkits?.ffmpeg.version || t('common.dash')}
-            ok={Boolean(toolkits?.ffmpeg.present)}
-          />
-          <ComponentRow label={t('settings.about.electron')} value={window.api.runtime.electron || t('common.dash')} ok />
-          <ComponentRow label={t('settings.about.platform')} value={window.api.platform} ok />
-          <ComponentRow label={t('settings.about.installKind')} value={installKindLabel} ok />
         </div>
 
         {update?.installKind === 'machine' && (
@@ -1676,29 +1661,50 @@ function AboutTab(): JSX.Element {
               </Button>
             )}
 
-            <Button variant="ghost" size="sm" onClick={openUpdateLog}>
-              {t('settings.update.openLog')}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => void copyDiagnostics()}>
-              {t('settings.update.copyDiagnostics')}
-            </Button>
-            {/* The escape hatch for an update that is "ready" and fails every
-                time: its installer is re-hashed and thrown away if it no longer
-                matches the published release. */}
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<Wrench size={13} />}
-              disabled={installing}
-              onClick={() => void repairUpdateCache()}
-            >
-              {t('settings.update.repairCache')}
-            </Button>
           </div>
 
           {update?.available && !update.canInstall && (
             <p className="mt-2 text-[11px] leading-relaxed text-faint">{t('settings.update.manualHint')}</p>
           )}
+
+          {/* Log, diagnostics and re-hash only ever matter when an update has
+              gone wrong, so they stay folded away until it has. */}
+          <div className={cn('mt-3', showTrouble && 'border-t border-line pt-3')}>
+            <button
+              type="button"
+              onClick={() => setShowTrouble((open) => !open)}
+              className="flex w-full items-center justify-between text-[12px] text-muted transition-colors hover:text-fg"
+            >
+              <span className="inline-flex items-center gap-2">
+                <Wrench size={13} className="text-faint" />
+                {t('settings.update.troubleshooting')}
+              </span>
+              <span className="text-faint">
+                {showTrouble ? t('common.showLess') : t('common.showMore')}
+              </span>
+            </button>
+            {showTrouble && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={openUpdateLog}>
+                  {t('settings.update.openLog')}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void copyDiagnostics()}>
+                  {t('settings.update.copyDiagnostics')}
+                </Button>
+                {/* The escape hatch for an update that is "ready" and fails every
+                    time: its installer is re-hashed and thrown away if it no
+                    longer matches the published release. */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={installing}
+                  onClick={() => void repairUpdateCache()}
+                >
+                  {t('settings.update.repairCache')}
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -1727,30 +1733,6 @@ function AboutTab(): JSX.Element {
         </Button>
       </section>
 
-      {/* Five bullets used to outweigh the single thing this tab can actually do,
-          so they collapse behind a count. */}
-      <section>
-        <button
-          type="button"
-          onClick={() => setShowLimitations((open) => !open)}
-          className="flex w-full items-center justify-between rounded-xl border border-line bg-elevated/30 px-3 py-2 text-left text-[12px] text-muted transition-colors hover:text-fg"
-        >
-          <span className="inline-flex items-center gap-2">
-            <CheckCircle2 size={13} className="text-faint" />
-            {t('settings.about.limitationsCount', { count: LIMITATION_KEYS.length })}
-          </span>
-          <span className="text-faint">
-            {showLimitations ? t('common.showLess') : t('common.showMore')}
-          </span>
-        </button>
-        {showLimitations && (
-          <ul className="mt-2 space-y-1.5 text-[11.5px] leading-relaxed text-muted">
-            {LIMITATION_KEYS.map((key) => (
-              <li key={key}>• {t(key)}</li>
-            ))}
-          </ul>
-        )}
-      </section>
     </div>
   )
 }

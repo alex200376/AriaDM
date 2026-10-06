@@ -682,17 +682,7 @@ export const en = {
     'Supports %f for the full path, %d for the folder and %n for the filename. Run through execFile, never a shell.',
   'settings.postAction.commandPlaceholder': 'For example "C:\\Program Files\\7-Zip\\7z.exe" x %f',
   'settings.about.title': 'About AriaDM',
-  'settings.about.engine': 'aria2 engine',
-  'settings.about.ytdlp': 'yt-dlp',
-  'settings.about.platform': 'Platform',
   'settings.about.paths': 'Where things live',
-  'settings.about.limitations': 'Known limitations',
-  'settings.about.limit1':
-    'The installer is unsigned or only recently signed, so Windows SmartScreen still warns until publisher reputation builds.',
-  'settings.about.limit2': 'aria2 upstream has had no stable release since 1.37.0 (2023); this app pins that build and verifies its hash.',
-  'settings.about.limit3': 'The installer bundles aria2, yt-dlp and ffmpeg, so it is large; updating those tools means reinstalling.',
-  'settings.about.limit4': 'yt-dlp cannot pause — pausing ends the process, and resuming continues from the .part file.',
-  'settings.about.limit5': 'When a server does not support ranges (Accept-Ranges), aria2 falls back to a single connection.',
 
   // -- in-app update -------------------------------------------------------
   'settings.update.title': 'Updates',
@@ -716,16 +706,8 @@ export const en = {
   'settings.media.extensionCookies': 'Let the extension supply your login',
   'settings.media.extensionCookiesHint':
     'Click the AriaDM extension in your browser and it hands over that page\u2019s cookies. They are kept in memory only, never written to history, and dropped shortly after. For browsers whose cookie store yt-dlp cannot read (Perplexity Comet), this is the only way.',
-  'settings.about.tagline': 'A desktop download manager built on the aria2 engine, with yt-dlp and ffmpeg included.',
   'settings.about.engineRunning': 'Engine running',
   'settings.about.engineStopped': 'Engine stopped',
-  'settings.about.versions': 'Component versions',
-  'settings.about.electron': 'Electron',
-  'settings.about.installKind': 'Install type',
-  'settings.about.installKind.machine': 'All users (Program Files)',
-  'settings.about.installKind.user': 'Current user',
-  'settings.about.installKind.portable': 'Portable',
-  'settings.about.installKind.dev': 'Development build',
   'settings.about.installKind.machineHint':
     'Updating shows a Windows permission prompt; choose "Yes" there, or the installer exits without installing anything.',
 
@@ -746,7 +728,7 @@ export const en = {
   'settings.paths.extensions': 'Browser extensions',
 
   // -- about tab: update card ---------------------------------------------
-  'settings.about.limitationsCount': 'Known limitations ({count})',
+  'settings.update.troubleshooting': 'Troubleshooting',
   'settings.update.installStarted': 'The installer is running. AriaDM is closing…',
   'settings.update.waitingPermission': 'Waiting for the Windows permission prompt. Choose "Yes" there…',
   'settings.update.permissionRequired':

@@ -668,17 +668,7 @@ export const zhTW = {
     '支援 %f 完整路徑、%d 資料夾、%n 檔名。以 execFile 傳參數執行，不經過 shell。',
   'settings.postAction.commandPlaceholder': '例如 "C:\\Program Files\\7-Zip\\7z.exe" x %f',
   'settings.about.title': '關於 AriaDM',
-  'settings.about.engine': 'aria2 引擎',
-  'settings.about.ytdlp': 'yt-dlp',
-  'settings.about.platform': '平台',
   'settings.about.paths': '資料位置',
-  'settings.about.limitations': '已知限制',
-  'settings.about.limit1':
-    '安裝檔尚未簽章（或剛開始簽章），在使用者數量累積出信譽前，Windows SmartScreen 仍會顯示警告。',
-  'settings.about.limit2': 'aria2 上游自 1.37.0（2023 年）後未再發布穩定版，本程式釘選該版本並驗證雜湊。',
-  'settings.about.limit3': '安裝檔內建 aria2、yt-dlp 與 ffmpeg，因此體積較大；要更新這三個工具就得重新安裝新版。',
-  'settings.about.limit4': 'yt-dlp 沒有暫停功能，暫停實際上是終止程序，繼續時由 .part 檔接續。',
-  'settings.about.limit5': '伺服器若不支援分段下載（Accept-Ranges），aria2 會退回單一連線。',
 
   // -- in-app update -------------------------------------------------------
   'settings.update.title': '更新',
@@ -701,16 +691,8 @@ export const zhTW = {
   'settings.media.extensionCookies': '由擴充功能提供登入狀態',
   'settings.media.extensionCookiesHint':
     '在瀏覽器裡按一下 AriaDM 擴充功能，該頁面的 Cookie 就會交給 AriaDM。只保留在記憶體中、不會寫入紀錄，並在短時間內自動清除。Comet 等 yt-dlp 讀不到 Cookie 的瀏覽器只能靠這個方式。',
-  'settings.about.tagline': '以 aria2 為引擎的桌面下載管理器，內建 yt-dlp 與 ffmpeg。',
   'settings.about.engineRunning': '引擎運作中',
   'settings.about.engineStopped': '引擎已停止',
-  'settings.about.versions': '元件版本',
-  'settings.about.electron': 'Electron',
-  'settings.about.installKind': '安裝方式',
-  'settings.about.installKind.machine': '系統安裝（Program Files）',
-  'settings.about.installKind.user': '使用者安裝',
-  'settings.about.installKind.portable': '可攜版',
-  'settings.about.installKind.dev': '開發模式',
   'settings.about.installKind.machineHint':
     '更新時 Windows 會顯示 UAC 提示，請在該視窗選擇「是」，否則安裝程式會直接結束。',
 
@@ -731,7 +713,7 @@ export const zhTW = {
   'settings.paths.extensions': '瀏覽器擴充功能',
 
   // -- about tab: update card ---------------------------------------------
-  'settings.about.limitationsCount': '已知限制（{count}）',
+  'settings.update.troubleshooting': '疑難排解',
   'settings.update.installStarted': '安裝程式已啟動，AriaDM 即將關閉…',
   'settings.update.waitingPermission': '等待 Windows 權限確認，請在提示視窗選擇「是」…',
   'settings.update.permissionRequired':
