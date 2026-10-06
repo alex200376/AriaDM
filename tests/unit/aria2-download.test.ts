@@ -65,6 +65,19 @@ describe('downloadWithAria2', () => {
     expect(outcome.unavailable).toBe(true)
   })
 
+  it('answers a missing engine the same way however the process events race', async () => {
+    // A failed spawn emits 'error' and then 'close' — on Windows, about two
+    // milliseconds apart, the latter with code -4058 — and each handler used to
+    // delete the target before answering. Which one replied therefore came down
+    // to which async delete finished first, and whenever 'close' won this answer
+    // was lost: the updater reported a broken update instead of falling back to
+    // its own downloader. It failed about once in three runs, here and on CI.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const outcome = await downloadWithAria2(request())
+      expect(outcome.unavailable).toBe(true)
+    }
+  })
+
   it('clears a leftover file before handing the path to the engine', async () => {
     // A stale file would make "the installer is on disk" ambiguous, and with
     // --continue=false aria2 refuses to start over one.

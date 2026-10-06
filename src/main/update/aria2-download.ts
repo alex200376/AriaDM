@@ -170,16 +170,21 @@ export async function downloadWithAria2(request: Aria2DownloadRequest): Promise<
     }
 
     child.on('error', (error) => {
-      // A missing binary is the one failure worth naming: the caller falls back
-      // to its own downloader instead of reporting a broken update.
+      /*
+       * A missing binary is the one failure worth naming: the caller falls back
+       * to its own downloader instead of reporting a broken update.
+       *
+       * Answered here and now, before any cleanup. A failed spawn emits `error`
+       * and then `close` — on Windows with a missing binary, two milliseconds
+       * apart — and both handlers used to delete the target before answering, so
+       * which one replied came down to two async deletions. Whenever `close` won
+       * (it arrives with code -4058, never 0), this answer was dropped and the
+       * outcome read as a plain failure: the updater reported a broken update
+       * rather than falling back, which is the whole reason `unavailable` exists.
+       */
       const code = (error as NodeJS.ErrnoException).code
-      void discard(target).then(() =>
-        finish({
-          ok: false,
-          unavailable: code === 'ENOENT',
-          error: error.message
-        })
-      )
+      finish({ ok: false, unavailable: code === 'ENOENT', error: error.message })
+      void discard(target)
     })
 
     child.on('close', (code) => {
