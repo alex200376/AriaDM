@@ -20,25 +20,35 @@ export interface BoundedResult {
   error?: Error
 }
 
+/** A bounded wait that keeps the answer: the value, or why there was none. */
+export interface BoundedValue<T> {
+  outcome: BoundedOutcome
+  /** Present only when `outcome` is 'done'. */
+  value?: T
+  /** Present only when `outcome` is 'failed'. */
+  error?: Error
+}
+
 /**
- * Await `promise`, but never for longer than `ms`.
+ * Await `promise`, but never for longer than `ms`, and keep its value.
  *
- * A rejection is reported as `'failed'` rather than thrown: during a shutdown a
- * failing step is information to log, not a reason to abandon the remaining
- * steps. The returned promise itself never rejects.
+ * A rejection is reported as `'failed'` rather than thrown, and a promise that
+ * outlives the deadline is left running (only the wait ends). The returned
+ * promise itself never rejects. This is what lets a slow answer — a format probe
+ * on a site that refuses the session — be abandoned without being cancelled.
  */
-export async function bounded(promise: Promise<unknown>, ms: number): Promise<BoundedResult> {
+export async function boundedValue<T>(promise: Promise<T>, ms: number): Promise<BoundedValue<T>> {
   let timer: NodeJS.Timeout | undefined
 
-  const deadline = new Promise<BoundedResult>((resolve) => {
+  const deadline = new Promise<BoundedValue<T>>((resolve) => {
     timer = setTimeout(() => resolve({ outcome: 'timeout' }), ms)
     // Never let the watchdog itself keep the process alive.
     timer.unref?.()
   })
 
   try {
-    const settled = promise.then<BoundedResult, BoundedResult>(
-      () => ({ outcome: 'done' }),
+    const settled = promise.then<BoundedValue<T>, BoundedValue<T>>(
+      (value) => ({ outcome: 'done', value }),
       (error: unknown) => ({
         outcome: 'failed',
         error: error instanceof Error ? error : new Error(String(error))
@@ -48,4 +58,16 @@ export async function bounded(promise: Promise<unknown>, ms: number): Promise<Bo
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+/**
+ * Await `promise`, but never for longer than `ms`.
+ *
+ * A rejection is reported as `'failed'` rather than thrown: during a shutdown a
+ * failing step is information to log, not a reason to abandon the remaining
+ * steps. The returned promise itself never rejects.
+ */
+export async function bounded(promise: Promise<unknown>, ms: number): Promise<BoundedResult> {
+  const { outcome, error } = await boundedValue(promise, ms)
+  return error ? { outcome, error } : { outcome }
 }

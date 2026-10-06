@@ -24,7 +24,7 @@ import { localeFromSetting } from '@shared/i18n'
 import { createAppLog } from './app-log'
 import { locateAria2 } from './aria2/locate'
 import { nextBackoffDelay } from './backoff'
-import { bounded, type BoundedResult } from './bounded'
+import { bounded, boundedValue, type BoundedResult } from './bounded'
 import { DownloadCatcher } from './catcher'
 import { Aria2Supervisor } from './aria2/supervisor'
 import { findCategory } from './downloads/categorizer'
@@ -34,7 +34,12 @@ import { DownloadManager } from './downloads/manager'
 import { registerIpcHandlers } from './ipc/handlers'
 import { ClipboardWatcher, looksLikeDirectFile } from './integrations/clipboard-watch'
 import { HandoffServer } from './integrations/handoff-api'
-import { formatChoices, defaultFormatId } from '@shared/media-formats'
+import {
+  formatChoices,
+  defaultFormatId,
+  provisionalFormatId,
+  provisionalFormatOption
+} from '@shared/media-formats'
 import { matchMediaSite, needsPageSniff, resolveHandoffEngine } from '@shared/media-sites'
 import { runPostAction, type PostActionDeps } from './integrations/post-actions'
 import { Scheduler } from './integrations/scheduler'
@@ -135,6 +140,18 @@ let completionTimer: NodeJS.Timeout | null = null
 
 /** How long to gather completions before announcing them. */
 const COMPLETION_BATCH_MS = 1_200
+
+/**
+ * How long the extension's quality menu waits for a format probe.
+ *
+ * The menu is a nicety; the download is the point. A probe that has not answered
+ * by now — a site that refuses the browser session, a slow extraction — is
+ * handed back as the single provisional default instead, so the extension's
+ * button starts the download rather than spinning on a menu that may never
+ * arrive. The probe itself keeps running, so the next click reads the real list
+ * from the cache.
+ */
+const PROBE_MENU_BUDGET_MS = 5_000
 
 /**
  * The main process's own log.
@@ -595,11 +612,26 @@ async function restartHandoff(): Promise<void> {
       if (!settings.ytdlpEnabled) throw new Error('影音下載功能已停用。')
       // The session the browser is looking at the page with, so the qualities
       // offered are the ones this visitor can actually get.
-      const probe = await mediaJobs.probe(url, { cookieHeader: cookies ?? '' })
+      const hasFfmpeg = mediaJobs.hasFfmpeg
+      const answer = await boundedValue(
+        mediaJobs.probe(url, { cookieHeader: cookies ?? '' }),
+        PROBE_MENU_BUDGET_MS
+      )
+      const probe = answer.value ?? null
+      if (!probe) {
+        // Hand back the one choice the download would use anyway (see
+        // provisionalFormatId), so the caller can act at once instead of waiting
+        // out a probe that is not answering.
+        return {
+          title: url,
+          defaultFormatId: provisionalFormatId(hasFfmpeg, false),
+          formats: [provisionalFormatOption(hasFfmpeg, false)]
+        }
+      }
       return {
         title: probe.title,
-        defaultFormatId: defaultFormatId(probe.formats, mediaJobs.hasFfmpeg),
-        formats: formatChoices(probe.formats, { hasFfmpeg: mediaJobs.hasFfmpeg })
+        defaultFormatId: defaultFormatId(probe.formats, hasFfmpeg),
+        formats: formatChoices(probe.formats, { hasFfmpeg })
       }
     },
     onDetect: async ({ url, cookies }) => {

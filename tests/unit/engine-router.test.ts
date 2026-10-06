@@ -59,6 +59,7 @@ function probeResult(directUrl = '', overrides: Partial<MediaProbe> = {}): Media
 function makeRouter(
   options: {
     failProbe?: boolean
+    hangProbe?: boolean
     directUrl?: string
     probe?: Partial<MediaProbe>
     ytdlpAvailable?: boolean
@@ -75,6 +76,9 @@ function makeRouter(
   const add = vi.fn(async () => ({ gids: ['aria2-gid'], duplicates: [], warnings: [] }))
   const addMedia = vi.fn(async () => ({ gid: 'ytdlp:1' }))
   const probe = vi.fn(async () => {
+    // A probe that never answers stands in for the credential-free retry that
+    // runs until its timeout on a site that refuses the session.
+    if (options.hangProbe) return new Promise<MediaProbe>(() => {})
     if (options.failProbe) throw new Error('unsupported url')
     return probeResult(options.directUrl, options.probe)
   })
@@ -109,13 +113,53 @@ describe('EngineRouter', () => {
     expect(addMedia).toHaveBeenCalledOnce()
   })
 
-  it('reports a clear failure instead of downloading the page when a video cannot be resolved', async () => {
-    const { router, add } = makeRouter({ failProbe: true })
+  it('still downloads the default quality when a video probe fails', async () => {
+    // The browser's "download this video" names no quality, so a probe that is
+    // refused or left unanswered must not fail the click: yt-dlp resolves the
+    // default selector in the download run itself. What must never happen is
+    // handing the page URL to aria2, or the user ends up with the web page
+    // saved as a file.
+    const { router, add, addMedia } = makeRouter({ failProbe: true })
 
-    await expect(router.add(input({ engine: 'ytdlp' }))).rejects.toThrow(/無法取得影片/)
-    // The whole point: aria2 must not be handed the URL, or the user ends up
-    // with the web page saved as a file.
+    const result = await router.add(input({ engine: 'ytdlp' }))
+
+    expect(result.gids).toEqual(['ytdlp:1'])
+    expect(addMedia).toHaveBeenCalledOnce()
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ formatId: 'bestvideo+bestaudio/best' })
     expect(add).not.toHaveBeenCalled()
+  })
+
+  it('does not wait out a stalled probe before starting the default download', async () => {
+    // The probe is not required for a request that named no quality, so a probe
+    // that hangs — the credential-free retry on a site that refuses the session
+    // — must not hold the click. The download starts on the provisional default
+    // as soon as the short budget expires; before this, the extension's button
+    // sat on the probe's own timeout (tens of seconds) and then failed.
+    vi.useFakeTimers()
+    try {
+      const { router, addMedia } = makeRouter({ hangProbe: true })
+      const started = router.add(input({ engine: 'ytdlp' }))
+
+      await vi.advanceTimersByTimeAsync(4_000)
+      const result = await started
+
+      expect(result.gids).toEqual(['ytdlp:1'])
+      expect(addMedia.mock.calls[0]![0]).toMatchObject({ formatId: 'bestvideo+bestaudio/best' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refuses a named quality when the probe that offered it cannot answer', async () => {
+    // A quality is only real against the list it was chosen from, so without a
+    // probe there is nothing to honour — and silently downloading a different
+    // one would be worse than saying the video could not be fetched.
+    const { router, addMedia } = makeRouter({ failProbe: true })
+
+    await expect(router.add(input({ engine: 'ytdlp', mediaFormatId: '137' }))).rejects.toThrow(
+      /無法取得影片/
+    )
+    expect(addMedia).not.toHaveBeenCalled()
   })
 
   it('still falls back to aria2 for an auto-routed media link', async () => {

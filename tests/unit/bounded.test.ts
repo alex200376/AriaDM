@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { bounded } from '../../src/main/bounded'
+import { bounded, boundedValue } from '../../src/main/bounded'
 
 /**
  * Every shutdown step runs through this, because a step that never returns used
@@ -34,5 +34,35 @@ describe('bounded', () => {
     )
 
     expect(result.outcome).toBe('done')
+  })
+})
+
+/**
+ * The value-keeping form is what a slow format probe is abandoned with: the
+ * caller needs the answer when there is one, and needs to know it gave up rather
+ * than confuse a timeout with a rejection.
+ */
+describe('boundedValue', () => {
+  it('keeps the value a promise resolved with', async () => {
+    expect(await boundedValue(Promise.resolve({ formats: 3 }), 50)).toEqual({
+      outcome: 'done',
+      value: { formats: 3 }
+    })
+  })
+
+  it('reports a rejection with the error and no value', async () => {
+    const result = await boundedValue(Promise.reject(new Error('refused')), 50)
+
+    expect(result.outcome).toBe('failed')
+    expect(result.error?.message).toBe('refused')
+    expect(result.value).toBeUndefined()
+  })
+
+  it('gives up without a value when the deadline passes first', async () => {
+    const started = Date.now()
+    const result = await boundedValue(new Promise(() => {}), 30)
+
+    expect(result).toEqual({ outcome: 'timeout' })
+    expect(Date.now() - started).toBeLessThan(1_000)
   })
 })

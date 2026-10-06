@@ -1,6 +1,6 @@
 import { DIRECT_MEDIA_TAG } from '@shared/download'
 import { MEDIA_DIRECT_CONNECTIONS, type AddDownloadInput, type AddDownloadResult, type Settings } from '@shared/settings'
-import { defaultFormatId } from '@shared/media-formats'
+import { defaultFormatId, provisionalFormatOption } from '@shared/media-formats'
 import {
   chooseEngine,
   needsPageSniff,
@@ -8,10 +8,11 @@ import {
   type EngineAvailability
 } from '@shared/media-sites'
 
+import { boundedValue } from '../bounded'
 import type { DownloadManager } from './manager'
 import type { MediaJobs } from '../media/jobs'
 import type { MediaSniffer } from '../media/page-sniff'
-import { resolveDirectFile, type HttpContext } from '../media/ytdlp'
+import { resolveDirectFile, type HttpContext, type MediaProbe } from '../media/ytdlp'
 
 export interface EngineRouterOptions {
   manager: DownloadManager
@@ -46,8 +47,61 @@ function withDirectMediaTag(tags: string[] | undefined): string[] {
   return [...new Set([...(tags ?? []), DIRECT_MEDIA_TAG])]
 }
 
+/**
+ * How long an auto-best download waits for the format probe.
+ *
+ * The probe is an optimisation for this request: it can route a plain payload to
+ * aria2, and it warms the cache the quality menu reads. It is not required —
+ * yt-dlp resolves `bestvideo+bestaudio/best` in its own download run — so it must
+ * not become the thing the click waits on. On a site that rejects the browser
+ * session, the credential-free retry alone runs for many seconds; waiting it out
+ * is the stall that made the extension's button look dead.
+ */
+const PROBE_BUDGET_MS = 4_000
+
+/**
+ * The probe-shaped stand-in a download starts with when no probe answered.
+ *
+ * `MediaJobs.add` reads the format list to honour a named quality and to decide
+ * whether merging is possible; a list holding only the provisional default gives
+ * it the same answers a real probe would for the one choice that was made — the
+ * default one. yt-dlp then resolves that selector during the download itself.
+ */
+function provisionalProbe(url: string, hasFfmpeg: boolean): MediaProbe {
+  return {
+    url,
+    title: url,
+    id: '',
+    durationSeconds: 0,
+    thumbnail: '',
+    formats: [provisionalFormatOption(hasFfmpeg, false)],
+    subtitles: [],
+    isPlaylist: false,
+    extractor: '',
+    directUrl: '',
+    formatUrls: {}
+  }
+}
+
 export class EngineRouter {
   constructor(private readonly options: EngineRouterOptions) {}
+
+  /**
+   * Ask for a probe, but do not let a slow or broken one decide the click.
+   *
+   * Resolves as soon as the probe answers, and otherwise after `budgetMs` or the
+   * probe's own failure — whichever comes first — reporting what went wrong so
+   * the caller can still explain it for a request that named a quality. The
+   * probe itself keeps running and caches its answer for the menu that follows.
+   */
+  private async probeWithin(
+    url: string,
+    http: HttpContext,
+    budgetMs: number
+  ): Promise<{ probe: MediaProbe | null; error: string }> {
+    const result = await boundedValue(this.options.mediaJobs.probe(url, http), budgetMs)
+    return { probe: result.value ?? null, error: result.error?.message ?? '' }
+  }
 
   /**
    * Ask the page sniffer whether an unknown-host link is a video page.
@@ -139,10 +193,39 @@ export class EngineRouter {
        * sometimes a page whose only media is that file. yt-dlp would fetch it on
        * one connection after a startup and an extraction pass; aria2 does it with
        * its full fan-out and a real size. See MediaProbe.directUrl.
+       *
+       * Only an explicit video request that named no quality — the extension's
+       * button — skips the full probe. yt-dlp resolves the default selector in
+       * its own download run, so such a request needs only a short budget (see
+       * PROBE_BUDGET_MS) to catch the direct-file case and warm the menu's cache
+       * before the download starts, however the probe turned out. A named quality
+       * can only be honoured against the list it came from, and an auto-routed
+       * link keeps its aria2 fallback, so both still wait for the probe in full.
        */
-      const probe = await this.options.mediaJobs.probe(url, http)
+      const provisionalFallback = !input.mediaFormatId && input.engine === 'ytdlp'
 
-      if (probe.directUrl) {
+      let probe: MediaProbe | null
+      let error = ''
+      if (provisionalFallback) {
+        const raced = await this.probeWithin(url, http, PROBE_BUDGET_MS)
+        probe = raced.probe
+        error = raced.error
+      } else {
+        try {
+          probe = await this.options.mediaJobs.probe(url, http)
+        } catch (cause) {
+          probe = null
+          error = (cause as Error).message
+        }
+      }
+
+      if (probe === null && !provisionalFallback) throw new Error(error || '讀取影片資訊逾時。')
+
+      // `formats[0]` on a real probe is the synthetic best entry, so both paths
+      // name the same format. Without a probe, this is the provisional default.
+      const resolved = probe ?? provisionalProbe(url, this.options.mediaJobs.hasFfmpeg)
+
+      if (resolved.directUrl) {
         this.options.log(`engine router: ${url} resolved to a direct file; using aria2`)
         // The engine is named rather than left to default, or the history row
         // would claim this download was made by yt-dlp. The fixed fan-out is the
@@ -150,7 +233,7 @@ export class EngineRouter {
         return await this.options.manager.add({
           ...input,
           engine: 'aria2',
-          uris: [probe.directUrl],
+          uris: [resolved.directUrl],
           tags: withDirectMediaTag(input.tags),
           ...MEDIA_DIRECT_CONNECTIONS
         })
@@ -159,14 +242,14 @@ export class EngineRouter {
       // A requested format is honoured only when the probe actually offered it:
       // a stale picker, or a link that changed between the menu and the click,
       // must not turn into "Requested format is not available".
-      const requested = probe.formats.some((format) => format.formatId === input.mediaFormatId)
+      const requested = resolved.formats.some((format) => format.formatId === input.mediaFormatId)
         ? input.mediaFormatId!
         : ''
 
       // Not `formats[0]`: on a machine without ffmpeg the best entry cannot be
       // produced at all, and this path is the extension's "download this video" —
       // it has to just work.
-      const formatId = requested || defaultFormatId(probe.formats, this.options.mediaJobs.hasFfmpeg)
+      const formatId = requested || defaultFormatId(resolved.formats, this.options.mediaJobs.hasFfmpeg)
 
       /*
        * The chosen format may itself be a single plain file: a site yt-dlp
@@ -175,7 +258,7 @@ export class EngineRouter {
        * — the same win as the bare-file case above. A format that needs merging,
        * or any HLS/DASH manifest, resolves to null and stays with yt-dlp below.
        */
-      const direct = resolveDirectFile(probe, formatId)
+      const direct = resolveDirectFile(resolved, formatId)
       if (direct) {
         this.options.log(`engine router: ${url} format ${formatId} is a direct file; using aria2`)
         return await this.options.manager.add({
@@ -203,7 +286,7 @@ export class EngineRouter {
           playlist: false,
           maxConcurrent: 0
         },
-        probe,
+        resolved,
         http
       )
       return { gids: [gid], duplicates: [], warnings: [] }
