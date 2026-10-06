@@ -9,6 +9,7 @@ import {
   ImagePlus,
   Info,
   Loader2,
+  Move,
   Plug,
   Plus,
   RefreshCw,
@@ -27,6 +28,7 @@ import { MAX_WALLPAPER_ZOOM, MIN_WALLPAPER_ZOOM } from '@shared/wallpaper'
 
 import { paintAccent, paintWallpaperPreview, type WallpaperAdjust } from '../../lib/appearance'
 import { cn } from '../../lib/cn'
+import { WallpaperCropOverlay } from './WallpaperCropOverlay'
 import { engineLabel, engineTone, type Tone } from '../../lib/labels'
 import { useApp, type SettingsTab } from '../../store/app-store'
 import {
@@ -203,7 +205,11 @@ const IPV6_MODE_OPTIONS: LocalisableOption[] = [
   { value: 'off', labelKey: 'settings.ipv6Mode.off' }
 ]
 
-function GeneralTab(): JSX.Element {
+/**
+ * `onAdjust` opens the drag mode, which `SettingsView` renders: a layer over the
+ * whole window cannot live inside the column of `space-y` panels this tab is.
+ */
+function GeneralTab({ onAdjust }: { onAdjust(): void }): JSX.Element {
   const settings = useApp((state) => state.settings)
   const patch = useApp((state) => state.patchSettings)
   const pushToast = useApp((state) => state.pushToast)
@@ -381,20 +387,33 @@ function GeneralTab(): JSX.Element {
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">
                   {t('settings.backgroundCrop')}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<RotateCcw size={13} />}
-                  onClick={() =>
-                    void patch({
-                      backgroundZoom: 100,
-                      backgroundPositionX: 50,
-                      backgroundPositionY: 50
-                    })
-                  }
-                >
-                  {t('settings.backgroundCropReset')}
-                </Button>
+                <div className="flex items-center gap-1">
+                  {/* Dragging first: it is how most people will set this, and
+                      the sliders stay for the answer it cannot give — an exact
+                      number, and a keyboard-reachable one. */}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Move size={13} />}
+                    onClick={onAdjust}
+                  >
+                    {t('settings.backgroundAdjust')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<RotateCcw size={13} />}
+                    onClick={() =>
+                      void patch({
+                        backgroundZoom: 100,
+                        backgroundPositionX: 50,
+                        backgroundPositionY: 50
+                      })
+                    }
+                  >
+                    {t('settings.backgroundCropReset')}
+                  </Button>
+                </div>
               </div>
               <Slider
                 label={t('settings.backgroundZoom')}
@@ -465,6 +484,7 @@ function GeneralTab(): JSX.Element {
               </div>
             </div>
           )}
+
 
           <SelectField
             label={t('settings.density')}
@@ -1974,6 +1994,17 @@ function AboutTab(): JSX.Element {
 export function SettingsView(): JSX.Element {
   const tab = useApp((state) => state.settingsTab)
   const setTab = useApp((state) => state.setSettingsTab)
+  const settings = useApp((state) => state.settings)
+  const patch = useApp((state) => state.patchSettings)
+
+  /**
+   * Whether the wallpaper is being dragged rather than slid.
+   *
+   * The state is here, above the scroll container, because the overlay covers the
+   * whole window and so cannot be a child of the panels below: the `space-y` that
+   * separates them would offset it.
+   */
+  const [adjusting, setAdjusting] = useState(false)
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -1996,7 +2027,7 @@ export function SettingsView(): JSX.Element {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-2xl space-y-8">
-          {tab === 'general' && <GeneralTab />}
+          {tab === 'general' && <GeneralTab onAdjust={() => setAdjusting(true)} />}
           {tab === 'downloads' && (
             <>
               <NetworkTab />
@@ -2017,6 +2048,27 @@ export function SettingsView(): JSX.Element {
           )}
           {tab === 'about' && <AboutTab />}
         </div>
+
+        {/* All three crop values are written at once on 完成: they describe one
+            crop, and a partial write would flash the picture at a size the real
+            one never has. */}
+        {adjusting && settings && (
+          <WallpaperCropOverlay
+            saved={{
+              zoom: settings.backgroundZoom,
+              x: settings.backgroundPositionX,
+              y: settings.backgroundPositionY
+            }}
+            onCommit={(crop) =>
+              void patch({
+                backgroundZoom: crop.zoom,
+                backgroundPositionX: crop.x,
+                backgroundPositionY: crop.y
+              })
+            }
+            onClose={() => setAdjusting(false)}
+          />
+        )}
       </div>
     </div>
   )

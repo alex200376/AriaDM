@@ -66,6 +66,12 @@ export function wallpaperSize(
  * right (or bottom), 50 centres it. Measuring against the room rather than the
  * window is what keeps a saved position meaning the same thing after the window
  * is resized, and it is what a `background-position` percentage would have done.
+ *
+ * The offset is added to a `50%` background position, so a *positive* offset
+ * pushes the picture rightwards: 0 percent needs the picture (which overflows
+ * the window) moved back by half that overflow, hence `50 - percent`. Subtracting
+ * the percentage the other way round would draw the picture's right edge at 0 —
+ * which is what 0.1.30 shipped, and the opposite of what this says.
  */
 export function wallpaperPan(
   size: WallpaperSize,
@@ -74,13 +80,92 @@ export function wallpaperPan(
   positionY: number
 ): { x: number; y: number } {
   const along = (total: number, visible: number, percent: number): number => {
-    const offset = Math.round(((clamp(percent, 0, 100) - 50) / 100) * Math.max(0, total - visible))
-    // A rounded negative zero would reach CSS as `-0px`. Normalising it keeps the
+    // Truncated rather than rounded: the offset is written to CSS as whole pixels,
+    // and rounding half a pixel towards the picture would leave that half pixel of
+    // theme showing along the edge the position is supposed to be flush with.
+    // Truncating can only push the picture further past the edge, which the
+    // window clips anyway.
+    const offset = Math.trunc(((50 - clamp(percent, 0, 100)) / 100) * Math.max(0, total - visible))
+    // A truncated negative zero would reach CSS as `-0px`. Normalising it keeps the
     // written offset either a real move or exactly none.
     return offset === 0 ? 0 : offset
   }
   return {
     x: along(size.width, viewport.width, positionX),
     y: along(size.height, viewport.height, positionY)
+  }
+}
+
+/**
+ * How much room the picture has to move in on each axis, in pixels.
+ *
+ * This is the divisor the position percentages are measured against, so a drag
+ * converts screen pixels into position points through it and zooming changes it.
+ */
+export function wallpaperTravel(size: WallpaperSize, viewport: WallpaperSize): { x: number; y: number } {
+  return {
+    x: Math.max(0, size.width - viewport.width),
+    y: Math.max(0, size.height - viewport.height)
+  }
+}
+
+/**
+ * The position after the picture has been dragged by `delta` pixels.
+ *
+ * Dragging right moves the picture right, which means a *smaller* percentage:
+ * 0 is the picture's left edge against the window's, so pushing the picture
+ * rightwards walks the percentage down towards it. An axis with no room stays
+ * where it is (though a percentage outside the range is still brought inside).
+ */
+export function pannedPosition(
+  travel: { x: number; y: number },
+  position: { x: number; y: number },
+  delta: { x: number; y: number }
+): { x: number; y: number } {
+  const along = (room: number, current: number, moved: number): number => {
+    if (room <= 0) return clamp(current, 0, 100)
+    return clamp(current - (moved * 100) / room, 0, 100)
+  }
+  return {
+    x: along(travel.x, position.x, delta.x),
+    y: along(travel.y, position.y, delta.y)
+  }
+}
+
+/**
+ * The position that keeps one point of the picture under the pointer across a zoom.
+ *
+ * Zooming anchored at the window centre would slide the picture out from under
+ * the part of it being looked at. Instead the picture point sitting under `anchor`
+ * is measured before the zoom and put back under it after, within the room the
+ * new size has. When the anchor is past what the picture can cover the nearest
+ * reachable position wins, which is why the result is clamped: the anchor cannot
+ * be honoured there, and pretending otherwise would tear a gap along the edge.
+ */
+export function positionAfterZoom(
+  before: WallpaperSize,
+  after: WallpaperSize,
+  viewport: WallpaperSize,
+  position: { x: number; y: number },
+  anchor: { x: number; y: number }
+): { x: number; y: number } {
+  const along = (
+    sizeBefore: number,
+    sizeAfter: number,
+    visible: number,
+    percent: number,
+    point: number
+  ): number => {
+    if (sizeBefore <= 0 || sizeAfter <= 0 || visible <= 0) return clamp(percent, 0, 100)
+    const room = visible - sizeAfter
+    // A zoom that leaves nothing overflowing has nowhere to sit but the centre.
+    if (room >= 0) return 50
+    const edgeBefore = (visible - sizeBefore) * (clamp(percent, 0, 100) / 100)
+    const held = (point - edgeBefore) * (sizeAfter / sizeBefore)
+    return clamp(((point - held) / room) * 100, 0, 100)
+  }
+  return {
+    x: along(before.width, after.width, viewport.width, position.x, anchor.x),
+    y: along(before.height, after.height, viewport.height, position.y, anchor.y)
   }
 }

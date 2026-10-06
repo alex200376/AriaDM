@@ -186,6 +186,40 @@ export function paintAccent(root: HTMLElement, hex: string): void {
   root.style.setProperty('--brand-fg', triples.foreground)
 }
 
+/** What the wallpaper layer is drawing right now, in the pixels it was drawn at. */
+export interface WallpaperFrame {
+  natural: WallpaperSize
+  size: WallpaperSize
+  viewport: WallpaperSize
+}
+
+/**
+ * The frame the layer currently has, for a gesture that has to work in pixels.
+ *
+ * A drag and a wheel both turn screen movement into a crop position, and both
+ * need the same two numbers: how big the picture is drawn and how much of the
+ * window it has to fill. The picture and the window come from what was last
+ * painted rather than from a fresh measurement, so a gesture can never act on a
+ * picture the paint did not use. `null` means there is nothing to move — no
+ * picture, or one that has not decoded yet.
+ *
+ * `zoom` is the crop the caller is working from. A gesture has to pass its own:
+ * a wheel event can land before the drag before it has been painted, and the size
+ * a gesture converts hand movement through has to be the size the hand is
+ * dragging, not the size still on screen.
+ */
+export function currentWallpaperFrame(zoom?: number): WallpaperFrame | null {
+  if (composed === null || composed.natural === null) return null
+  const { root, look, natural } = composed
+  const viewport = {
+    width: root.clientWidth || window.innerWidth,
+    height: root.clientHeight || window.innerHeight
+  }
+  const size = wallpaperSize(natural, viewport, zoom ?? look.zoom)
+  if (size.width <= 0 || size.height <= 0) return null
+  return { natural, size, viewport }
+}
+
 /**
  * Repaint the picture for a live preview, before the value has been saved.
  *
