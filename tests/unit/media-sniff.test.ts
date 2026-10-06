@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import {
   findDirectMediaUrls,
+  findPageTitle,
+  findPlayerFrames,
+  findStreamUrls,
   isDirectMediaUrl,
   isHtmlContentType,
   isMediaContentType,
   isScannableDocument,
+  isStreamManifestUrl,
   looksLikeMediaPage,
   normalizeContentType,
   PAGE_MEDIA_LIMIT,
@@ -192,5 +196,99 @@ describe('findDirectMediaUrls', () => {
     expect(
       findDirectMediaUrls(`<a href="https://cdn.example/early.mp4">e</a>${filler}`, BASE)
     ).toEqual(['https://cdn.example/early.mp4'])
+  })
+})
+
+describe('isStreamManifestUrl', () => {
+  it('recognises a play list, and nothing else', () => {
+    expect(isStreamManifestUrl('https://cdn.example/index.m3u8?m=abc')).toBe(true)
+    expect(isStreamManifestUrl('https://cdn.example/stream.mpd')).toBe(true)
+    expect(isStreamManifestUrl('https://cdn.example/CLIP.M3U8')).toBe(true)
+    expect(isStreamManifestUrl('https://cdn.example/clip.mp4')).toBe(false)
+    expect(isStreamManifestUrl('blob:https://x/1')).toBe(false)
+    expect(isStreamManifestUrl('not a url')).toBe(false)
+  })
+})
+
+describe('findStreamUrls', () => {
+  const BASE = 'https://gimytv.io/eps/202670754-hdtc-zhong-zi-v2.html'
+
+  it('finds the manifest a player hides in its own script', () => {
+    // The page this was built for: no `<video>` and no `<source>`, just a setup
+    // call whose address never appears in the markup.
+    const html =
+      "<script>var url = 'https://vip.ffzy-play10.com/2026/index.m3u8'; var type = 'hls';</script>"
+
+    expect(findStreamUrls(html, BASE)).toEqual(['https://vip.ffzy-play10.com/2026/index.m3u8'])
+  })
+
+  it('undoes the JSON-escaped slashes a scripted player writes', () => {
+    const html = '<script>player.setup({src:"https:\\/\\/cdn.example\\/hls\\/index.m3u8"})</script>'
+
+    expect(findStreamUrls(html, BASE)).toEqual(['https://cdn.example/hls/index.m3u8'])
+  })
+
+  it('resolves a relative manifest against the page it was found on', () => {
+    const html = '<video><source src="/hls/index.m3u8" type="application/x-mpegurl"></video>'
+
+    expect(findStreamUrls(html, BASE)).toEqual(['https://gimytv.io/hls/index.m3u8'])
+  })
+
+  it('keeps media files and pages out of it', () => {
+    expect(findStreamUrls('<video src="https://cdn.example/a.mp4"></video>', BASE)).toEqual([])
+    expect(findStreamUrls('<a href="/about.html">about</a>', BASE)).toEqual([])
+  })
+})
+
+describe('findPlayerFrames', () => {
+  const BASE = 'https://gimytv.io/eps/202670754-hdtc-zhong-zi-v2.html'
+
+  it('ranks the frame that looks like a player above the rest', () => {
+    // Advert and tracker frames come and go, and the video is rarely first.
+    const html = [
+      '<iframe src="https://ads.example/banner"></iframe>',
+      '<iframe src="https://other.example/x"></iframe>',
+      '<iframe name="p-frame" src="/_watch/2134000" allowfullscreen scrolling="no"></iframe>'
+    ].join('')
+
+    expect(findPlayerFrames(html, BASE)[0]).toBe('https://gimytv.io/_watch/2134000')
+  })
+
+  it('prefers a frame that stays on the site, and lists each one once', () => {
+    const html = [
+      '<iframe src="https://third.example/x"></iframe>',
+      '<iframe src="/local/y"></iframe>',
+      '<iframe src="/local/y"></iframe>'
+    ].join('')
+
+    expect(findPlayerFrames(html, BASE)).toEqual(['https://gimytv.io/local/y', 'https://third.example/x'])
+  })
+
+  it('drops a frame that names a file, and reads embed and object too', () => {
+    // A payload wearing a document's clothes is not worth a request.
+    expect(findPlayerFrames('<iframe src="/assets/ad.png"></iframe>', BASE)).toEqual([])
+    expect(findPlayerFrames('<iframe src="/media/clip.mp4"></iframe>', BASE)).toEqual([])
+    expect(findPlayerFrames('<embed src="/player/1">', BASE)).toEqual(['https://gimytv.io/player/1'])
+    expect(findPlayerFrames('<object data="/player/2"></object>', BASE)).toEqual([
+      'https://gimytv.io/player/2'
+    ])
+  })
+})
+
+describe('findPageTitle', () => {
+  it('prefers the open-graph title over the document title', () => {
+    const html =
+      '<head><meta property="og:title" content="生化危機：爆發夜"><title>Gimy TV 劇迷</title></head>'
+
+    expect(findPageTitle(html)).toBe('生化危機：爆發夜')
+  })
+
+  it('falls back to the title element and undoes entities', () => {
+    expect(findPageTitle('<title>A &amp; B &#039;C&#039;</title>')).toBe("A & B 'C'")
+    expect(findPageTitle('<title>one\ntwo</title>')).toBe('one two')
+  })
+
+  it('returns nothing when the page has no title', () => {
+    expect(findPageTitle('<body><p>x</p></body>')).toBe('')
   })
 })

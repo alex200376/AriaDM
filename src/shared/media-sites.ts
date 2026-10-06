@@ -1,3 +1,4 @@
+import { isStreamManifestUrl } from './media-sniff'
 import { hasFileExtension } from './uri'
 
 /**
@@ -145,8 +146,15 @@ export function matchMediaSite(url: string): string | null {
  * A link that names a file still goes to aria2 even on a media host: sites serve
  * their CDN payloads from the same domain family, and aria2 handles a plain file
  * far better than yt-dlp does.
+ *
+ * A streaming manifest is the one exception, and it is an exception on *any*
+ * host. `.m3u8` and `.mpd` are the right length to look like a file extension,
+ * but the payload is a play list and not the video: handed to aria2 it is saved
+ * as a text file under a `.mp4` name. Only yt-dlp can fetch the segments and mux
+ * them, so a manifest copied straight out of a player still downloads.
  */
 export function isMediaSiteUrl(url: string): boolean {
+  if (isStreamManifestUrl(url)) return true
   if (matchMediaSite(url) === null) return false
   return !hasFileExtension(url)
 }

@@ -343,6 +343,15 @@ export type AudioFormat = 'native' | 'mp3' | 'm4a' | 'flac' | 'opus' | 'wav'
 
 export interface AddMediaInput {
   url: string
+  /**
+   * A name for the download, read from the page the link was found on.
+   *
+   * Only needed when the engine is handed a streaming manifest instead of the
+   * page: a manifest carries no title of its own — every HLS play list is called
+   * "index" — so yt-dlp would name the file after it. The caller that read the
+   * page passes its title here, and the run is named from that instead.
+   */
+  title?: string
   formatId: string
   dir: string
   audioOnly: boolean

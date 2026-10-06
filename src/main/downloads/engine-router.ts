@@ -1,4 +1,5 @@
 import { DIRECT_MEDIA_TAG } from '@shared/download'
+import { isStreamManifestUrl } from '@shared/media-sniff'
 import { MEDIA_DIRECT_CONNECTIONS, type AddDownloadInput, type AddDownloadResult, type Settings } from '@shared/settings'
 import { defaultFormatId, provisionalFormatOption } from '@shared/media-formats'
 import {
@@ -11,7 +12,7 @@ import {
 import { boundedValue } from '../bounded'
 import type { DownloadManager } from './manager'
 import type { MediaJobs } from '../media/jobs'
-import type { MediaSniffer } from '../media/page-sniff'
+import type { MediaSniffer, PageScan } from '../media/page-sniff'
 import { resolveDirectFile, type HttpContext, type MediaProbe } from '../media/ytdlp'
 
 export interface EngineRouterOptions {
@@ -45,6 +46,16 @@ export interface EngineRouterOptions {
  */
 function withDirectMediaTag(tags: string[] | undefined): string[] {
   return [...new Set([...(tags ?? []), DIRECT_MEDIA_TAG])]
+}
+
+/**
+ * An answer for a link that was not read, shaped like one that was.
+ *
+ * Returning this rather than null keeps every caller on one path: what to do with
+ * a page is decided in one place, whether or not a page was fetched.
+ */
+function noScan(): PageScan {
+  return { verdict: 'not-media', mediaUrls: [], streamUrls: [], title: '', blocked: false }
 }
 
 /**
@@ -104,34 +115,47 @@ export class EngineRouter {
   }
 
   /**
-   * Ask the page sniffer whether an unknown-host link is a video page.
+   * Read an unknown-host page and report everything it holds.
    *
-   * False for every case the pure host list already answers — a known site, a
-   * link that names a file, an explicit engine, a paste of several links — so
-   * the network is only touched for the one case that needs it.
+   * The verdict alone was not enough: on a hand-rolled player the page is not
+   * something yt-dlp can read at all, so knowing it is video only helps if we
+   * also know *what* to hand over — the manifest inside the frame, or the plain
+   * file it links. That is what `PageScan` carries, so it is what this returns.
+   *
+   * Nothing is fetched for every case the pure host list already answers — a
+   * curated host, a link that names a file, a paste of several links — so the
+   * network is only touched for the one case that needs it.
    */
-  private async detectMedia(
-    input: AddDownloadInput,
-    availability: EngineAvailability
-  ): Promise<boolean> {
+  private async scanPage(input: AddDownloadInput, availability: EngineAvailability): Promise<PageScan> {
     const sniffer = this.options.sniffer
-    if (!sniffer) return false
-    if (input.engine !== 'auto') return false
-    if (!availability.ytdlpEnabled || !availability.autoDetect || !availability.ytdlpAvailable) {
-      return false
-    }
-    if (input.uris.length !== 1) return false
+    if (!sniffer) return noScan()
+    // An explicit aria2 request is a file download; there is no page to read.
+    if (input.engine === 'aria2') return noScan()
+    if (!availability.ytdlpEnabled || !availability.ytdlpAvailable) return noScan()
+    /*
+     * 自動辨識 governs an automatic *guess*. An explicit video request is not a
+     * guess, and reading the page is the only way to find the manifest behind its
+     * player — which is the difference between a download and an error for the
+     * sites this exists for.
+     */
+    if (input.engine === 'auto' && !availability.autoDetect) return noScan()
+    if (input.uris.length !== 1) return noScan()
 
     const url = input.uris[0]!
-    if (!needsPageSniff(url)) return false
+    if (!needsPageSniff(url)) return noScan()
 
-    const verdict = await sniffer.sniff(url, {
+    const scan = await sniffer.scan(url, {
       cookieHeader: input.cookieHeader,
       referer: input.referer,
       userAgent: input.userAgent
     })
-    if (verdict === 'media') this.options.log(`engine router: ${url} sniffed as a media page`)
-    return verdict === 'media'
+    if (scan.verdict === 'media') {
+      this.options.log(
+        `engine router: ${url} sniffed as a media page (` +
+          `${scan.mediaUrls.length} file(s), ${scan.streamUrls.length} manifest(s))`
+      )
+    }
+    return scan
   }
 
   /**
@@ -150,7 +174,9 @@ export class EngineRouter {
 
     // Reading the page is only worth it for an automatic, single, unknown-host
     // link, and only when yt-dlp could act on the answer anyway.
-    const detectedMedia = await this.detectMedia(input, availability)
+    const scan = await this.scanPage(input, availability)
+    const detectedMedia =
+      scan.verdict === 'media' || scan.mediaUrls.length > 0 || scan.streamUrls.length > 0
 
     const request = {
       uris: input.uris,
@@ -163,25 +189,89 @@ export class EngineRouter {
     const engine = chooseEngine(request, availability)
 
     if (engine === 'aria2') {
+      /*
+       * A manifest is a play list, and aria2 would save the text of it under a
+       * `.mp4` name — a broken file the user cannot play or explain. yt-dlp is
+       * the only engine that can fetch the segments and mux them, so without it
+       * the honest answer is to say so rather than produce rubbish.
+       */
+      const only = input.uris.length === 1 ? input.uris[0]! : ''
+      if (only !== '' && isStreamManifestUrl(only)) {
+        throw new Error(
+          '這個連結是串流影音清單（HLS/DASH），需要 yt-dlp 才能下載成影片，請先安裝 yt-dlp。'
+        )
+      }
+
       // The engine is named rather than inherited: a request that asked for
       // yt-dlp but could not have it would otherwise be recorded, and shown, as
       // a yt-dlp download that aria2 actually performed.
       const result = await this.options.manager.add({ ...input, engine: 'aria2' })
+      const warnings = [...result.warnings]
       if (shouldWarnAboutMissingYtDlp(request, availability)) {
-        return {
-          ...result,
-          warnings: [...result.warnings, '偵測到影音網站，但尚未安裝 yt-dlp，已改用一般下載。']
-        }
+        warnings.push('偵測到影音網站，但尚未安裝 yt-dlp，已改用一般下載。')
       }
-      return result
+      /*
+       * A page the site refused to serve is a different thing from a page that
+       * was read and found to hold no video, and the aria2 error that follows
+       * says nothing about which happened. This is the only place the user finds
+       * out that a bot check — not the link — is what stopped it, and it is also
+       * the case that reaches this branch most often: a 403 answers the page
+       * fetch, so no player is ever seen.
+       */
+      if (scan.blocked) {
+        warnings.push(
+          '這個網頁拒絕了讀取（伺服器回應錯誤，可能有 Cloudflare 等防護），已改用一般下載；若仍失敗，請改用瀏覽器或擴充功能按鈕下載。'
+        )
+      }
+      return { ...result, warnings }
     }
 
     const url = input.uris[0]!
-    this.options.log(`engine router: ${url} -> yt-dlp`)
+
+    /*
+     * What yt-dlp is actually handed.
+     *
+     * A player page is usually not something yt-dlp can read: the bundled build
+     * answers "Unsupported URL" for both the episode page and the `/_watch/1234`
+     * frame it embeds, while the manifest the frame hides downloads perfectly the
+     * moment it is handed over directly. So the sniff's manifest wins over the
+     * page URL whenever there is one.
+     */
+    const streamUrl = scan.streamUrls[0] ?? ''
+
+    /*
+     * A page that names exactly one plain file *is* that file. It needs no
+     * extraction at all — the CDN serves it — and aria2 fetches one file with its
+     * full fan-out where yt-dlp uses one connection after a process startup.
+     *
+     * Only a single candidate: two or more is a listing of episodes rather than
+     * one video, and picking one for the user would be a guess.
+     */
+    const linkedFile =
+      scan.streamUrls.length === 0 && scan.mediaUrls.length === 1 ? scan.mediaUrls[0]! : ''
+
+    if (linkedFile !== '') {
+      this.options.log(`engine router: ${url} links a single media file; using aria2`)
+      return await this.options.manager.add({
+        ...input,
+        engine: 'aria2',
+        uris: [linkedFile],
+        tags: withDirectMediaTag(input.tags),
+        ...MEDIA_DIRECT_CONNECTIONS
+      })
+    }
+
+    const target = streamUrl || url
+    this.options.log(
+      streamUrl ? `engine router: ${url} -> manifest ${streamUrl}` : `engine router: ${url} -> yt-dlp`
+    )
 
     const http: HttpContext = {
       cookieHeader: input.cookieHeader,
-      referer: input.referer,
+      // A CDN serves a manifest only to the player it belongs to, and the page
+      // the manifest was found on is exactly the referer a browser would send.
+      // A caller's own referer still wins.
+      referer: input.referer || (streamUrl ? url : ''),
       userAgent: input.userAgent
     }
 
@@ -207,12 +297,12 @@ export class EngineRouter {
       let probe: MediaProbe | null
       let error = ''
       if (provisionalFallback) {
-        const raced = await this.probeWithin(url, http, PROBE_BUDGET_MS)
+        const raced = await this.probeWithin(target, http, PROBE_BUDGET_MS)
         probe = raced.probe
         error = raced.error
       } else {
         try {
-          probe = await this.options.mediaJobs.probe(url, http)
+          probe = await this.options.mediaJobs.probe(target, http)
         } catch (cause) {
           probe = null
           error = (cause as Error).message
@@ -223,7 +313,7 @@ export class EngineRouter {
 
       // `formats[0]` on a real probe is the synthetic best entry, so both paths
       // name the same format. Without a probe, this is the provisional default.
-      const resolved = probe ?? provisionalProbe(url, this.options.mediaJobs.hasFfmpeg)
+      const resolved = probe ?? provisionalProbe(target, this.options.mediaJobs.hasFfmpeg)
 
       if (resolved.directUrl) {
         this.options.log(`engine router: ${url} resolved to a direct file; using aria2`)
@@ -273,7 +363,10 @@ export class EngineRouter {
 
       const { gid } = await this.options.mediaJobs.add(
         {
-          url,
+          url: target,
+          // The page's own title, when the download is named after a manifest
+          // that has none of its own. See AddMediaInput.title.
+          ...(streamUrl && scan.title ? { title: scan.title } : {}),
           formatId,
           // A browser capture carries no directory, and aria2 hides that: it
           // falls back to the engine's own --dir, so plain handoffs landed in the
@@ -297,11 +390,17 @@ export class EngineRouter {
       const message = (error as Error).message
       this.options.log(`engine router: yt-dlp failed for ${url} (${message})`)
 
-      // An explicit "this is a video" request must not quietly turn into an HTML
-      // page download. That fallback is how grabbing a video ended up saving the
-      // web page instead: yt-dlp could not resolve the link, aria2 happily
-      // fetched the page, and the user got a broken file with no explanation.
-      if (input.engine === 'ytdlp') throw new Error(`無法取得影片：${message}`)
+      /*
+       * There is nothing useful to fall back *to* once a manifest is involved.
+       *
+       * An explicit "this is a video" request must not quietly turn into an HTML
+       * page download — that fallback is how grabbing a video ended up saving the
+       * web page: yt-dlp could not resolve the link, aria2 happily fetched the
+       * page, and the user got a broken file with no explanation. Handing aria2
+       * the manifest instead is worse still: a play list saved under a `.mp4`
+       * name. So both cases report the failure.
+       */
+      if (input.engine === 'ytdlp' || streamUrl !== '') throw new Error(`無法取得影片：${message}`)
 
       // An auto-routed link is different: the user just wanted the file, so a
       // fallback still gets them something useful.

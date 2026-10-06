@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AddDownloadInput } from '../../src/shared/settings'
 import type { MediaProbe } from '../../src/main/media/ytdlp'
+import type { PageScan } from '../../src/main/media/page-sniff'
 import { EngineRouter } from '../../src/main/downloads/engine-router'
 
 /**
@@ -10,6 +11,11 @@ import { EngineRouter } from '../../src/main/downloads/engine-router'
  * "this is a video" request must not silently become an HTML file, an auto-routed
  * link should still fall back rather than fail outright, and a probe that found
  * nothing but a bare file must not be handed to yt-dlp — that is the slow path.
+ *
+ * The page sniff feeds this in, and what it *returns* is as important as its
+ * verdict: an unknown-host player page is not something yt-dlp can read, so the
+ * manifest the screen hid has to be carried through to the command line, and a
+ * play list must never be handed to aria2.
  */
 
 function input(overrides: Partial<AddDownloadInput> = {}): AddDownloadInput {
@@ -64,14 +70,14 @@ function makeRouter(
     probe?: Partial<MediaProbe>
     ytdlpAvailable?: boolean
     autoDetect?: boolean
-    sniff?: 'media' | 'not-media' | 'unknown'
+    scan?: Partial<PageScan>
   } = {}
 ): {
   router: EngineRouter
   add: ReturnType<typeof vi.fn>
   addMedia: ReturnType<typeof vi.fn>
   probe: ReturnType<typeof vi.fn>
-  sniff: ReturnType<typeof vi.fn>
+  scan: ReturnType<typeof vi.fn>
 } {
   const add = vi.fn(async () => ({ gids: ['aria2-gid'], duplicates: [], warnings: [] }))
   const addMedia = vi.fn(async () => ({ gid: 'ytdlp:1' }))
@@ -82,7 +88,14 @@ function makeRouter(
     if (options.failProbe) throw new Error('unsupported url')
     return probeResult(options.directUrl, options.probe)
   })
-  const sniff = vi.fn(async () => options.sniff ?? 'not-media')
+  const scan = vi.fn(async () => ({
+    verdict: 'not-media',
+    mediaUrls: [],
+    streamUrls: [],
+    title: '',
+    blocked: false,
+    ...options.scan
+  }))
 
   const router = new EngineRouter({
     manager: { add } as never,
@@ -92,7 +105,7 @@ function makeRouter(
       probe,
       add: addMedia
     } as never,
-    sniffer: { sniff } as never,
+    sniffer: { scan } as never,
     getSettings: () => ({
       ytdlpEnabled: true,
       ytdlpDetectSites: options.autoDetect ?? true,
@@ -101,7 +114,7 @@ function makeRouter(
     log: () => {}
   })
 
-  return { router, add, addMedia, probe, sniff }
+  return { router, add, addMedia, probe, scan }
 }
 
 describe('EngineRouter', () => {
@@ -223,18 +236,110 @@ describe('EngineRouter', () => {
   it('sends an unknown-host video page to yt-dlp when the sniff finds a player', async () => {
     // The whole feature: `acgmho.com` is not on the curated list, but its page
     // carries a player, so the link belongs to yt-dlp.
-    const { router, add, addMedia, sniff } = makeRouter({ sniff: 'media' })
+    const { router, add, addMedia, scan } = makeRouter({ scan: { verdict: 'media' } })
 
     const result = await router.add(input({ uris: ['https://www.acgmho.com/gif/883534.html'] }))
 
-    expect(sniff).toHaveBeenCalledWith('https://www.acgmho.com/gif/883534.html', expect.any(Object))
+    expect(scan).toHaveBeenCalledWith('https://www.acgmho.com/gif/883534.html', expect.any(Object))
     expect(addMedia).toHaveBeenCalledOnce()
     expect(add).not.toHaveBeenCalled()
     expect(result.gids).toEqual(['ytdlp:1'])
   })
 
+  it('handles the manifest a player page hid, instead of the page yt-dlp cannot read', async () => {
+    // The reported failure, end to end: `gimytv.io/eps/…html` holds nothing but
+    // an iframe, and yt-dlp answers "Unsupported URL" for both the page and the
+    // frame. The manifest inside the frame downloads perfectly once it is the
+    // URL on the command line — and it must carry the page's referer, because
+    // that CDN serves a manifest only to the player it belongs to.
+    const manifest = 'https://vip.ffzy-play10.com/20260921/71771_e500813b/index.m3u8'
+    const page = 'https://gimytv.io/eps/202670754-hdtc-zhong-zi-v2.html'
+    const { router, add, addMedia, probe } = makeRouter({
+      scan: { verdict: 'media', streamUrls: [manifest], title: '生化危機：爆發夜' }
+    })
+
+    const result = await router.add(input({ uris: [page], engine: 'ytdlp' }))
+
+    expect(probe.mock.calls[0]![0]).toBe(manifest)
+    expect(probe.mock.calls[0]![1]).toMatchObject({ referer: page })
+    expect(addMedia).toHaveBeenCalledOnce()
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ url: manifest, title: '生化危機：爆發夜' })
+    expect(add).not.toHaveBeenCalled()
+    expect(result.gids).toEqual(['ytdlp:1'])
+  })
+
+  it('reads the page for an explicit video request even when auto-detection is off', async () => {
+    // 自動辨識 governs an automatic guess. The extension's button is not a guess,
+    // and this read is the only way its link can be downloaded at all.
+    const { router, addMedia, scan } = makeRouter({
+      autoDetect: false,
+      scan: { verdict: 'media', streamUrls: ['https://cdn.example/index.m3u8'] }
+    })
+
+    await router.add(input({ uris: ['https://gimytv.io/eps/x.html'], engine: 'ytdlp' }))
+
+    expect(scan).toHaveBeenCalledOnce()
+    expect(addMedia).toHaveBeenCalledOnce()
+  })
+
+  it('downloads a page that links one plain file with aria2, without probing it', async () => {
+    // The file needs no extraction, and aria2 fetches one file with a real size
+    // and its full fan-out where yt-dlp uses one connection and reports nothing.
+    const file = 'https://cdn.example/v/movie.mp4'
+    const { router, add, addMedia, probe } = makeRouter({
+      scan: { verdict: 'media', mediaUrls: [file] }
+    })
+
+    const result = await router.add(input({ uris: ['https://example.test/eps/1.html'] }))
+
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uris: [file],
+        engine: 'aria2',
+        tags: ['aria2-direct'],
+        split: 16,
+        maxConnectionPerServer: 16,
+        minSplitSize: 1024 * 1024
+      })
+    )
+    expect(probe).not.toHaveBeenCalled()
+    expect(addMedia).not.toHaveBeenCalled()
+    expect(result.gids).toEqual(['aria2-gid'])
+  })
+
+  it('leaves a page that lists several files to the normal probe', async () => {
+    // Two files is a listing of episodes, not one video: picking one for the
+    // user would be a guess.
+    const { router, add, addMedia } = makeRouter({
+      scan: {
+        verdict: 'media',
+        mediaUrls: ['https://cdn.example/v/1.mp4', 'https://cdn.example/v/2.mp4']
+      }
+    })
+
+    await router.add(input({ uris: ['https://example.test/eps/1.html'] }))
+
+    expect(addMedia).toHaveBeenCalledOnce()
+    expect(add).not.toHaveBeenCalled()
+  })
+
+  it('fails rather than saving the play list when a manifest probe fails', async () => {
+    // The old fallback handed aria2 the page, and the page is HTML; handing it
+    // the manifest instead would save a text file under a .mp4 name. Neither is
+    // a download, so this reports the failure.
+    const { router, add } = makeRouter({
+      failProbe: true,
+      scan: { verdict: 'media', streamUrls: ['https://cdn.example/index.m3u8'] }
+    })
+
+    await expect(router.add(input({ uris: ['https://gimytv.io/eps/x.html'] }))).rejects.toThrow(
+      /無法取得影片/
+    )
+    expect(add).not.toHaveBeenCalled()
+  })
+
   it('keeps an unknown-host link on aria2 when the sniff finds no player', async () => {
-    const { router, add, addMedia } = makeRouter({ sniff: 'not-media' })
+    const { router, add, addMedia } = makeRouter({ scan: { verdict: 'not-media' } })
 
     const result = await router.add(input({ uris: ['https://example.test/some/page'] }))
 
@@ -245,7 +350,7 @@ describe('EngineRouter', () => {
 
   it('treats a failed sniff as not media', async () => {
     // A timeout or a network error must never turn a plain link into a video.
-    const { router, add, addMedia } = makeRouter({ sniff: 'unknown' })
+    const { router, add, addMedia } = makeRouter({ scan: { verdict: 'unknown' } })
 
     await router.add(input({ uris: ['https://example.test/some/page'] }))
 
@@ -254,24 +359,74 @@ describe('EngineRouter', () => {
   })
 
   it('does not sniff when auto-detection is off', async () => {
-    const { router, sniff, add } = makeRouter({ autoDetect: false, sniff: 'media' })
+    const { router, scan, add } = makeRouter({ autoDetect: false, scan: { verdict: 'media' } })
 
     await router.add(input({ uris: ['https://www.acgmho.com/gif/883534.html'] }))
 
-    expect(sniff).not.toHaveBeenCalled()
+    expect(scan).not.toHaveBeenCalled()
     expect(add).toHaveBeenCalledOnce()
   })
 
   it('does not sniff a URL that names a file', async () => {
-    const { router, sniff, add } = makeRouter({ sniff: 'media' })
+    const { router, scan, add } = makeRouter({ scan: { verdict: 'media' } })
 
     await router.add(input({ uris: ['https://example.test/archive.zip'] }))
 
-    expect(sniff).not.toHaveBeenCalled()
+    expect(scan).not.toHaveBeenCalled()
     expect(add).toHaveBeenCalledOnce()
   })
 
+  it('says the page was refused rather than leaving a mystery aria2 error', async () => {
+    // The reported shape: a site behind a bot check answers the page fetch with
+    // 403, so no player is ever seen and the link falls to aria2. Without this the
+    // only trace the user gets is aria2's own "unknown error", which says nothing
+    // about the site blocking non-browser clients.
+    const { router, add } = makeRouter({ scan: { verdict: 'unknown', blocked: true } })
+
+    const result = await router.add(
+      input({ uris: ['https://rule34.xxx/index.php?page=post&s=view&id=1'] })
+    )
+
+    expect(add).toHaveBeenCalledOnce()
+    expect(result.warnings.join()).toMatch(/防護/)
+  })
+
+  it('does not sniff when the request explicitly asked for aria2', async () => {
+    const { router, scan, add } = makeRouter({ scan: { verdict: 'media' } })
+
+    await router.add(input({ uris: ['https://www.acgmho.com/gif/883534.html'], engine: 'aria2' }))
+
+    expect(scan).not.toHaveBeenCalled()
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ engine: 'aria2' }))
+  })
+
+  it('sends a manifest link to yt-dlp rather than letting aria2 save the text', async () => {
+    // `.m3u8` is the right shape to look like a file extension, so it used to be
+    // treated as one: aria2 saved the play list. It is a play list on any host.
+    const { router, add, addMedia, scan } = makeRouter()
+
+    const result = await router.add(input({ uris: ['https://cdn.example/index.m3u8'] }))
+
+    expect(scan).not.toHaveBeenCalled()
+    expect(addMedia).toHaveBeenCalledOnce()
+    expect(add).not.toHaveBeenCalled()
+    expect(result.gids).toEqual(['ytdlp:1'])
+  })
+
+  it('refuses a manifest when yt-dlp cannot fetch it', async () => {
+    // With no yt-dlp there is no engine that can turn a play list into a video,
+    // and saving the play list is not a download.
+    const { router, add } = makeRouter({ ytdlpAvailable: false })
+
+    await expect(router.add(input({ uris: ['https://cdn.example/index.m3u8'] }))).rejects.toThrow(
+      /HLS/
+    )
+    expect(add).not.toHaveBeenCalled()
+  })
+
   it('hands a bare file to aria2 instead of yt-dlp when the probe resolves one', async () => {
+    // `directUrl` is the generic extractor's own answer, so a page that links a
+    // single payload is caught even when the sniff said nothing about it.
     const resolved = 'https://blobs.example.com/file/abc123'
     const { router, add, addMedia } = makeRouter({ directUrl: resolved })
 

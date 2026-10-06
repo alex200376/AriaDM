@@ -382,3 +382,71 @@ describe('what a finished row reports', () => {
     expect(jobs.get(gid)!.status).toBe('complete')
   })
 })
+
+/**
+ * The name a download gets when the link was resolved from a page.
+ *
+ * A manifest names nothing — every HLS play list is called "index" — so a run
+ * given one would otherwise save `index [index].mp4` for a film the user picked
+ * from a page whose title we can read.
+ */
+describe('the name a manifest download is given', () => {
+  const run = {
+    binaryPath: 'yt-dlp.exe',
+    url: 'https://cdn.example/2026/index.m3u8',
+    formatId: 'best',
+    dir: 'C:/downloads',
+    ffmpegDir: '',
+    audioOnly: false,
+    playlist: false,
+    overwrite: false
+  }
+
+  const template = (overrides: Record<string, unknown> = {}): string => {
+    const args = buildDownloadArgs({ ...run, ...overrides })
+    return args[args.indexOf('-o') + 1]!
+  }
+
+  it('uses the page title, and drops the id that would only repeat "index"', () => {
+    expect(template({ titleHint: '生化危機：爆發夜' })).toBe('生化危機：爆發夜.%(ext)s')
+  })
+
+  it('sanitises the hint, which is literal template text', () => {
+    // A stray `%` would be read as a conversion, and a separator would name a
+    // file outside the download folder. `--windows-filenames` cannot catch
+    // either, because this is template text rather than a resolved name.
+    expect(template({ titleHint: '100% evil:name' })).toBe('100 evil_name.%(ext)s')
+    expect(template({ titleHint: 'a/../../b' })).toBe('b.%(ext)s')
+  })
+
+  it('keeps yt-dlp’s own naming when no page was read', () => {
+    expect(template()).toBe('%(title).150B [%(id)s].%(ext)s')
+  })
+})
+
+describe('the title carried from the page into the run', () => {
+  it('names the run from the page, and a resume names it the same way', async () => {
+    const jobs = makeJobs()
+    const { gid } = await jobs.add({ ...addInput('312'), title: '生化危機：爆發夜' }, PROBE as never)
+
+    expect(optionsOf(0).titleHint).toBe('生化危機：爆發夜')
+    // The row shows the page's title rather than the play list's own "index".
+    expect(jobs.get(gid)!.name).toBe('生化危機：爆發夜')
+
+    // yt-dlp has no pause, so a resume is a relaunch: the hint has to live on
+    // the job, or the file would be renamed halfway through the download.
+    state.runners[0]!.emit('failed', 'HTTP Error 403: Forbidden')
+    expect(jobs.get(gid)!.status).toBe('error')
+
+    await jobs.resume(gid)
+    expect(optionsOf(1).titleHint).toBe('生化危機：爆發夜')
+  })
+
+  it('leaves the probe’s own title in place when the caller sent none', async () => {
+    const jobs = makeJobs()
+    const { gid } = await jobs.add(addInput('312'), PROBE as never)
+
+    expect(optionsOf(0).titleHint).toBeUndefined()
+    expect(jobs.get(gid)!.name).toBe('a video')
+  })
+})

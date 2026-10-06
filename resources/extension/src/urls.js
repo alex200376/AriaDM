@@ -113,6 +113,89 @@
     return pattern.test(`${parsed.pathname}${parsed.search}`)
   }
 
+  /**
+   * Containers a browser plays from a plain address.
+   *
+   * Mirrors the app's own list (`shared/media-sniff.ts`), because it answers the
+   * same question there: is this URL the video, or a page that leads to one. The
+   * manifests are here rather than with the pages because the app hands those to
+   * yt-dlp, which is the only engine that can fetch the segments.
+   *
+   * If it ever drifts, the cost is the behaviour that came before it — the page
+   * URL — and not a wrong download.
+   */
+  const MEDIA_FILE_EXTENSIONS = new Set([
+    'mp4',
+    'm4v',
+    'webm',
+    'mkv',
+    'mov',
+    'avi',
+    'flv',
+    'wmv',
+    'mpg',
+    'mpeg',
+    'ogv',
+    'mp3',
+    'm4a',
+    'aac',
+    'flac',
+    'opus',
+    'ogg',
+    'oga',
+    'wav',
+    'weba',
+    'm3u8',
+    'mpd'
+  ])
+
+  /**
+   * The address the browser itself is playing, when that is a plain file.
+   *
+   * A `<video>` the page's own player script built is the one thing on a page we
+   * can be certain about: the browser resolved it, so there is nothing to sniff
+   * and no page to read. That is the difference between working and not on a site
+   * behind a bot check — a Cloudflare challenge answers every non-browser request
+   * with 403, so the app cannot read the page at all, while the browser is playing
+   * the very video being asked about. It is also faster: the address is already
+   * resolved, so the app skips the fetch and the extraction pass entirely.
+   *
+   * Deliberately narrow. A Media Source Extension plays from a `blob:`, a live
+   * stream from `mediastream:`, and neither is a download; a page URL is not one
+   * either. Anything not recognised comes back empty, which leaves the caller on
+   * the behaviour it had before.
+   */
+  function playedAddress(video) {
+    if (!video) return ''
+
+    const candidates = []
+    if (typeof video.currentSrc === 'string') candidates.push(video.currentSrc)
+    if (typeof video.src === 'string') candidates.push(video.src)
+    if (typeof video.querySelectorAll === 'function') {
+      for (const source of video.querySelectorAll('source[src]')) {
+        if (source && typeof source.src === 'string') candidates.push(source.src)
+      }
+    }
+
+    for (const candidate of candidates) {
+      if (!candidate) continue
+      let parsed
+      try {
+        parsed = new URL(candidate)
+      } catch {
+        continue
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
+
+      const last = parsed.pathname.split('/').filter(Boolean).pop() || ''
+      const dot = last.lastIndexOf('.')
+      if (dot <= 0) continue
+      if (MEDIA_FILE_EXTENSIONS.has(last.slice(dot + 1).toLowerCase())) return candidate
+    }
+
+    return ''
+  }
+
   /** How far above a player its own card can sit; past that it is the page. */
   const MAX_CARD_DEPTH = 10
   /**
@@ -156,8 +239,12 @@
    *
    * Two callers, two outcomes when nothing is recognised:
    *
-   *  - a site with no rule gets the page URL, exactly as before. Nobody has
-   *    looked at its markup, so the app is left to try and report its own reason;
+   *  - a site with no rule gets the player's own address when the browser is
+   *    playing a plain file or manifest, and the page URL otherwise. Nobody has
+   *    looked at that site's markup, so a link found in it would be a guess — but
+   *    the player's own address is not a guess, and on a site the app cannot read
+   *    (a bot check answers every non-browser request with 403) it is the only
+   *    answer that can work. See `playedAddress`;
    *  - a site *with* a rule gets an empty string, because there we do know what a
    *    video's address looks like and the page is not it. That says the page is a
    *    feed, and a feed cannot be downloaded — the caller should ask for the post
@@ -171,7 +258,7 @@
   function itemUrlNear(video, location, options) {
     const pageUrl = location.href
     if (isItemUrl(location.hostname, pageUrl)) return pageUrl
-    if (!patternFor(location.hostname)) return pageUrl
+    if (!patternFor(location.hostname)) return playedAddress(video) || pageUrl
     if (!video) return ''
 
     const maxDepth = (options && options.maxDepth) || MAX_CARD_DEPTH
@@ -209,6 +296,7 @@
     ITEM_PATHS,
     isItemUrl,
     itemUrlNear,
+    playedAddress,
     MAX_CARD_DEPTH,
     MAX_CARD_SCALE
   }

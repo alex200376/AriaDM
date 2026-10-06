@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest'
 interface Urls {
   looksLikeItemPage(url: string): boolean
   isItemUrl(hostname: string, url: string): boolean
+  playedAddress(video: unknown): string
   itemUrlNear(video: unknown, location: unknown, options?: unknown): string
 }
 
@@ -127,6 +128,52 @@ describe('isItemUrl', () => {
 })
 
 /**
+ * The address the browser itself is playing.
+ *
+ * This is what makes the panel work on a site the app cannot read at all: a
+ * Cloudflare challenge answers every non-browser request with 403, so the page is
+ * unreadable, while the browser has already resolved the video. The address it
+ * resolved is not a guess and needs no sniff — it is the file itself.
+ */
+describe('playedAddress', () => {
+  it('answers the file the browser is already playing', () => {
+    expect(urls.playedAddress({ currentSrc: 'https://cdn.example/v/clip.mp4?t=1' })).toBe(
+      'https://cdn.example/v/clip.mp4?t=1'
+    )
+    expect(urls.playedAddress({ src: 'https://cdn.example/v/clip.webm' })).toBe(
+      'https://cdn.example/v/clip.webm'
+    )
+    // A manifest player has no src until it has chosen one; the <source> child is
+    // where the address is declared.
+    expect(
+      urls.playedAddress({ querySelectorAll: () => [{ src: 'https://cdn.example/hls/index.m3u8' }] })
+    ).toBe('https://cdn.example/hls/index.m3u8')
+  })
+
+  it('prefers the source the browser actually resolved', () => {
+    // currentSrc is what it settled on; src is what the markup offered.
+    expect(
+      urls.playedAddress({
+        currentSrc: 'https://cdn.example/1080.mp4',
+        src: 'https://cdn.example/360.mp4'
+      })
+    ).toBe('https://cdn.example/1080.mp4')
+  })
+
+  it('refuses anything that is not a media file at a plain address', () => {
+    // A Media Source Extension plays from a blob:, a live stream from
+    // mediastream:, and neither is a download. A page URL is not one either.
+    expect(urls.playedAddress({ currentSrc: 'blob:https://x.com/1234' })).toBe('')
+    expect(urls.playedAddress({ src: 'mediastream:1234' })).toBe('')
+    expect(urls.playedAddress({ src: 'data:video/mp4;base64,AAAA' })).toBe('')
+    expect(urls.playedAddress({ src: 'https://example.test/watch/123' })).toBe('')
+    expect(urls.playedAddress({ src: 'https://example.test/watch/123.html' })).toBe('')
+    expect(urls.playedAddress(null)).toBe('')
+    expect(urls.playedAddress({})).toBe('')
+  })
+})
+
+/**
  * Which video the button over a player downloads.
  *
  * Built out of fake elements rather than a browser because this is what decides
@@ -140,8 +187,10 @@ interface FakeNode {
   anchors: string[]
   href: string
   side: number
+  src?: string
+  currentSrc?: string
   matches(selector: string): boolean
-  querySelectorAll(selector: string): { href: string }[]
+  querySelectorAll(selector: string): { href: string; src?: string }[]
   getBoundingClientRect(): { width: number; height: number }
 }
 
@@ -157,7 +206,14 @@ function collectLinks(target: FakeNode): { href: string }[] {
  * and a subtree search on it can never return the link itself.
  */
 function node(
-  options: { anchors?: string[]; href?: string; side?: number } = {},
+  options: {
+    anchors?: string[]
+    href?: string
+    side?: number
+    src?: string
+    currentSrc?: string
+    sources?: string[]
+  } = {},
   children: FakeNode[] = []
 ): FakeNode {
   const target = {} as FakeNode
@@ -167,8 +223,15 @@ function node(
     anchors: options.anchors ?? [],
     href: options.href ?? '',
     side: options.side ?? 100,
+    src: options.src,
+    currentSrc: options.currentSrc,
     matches: (selector: string) => selector === 'a[href]' && Boolean(target.href),
-    querySelectorAll: () => collectLinks(target),
+    // A real subtree search, so a `<source>` child is found where a real one
+    // would be — and the anchors, which are the other thing this is asked for.
+    querySelectorAll: () => [
+      ...collectLinks(target),
+      ...(options.sources ?? []).map((src) => ({ src }))
+    ],
     getBoundingClientRect: () => ({ width: target.side, height: target.side })
   })
   for (const child of children) child.parentElement = target
@@ -301,6 +364,42 @@ describe('itemUrlNear', () => {
 
     expect(urls.itemUrlNear(video, page('https://example.com/feed', body, body))).toBe(
       'https://example.com/feed'
+    )
+  })
+
+  it('hands over the video the browser is playing on a site the app cannot read', () => {
+    // The reported case: a post page behind a bot check. The app's own fetch gets
+    // a 403 challenge, so the page is unreadable and no player in it can ever be
+    // found — while the browser has already built the player and resolved this
+    // exact address. Sending it skips the unreadable page and the extractor pass.
+    const video = node({ side: 100, currentSrc: 'https://cdn.example/v/clip.mp4' })
+    const body = node({ side: 2000 }, [video])
+    const location = page(
+      'https://rule34.xxx/index.php?page=post&s=view&id=18961415&tags=video',
+      body,
+      body
+    )
+
+    expect(urls.itemUrlNear(video, location)).toBe('https://cdn.example/v/clip.mp4')
+  })
+
+  it('still sends the page when the player has no address of its own', () => {
+    // A Media Source Extension plays from a blob, which is not downloadable, so
+    // there is nothing better to send than the page.
+    const video = node({ side: 100, currentSrc: 'blob:https://example.com/abcd' })
+    const body = node({ side: 2000 }, [video])
+
+    expect(urls.itemUrlNear(video, page('https://example.com/feed', body, body))).toBe(
+      'https://example.com/feed'
+    )
+  })
+
+  it('reads a manifest out of the player on a site with no rules', () => {
+    const video = node({ side: 100, sources: ['https://cdn.example/hls/index.m3u8'] })
+    const body = node({ side: 2000 }, [video])
+
+    expect(urls.itemUrlNear(video, page('https://example.com/feed', body, body))).toBe(
+      'https://cdn.example/hls/index.m3u8'
     )
   })
 

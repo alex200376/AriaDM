@@ -206,6 +206,16 @@ interface MediaJob {
   /** Container to convert the audio to; 'native' keeps the site's own. */
   audioFormat: AudioFormat
   title: string
+  /**
+   * The title of the page this link was found on, or ''.
+   *
+   * A manifest names nothing — every HLS play list is called "index" — so when
+   * the router resolved one out of a player it carries the page's own title here,
+   * which is what the file gets named after. It lives on the job rather than being
+   * handed straight to the runner so a resume names the file the same way the
+   * first attempt did.
+   */
+  titleHint: string
   status: DownloadItem['status']
   downloadedBytes: number
   totalBytes: number
@@ -778,7 +788,10 @@ export class MediaJobs extends EventEmitter {
       playlistItems: input.playlistItems ? [...input.playlistItems] : [],
       subtitles,
       audioFormat,
-      title: probe.title,
+      // A page title read by the sniffer beats the probe's own for a manifest
+      // download: the probe could only report the play list's name, "index".
+      title: input.title || probe.title,
+      titleHint: input.title ?? '',
       status: 'active',
       downloadedBytes: 0,
       totalBytes: 0,
@@ -860,6 +873,7 @@ export class MediaJobs extends EventEmitter {
       playlist: job.playlist,
       concurrentFragments: this.options.getConcurrentFragments?.() ?? 1,
       httpChunkSize: this.options.getHttpChunkSize?.() ?? 0,
+      ...(job.titleHint ? { titleHint: job.titleHint } : {}),
       ...(job.playlistItems.length > 0 ? { playlistItems: job.playlistItems } : {}),
       ...(job.subtitles ? { subtitles: job.subtitles } : {}),
       ...(job.audioFormat !== 'native' ? { audioFormat: job.audioFormat } : {}),

@@ -60,6 +60,14 @@ describe('isMediaSiteUrl', () => {
     // hasFileExtension and sent to aria2, which saved the HTML.
     expect(isMediaSiteUrl('https://www.youtube.com/watch/abc.html')).toBe(true)
   })
+
+  it('treats a streaming manifest as media on any host', () => {
+    // `.m3u8` is the right shape to look like a file extension, but the payload
+    // is a play list: aria2 would save the text of it under a `.mp4` name, and
+    // only yt-dlp can fetch the segments and mux them.
+    expect(isMediaSiteUrl('https://vip.ffzy-play10.com/2026/1/index.m3u8')).toBe(true)
+    expect(isMediaSiteUrl('https://cdn.example/stream.mpd')).toBe(true)
+  })
 })
 
 describe('needsPageSniff', () => {
@@ -95,6 +103,12 @@ describe('chooseEngine', () => {
 
   it('sends an ordinary link to aria2', () => {
     expect(chooseEngine({ uris: ['https://example.com/file.zip'], engine: 'auto' }, AVAILABLE)).toBe('aria2')
+  })
+
+  it('sends a manifest link to yt-dlp, wherever it is hosted', () => {
+    expect(
+      chooseEngine({ uris: ['https://cdn.example/index.m3u8'], engine: 'auto' }, AVAILABLE)
+    ).toBe('ytdlp')
   })
 
   it('honours an explicit engine over detection', () => {

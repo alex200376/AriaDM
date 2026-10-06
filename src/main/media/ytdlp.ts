@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import path from 'node:path'
 
 import type { AudioFormat, MediaFormatInfo, MediaPlaylistInfo, SubtitleTrack } from '@shared/settings'
+import { sanitizeFileName } from '@shared/uri'
 
 /**
  * yt-dlp wrapper.
@@ -594,6 +595,14 @@ export interface YtDlpRunOptions extends HttpContext, CredentialOptions {
   audioFormat?: AudioFormat
   /** 1-based playlist positions to download; empty means "the site's default". */
   playlistItems?: number[]
+  /**
+   * A name for the downloaded file, read from the page the link was found on.
+   *
+   * A manifest names nothing (every HLS play list is called "index"), so a run
+   * given one would otherwise save `index [index].mp4`. When the caller read the
+   * page the user actually opened, that title goes here and is used verbatim.
+   */
+  titleHint?: string
   /** Overwrite an existing final file rather than renaming. */
   overwrite: boolean
 }
@@ -713,7 +722,7 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
     args.push('--windows-filenames')
   }
 
-  args.push('-o', '%(title).150B [%(id)s].%(ext)s')
+  args.push('-o', outputTemplate(options.titleHint))
   // Only when there is one. An empty value is not "the default": yt-dlp would
   // resolve it against the process's working directory, which for a packaged app
   // is its own installation folder.
@@ -728,6 +737,26 @@ export function buildDownloadArgs(options: YtDlpRunOptions): string[] {
   args.push('--no-warnings')
   args.push(options.url)
   return args
+}
+
+/**
+ * The filename template for a run.
+ *
+ * Normally yt-dlp's own `%(title)s [%(id)s]`: it knows the item's real title, and
+ * the id keeps two uploads of the same name apart. That falls down for the one
+ * case the page sniffer handles — a manifest carries no title, so the run would
+ * produce `index [index].mp4`. When the caller read the page the user opened, its
+ * title is used verbatim instead, with no `%(id)s` that would only repeat
+ * "index".
+ *
+ * The hint is sanitised before it reaches the template because it is literal
+ * template text: a stray `%` would be read as a conversion, and a path separator
+ * or a reserved device name would name a file somewhere else.
+ */
+function outputTemplate(titleHint: string | undefined): string {
+  const cleaned = (titleHint ?? '').replace(/%/g, ' ').replace(/\s+/g, ' ').trim()
+  const hint = cleaned ? sanitizeFileName(cleaned, '') : ''
+  return hint ? `${hint}.%(ext)s` : '%(title).150B [%(id)s].%(ext)s'
 }
 
 /**
