@@ -34,11 +34,10 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
 
-      # The extension folders are generated and git-ignored, and electron-builder
-      # copies them out of resources/extension, so they have to exist by now.
-      - run: npm run build:extension
-
-      - run: npx electron-builder
+      # `dist` runs build:extension, then the electron-vite build, then
+      # electron-builder: the extension folders and out/ are what it packs, and
+      # neither exists until those steps have run.
+      - run: npm run dist
 
       - name: Sign with SignPath
         id: signpath
