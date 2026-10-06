@@ -34,12 +34,20 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
 
-      # `dist` runs build:extension first, so chrome/ and firefox/ exist here.
+      # The extension folders are generated and git-ignored, and electron-builder
+      # copies them out of resources/extension, so they have to exist by now.
+      - run: npm run build:extension
+
       - run: npx electron-builder
 
       - name: Sign with SignPath
         id: signpath
-        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        # `secrets` cannot be read in a step-level `if`: the expression is
+        # rejected and the whole workflow fails to load. Testing an env var that
+        # carries the same value is the supported way to skip signing.
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
