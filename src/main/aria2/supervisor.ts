@@ -10,7 +10,7 @@ import type { EngineState, EngineStatus } from '@shared/download'
 import type { Settings } from '@shared/settings'
 
 import { resolveDisableIpv6 } from './ipv6'
-import { buildDaemonArgs, globalLimitOptions, type DaemonPaths } from './options'
+import { btGlobalOptions, buildDaemonArgs, globalLimitOptions, type DaemonPaths } from './options'
 import { Aria2RpcClient } from './rpc-client'
 import { SessionFile } from './session'
 import type { Aria2Notification } from './types'
@@ -129,13 +129,20 @@ export class Aria2Supervisor extends EventEmitter {
 
   /**
    * Apply settings that aria2 can change live. Anything that is only read at
-   * process start (paths, RPC port, connection fan-out defaults) needs a restart.
+   * process start (paths, RPC port, the BitTorrent listen port, connection
+   * fan-out defaults) needs a restart.
    */
   async applyLiveSettings(settings: Settings): Promise<void> {
     this.settings = settings
     if (!this.rpcClient || !this.isRunning) return
     try {
-      await this.rpcClient.changeGlobalOption(globalLimitOptions(settings))
+      await this.rpcClient.changeGlobalOption({
+        ...globalLimitOptions(settings),
+        // The BitTorrent options a running daemon does accept. The ones it does
+        // not — the listen port above all — deliberately stay out, so a settings
+        // change does not log a failure it cannot act on.
+        ...btGlobalOptions(settings)
+      })
     } catch (error) {
       this.pushLog(`failed to apply global options: ${(error as Error).message}`)
     }

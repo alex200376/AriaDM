@@ -14,6 +14,10 @@ npm run build:extension
 
 兩個版本共用 `src/` 裡的所有程式碼，差別只在 manifest：Chrome 需要
 `background.service_worker`，Firefox 用 `background.scripts`（事件頁）。
+`scripts/build-extension.mjs` 同時負責三件事：把 `src/` 複製成 `chrome/` 與
+`firefox/`、依平台組出 manifest，以及把 `commands`（鍵盤快速鍵）寫進兩個 manifest。
+`strings.js` 必須排在 `content_scripts` 與 Firefox `background.scripts` 的**最前面**，
+因為 `urls.js`、`formats.js`、`content.js`、`request.js` 與 `pairing.js` 都會讀它。
 
 ## 安裝（未封裝）
 
@@ -32,7 +36,9 @@ npm run build:extension
 每個請求都會自己修復一次：若連不上（應用程式換了連接埠、重新啟動或權杖已輪替），
 擴充功能會自動重新配對並重試。真的連不上時，彈出視窗會直接說「無法連線到 AriaDM：
 請確認應用程式正在執行」，而不是只顯示 `Failed to fetch`。
-彈出視窗會列出已經嘗試過的連接埠。
+
+彈出視窗刻意不顯示自動配對用的連接埠——那是內部細節；連接埠只留在工具列圖示的
+提示文字裡，需要排查時才看得到。
 
 自動配對會依序嘗試 `7070`–`7074`：`7070` 同時是 AnyDesk 的預設直連連接埠，
 很常被占用，AriaDM 遇到占用時會自動換到下一個，並持續重試。只有在這幾個連接埠
@@ -49,7 +55,10 @@ npm run build:extension
 | 傳送目前頁面 | 把目前分頁網址送進佇列 |
 | 傳送所有連結 | 收集頁面上所有 `http`/`ftp` 連結，一次送出（最多 200 個） |
 | 攔截瀏覽器下載 | 開啟後，瀏覽器開始的下載會被取消，改由 AriaDM 接手 |
-| 傳送登入狀態 | 把目前分頁當下的 Cookie 送給 AriaDM，用於需要登入的影音下載 |
+| 傳送登入狀態 | 把目前分頁當下的 Cookie 送給 AriaDM，用於需要登入的影音下載；按鈕位在彈出視窗的「進階」區，因為一般情況會自動處理 |
+| 純音訊下載 | 面板停在 `<audio>` 播放器上時，按鈕變成「下載此音訊」，只保留音軌（送出的下載帶 `audioOnly`） |
+| 自訂播放器 | 頁面已由 AriaDM 判定有影音、但沒有可量的 `<video>`／`<audio>`（canvas、腳本產生的元件、封閉的 shadow DOM）時，面板改為**釘在視窗角落**，而不是整個頁面看起來無法下載 |
+| 鍵盤快速鍵 | `Ctrl+Shift+Y`（macOS 為 `Command+Shift+Y`）直接下載目前分頁的影片，不必先開彈出視窗 |
 
 彈出視窗會分辨「單一影片頁」與「列表頁」（例如 `x.com/home`、Instagram 的 Reels 分頁、
 YouTube 搜尋結果）。列表頁上不會承諾可下載影片，而是提示你先開啟那則貼文；
@@ -85,6 +94,12 @@ Instagram 的 `/reel/...`、`/p/...`、`/tv/...` 與 X 的 `/使用者/status/..
 清單裡的畫質多半是**只有影像、沒有聲音**的串流（YouTube 1080p 以上都是如此），所以主行程
 建立下載時會自動把音訊併進來（`312` 會變成 `312+bestaudio`），否則下載回來的影片會完全
 沒有聲音。已經合併的格式與自己組成過的選擇器（`312+bestaudio`）則原樣送出。
+
+## 語言
+
+介面字串集中在 `strings.js`，依瀏覽器語言自動選用繁體中文或英文，涵蓋面板、彈出視窗、
+右鍵選單與通知。刻意不用 `chrome.i18n` 與 `_locales`：那需要非同步取值（面板的標籤會先空白
+再被翻譯，畫面會閃一下），而且新增字串得改 manifest 並重新載入。
 
 ## 登入狀態與 Cookie
 

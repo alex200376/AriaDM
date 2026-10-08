@@ -16,12 +16,36 @@ interface Formats {
   menuFor(result: unknown): { formatId: string; label: string; note: string }[]
 }
 
+interface Strings {
+  t(key: string, substitutions?: Record<string, unknown>): string
+}
+
+/**
+ * The shared string table, loaded the way the browser loads it.
+ *
+ * `formats.js` takes its labels from it, so the test has to supply what the
+ * browser supplies — and it is the only way to assert a label without freezing
+ * the test to one language.
+ */
+function loadStrings(): Strings {
+  const source = readFileSync(
+    new URL('../../resources/extension/src/strings.js', import.meta.url),
+    'utf8'
+  )
+  const target: { AriaDmStrings?: Strings } = {}
+  new Function('self', source)(target)
+  if (!target.AriaDmStrings) throw new Error('strings.js did not define AriaDmStrings')
+  return target.AriaDmStrings
+}
+
+const strings = loadStrings()
+
 function loadFormats(): Formats {
   const source = readFileSync(
     new URL('../../resources/extension/src/formats.js', import.meta.url),
     'utf8'
   )
-  const target: { AriaDmFormats?: Formats } = {}
+  const target: { AriaDmFormats?: Formats; AriaDmStrings?: Strings } = { AriaDmStrings: strings }
   new Function('self', source)(target)
   if (!target.AriaDmFormats) throw new Error('formats.js did not define AriaDmFormats')
   return target.AriaDmFormats
@@ -36,7 +60,12 @@ describe('menuFor', () => {
     const rows = formats.menuFor({ formats: [{ formatId: '137', label: '1080p · mp4' }] })
 
     expect(rows[0]!.formatId).toBe('')
-    expect(rows[0]!.label).toContain('自動')
+    // Compared against the table rather than a literal: the label follows the
+    // browser's language, and a hardcoded expectation here is exactly the bug the
+    // table exists to remove. `not.toBe` is what proves the table was consulted
+    // instead of the key being shown.
+    expect(rows[0]!.label).toBe(strings.t('menu.auto'))
+    expect(rows[0]!.label).not.toBe('menu.auto')
     expect(rows[1]).toMatchObject({ formatId: '137', label: '1080p · mp4' })
   })
 

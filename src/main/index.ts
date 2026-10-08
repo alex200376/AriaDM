@@ -679,6 +679,9 @@ async function restartHandoff(): Promise<void> {
         cookieHeader: payload.cookies ?? '',
         // Absent unless the user picked a quality from the extension's menu.
         mediaFormatId: payload.formatId ?? '',
+        // True when the extension's panel was over an <audio> element, so a page
+        // that only plays music lands as an audio file.
+        mediaAudioOnly: payload.audioOnly === true,
         headers: payload.headers ?? [],
         paused: hold || (payload.paused ?? false),
         torrentBase64: payload.torrentBase64 ?? null,

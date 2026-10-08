@@ -10,7 +10,10 @@
 
 // Chrome runs this as a service worker; Firefox lists request.js and pairing.js
 // first in the manifest's background.scripts instead.
-if (typeof importScripts === 'function') importScripts('request.js', 'pairing.js')
+if (typeof importScripts === 'function') importScripts('strings.js', 'request.js', 'pairing.js')
+
+/** The shared string table; loaded by `importScripts` above in Chrome. */
+const tr = (key, substitutions) => self.AriaDmStrings.t(key, substitutions)
 
 const DEFAULTS = {
   port: null,
@@ -20,6 +23,9 @@ const DEFAULTS = {
   /** True when the user pinned an endpoint by hand in the popup's advanced section. */
   manual: false
 }
+
+/** Must match the `commands` entry in the built manifest (scripts/build-extension.mjs). */
+const COMMAND_DOWNLOAD_PAGE = 'download-page-video'
 
 const MENU_LINK = 'ariadm-download-link'
 const MENU_MEDIA = 'ariadm-download-media'
@@ -104,7 +110,7 @@ function matchMediaHost(url, sites) {
 
 async function ping() {
   const config = await getConfig()
-  if (!config.port || !config.token) return { ok: false, error: '尚未配對' }
+  if (!config.port || !config.token) return { ok: false, error: tr('error.notPaired') }
   try {
     // Through the shared policy, so a stale stored port is repaired here too and
     // the badge tells the truth rather than staying OFF until the user notices.
@@ -136,9 +142,14 @@ async function updateBadge() {
   chrome.action.setBadgeBackgroundColor({ color: paired ? '#2f9e6b' : '#c0453a' })
   chrome.action.setBadgeText({ text: paired ? 'ON' : 'OFF' })
   chrome.action.setTitle({
+    // The tooltip still names the port: it is the one place with room for the
+    // detail, and it is what turns "it doesn't detect" into something the user
+    // can act on when another program owns 7070.
     title: paired
-      ? `AriaDM：已連線${pairing.discoveryPort ? `（自動配對 :${pairing.discoveryPort}）` : ''}`
-      : 'AriaDM：未連線（請啟動 AriaDM 桌面程式）'
+      ? pairing.discoveryPort
+        ? tr('badge.connectedPort', { port: pairing.discoveryPort })
+        : tr('badge.connected')
+      : tr('badge.disconnected')
   })
   return { ...status, discoveryPort: pairing.discoveryPort, pairError: pairing.pairError }
 }
@@ -181,10 +192,10 @@ async function cookieHeaderFor(url) {
  */
 async function offerCookies(url) {
   const config = await getConfig()
-  if (!config.port || !config.token) return { ok: false, error: '尚未配對' }
+  if (!config.port || !config.token) return { ok: false, error: tr('error.notPaired') }
 
   const cookies = await cookieHeaderFor(url)
-  if (!cookies) return { ok: false, error: '這個網址沒有可用的 Cookie' }
+  if (!cookies) return { ok: false, error: tr('error.noCookies') }
 
   try {
     // The shared policy re-pairs and retries once on either a rotated token or a
@@ -213,7 +224,7 @@ async function offerCookies(url) {
  */
 async function serveCookieRequest() {
   const config = await getConfig()
-  if (!config.port || !config.token) return { ok: false, error: '尚未配對' }
+  if (!config.port || !config.token) return { ok: false, error: tr('error.notPaired') }
 
   try {
     const response = await self.AriaDmRequest.requestWithRepair(requestDeps(), config, '/cookie-request', {
@@ -226,7 +237,9 @@ async function serveCookieRequest() {
     if (!url) return { ok: true, url: '' }
 
     const offered = await offerCookies(url)
-    if (offered.ok && offered.accepted) notify('AriaDM 已取得登入狀態', `已把 ${new URL(url).host} 的 Cookie 傳給 AriaDM。`)
+    if (offered.ok && offered.accepted) {
+      notify(tr('notify.loginTitle'), tr('notify.loginBody', { host: new URL(url).host }))
+    }
     return { ok: true, url, sent: Boolean(offered.ok && offered.accepted), error: offered.error ?? '' }
   } catch (error) {
     return { ok: false, error: self.AriaDmRequest.describeError(error) }
@@ -362,9 +375,12 @@ function withTimeout(promise, ms) {
  */
 async function downloadVideo(message) {
   const url = message.url
-  if (!url || !/^https?:/i.test(url)) return { ok: false, error: '這個頁面無法下載' }
+  if (!url || !/^https?:/i.test(url)) return { ok: false, error: tr('error.noPage') }
 
-  if (!message.formatId) {
+  // An audio-only request skips the quality menu entirely: the app resolves
+  // `bestaudio/best` itself, and offering video resolutions for a track would be
+  // a menu of things the user just said they did not want.
+  if (!message.formatId && !message.audioOnly) {
     const probe = await withTimeout(probeFormats(url), PROBE_BUDGET_MS)
     // One choice is not a choice — but anything else gets a menu.
     if (probe?.ok && probe.formats.length > 1) {
@@ -381,6 +397,9 @@ async function downloadVideo(message) {
   const payload = { urls: [url], media: true }
   if (message.referer) payload.referer = message.referer
   if (message.formatId) payload.formatId = message.formatId
+  // The panel knows when it was anchored to an <audio> element, and nothing
+  // downstream can recover that from the page URL.
+  if (message.audioOnly) payload.audioOnly = true
   payload.userAgent = navigator.userAgent
   const cookies = await cookieHeaderFor(url)
   if (cookies) payload.cookies = cookies
@@ -397,12 +416,7 @@ async function handoff(payload) {
     const paired = await self.AriaDmPairing.pair()
     config = await getConfig()
     if (!config.port || !config.token) {
-      notify(
-        'AriaDM 未連線',
-        paired.ok
-          ? '請先啟動 AriaDM 桌面應用程式。'
-          : `找不到 AriaDM。請啟動桌面應用程式，並確認「設定 → 整合與工具」中的瀏覽器整合已啟用。`
-      )
+      notify(tr('notify.disconnected'), paired.ok ? tr('notify.startApp') : tr('notify.findApp'))
       return { ok: false, error: 'not-paired' }
     }
   }
@@ -419,7 +433,7 @@ async function handoff(payload) {
 
     if (!response.ok || body.ok === false) {
       const message = body.error || `HTTP ${response.status}`
-      notify('AriaDM 無法接收', message)
+      notify(tr('notify.rejected'), message)
       return { ok: false, error: message }
     }
 
@@ -429,12 +443,12 @@ async function handoff(payload) {
      * 30 links" into 30 notifications. Only things the user cannot see there —
      * warnings and failures — are worth a toast.
      */
-    for (const warning of body.warnings ?? []) notify('AriaDM 提示', warning)
+    for (const warning of body.warnings ?? []) notify(tr('notify.notice'), warning)
     void updateBadge()
     return { ok: true, ...body }
   } catch (error) {
     const message = self.AriaDmRequest.describeError(error)
-    notify('AriaDM 沒有回應', message)
+    notify(tr('notify.noResponse'), message)
     return { ok: false, error: message }
   }
 }
@@ -462,9 +476,9 @@ async function payloadFor(url, tabId, media) {
 
 function createMenus() {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: MENU_LINK, title: '用 AriaDM 下載連結', contexts: ['link'] })
-    chrome.contextMenus.create({ id: MENU_MEDIA, title: '用 AriaDM 下載媒體', contexts: ['image', 'video', 'audio'] })
-    chrome.contextMenus.create({ id: MENU_PAGE, title: '用 AriaDM 下載此頁面', contexts: ['page'] })
+    chrome.contextMenus.create({ id: MENU_LINK, title: tr('menu.link'), contexts: ['link'] })
+    chrome.contextMenus.create({ id: MENU_MEDIA, title: tr('menu.media'), contexts: ['image', 'video', 'audio'] })
+    chrome.contextMenus.create({ id: MENU_PAGE, title: tr('menu.page'), contexts: ['page'] })
   })
 }
 
@@ -565,6 +579,28 @@ chrome.downloads.onCreated.addListener((item) => {
       if (item.filename) payload.filename = item.filename.split(/[/\\]/).pop()
       await handoff(payload)
     })
+})
+
+/**
+ * The keyboard shortcut from the manifest.
+ *
+ * This is the only route to a download that does not go through the popup, so it
+ * is also the only keyboard path to the on-page panel's job — the panel itself is
+ * hover-driven and cannot be reached without a pointer.
+ *
+ * A shortcut has no popup to render a quality menu into, so when the app reports
+ * that there is a choice to make the default quality is taken instead of
+ * silently doing nothing.
+ */
+chrome.commands?.onCommand.addListener(async (command) => {
+  if (command !== COMMAND_DOWNLOAD_PAGE) return
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.url || !/^https?:/i.test(tab.url)) return
+
+  const first = await downloadVideo({ url: tab.url, referer: tab.url })
+  if (first?.ok && first.mode === 'choose' && first.defaultFormatId) {
+    await downloadVideo({ url: tab.url, referer: tab.url, formatId: first.defaultFormatId })
+  }
 })
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

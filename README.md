@@ -29,8 +29,8 @@ test.bat         :: 執行全部測試
 
 | 檔案 | 用途 |
 | --- | --- |
-| `dist\AriaDM-0.1.0-setup.exe` | NSIS 安裝檔（可自選安裝路徑、建立捷徑） |
-| `dist\AriaDM-0.1.0-portable.exe` | 免安裝單一執行檔 |
+| `dist\AriaDM-<版本>-setup.exe` | NSIS 安裝檔（可自選安裝路徑、建立捷徑） |
+| `dist\AriaDM-<版本>-portable.exe` | 免安裝單一執行檔 |
 | `dist\win-unpacked\` | 未封裝目錄，除錯時直接執行 `AriaDM.exe` |
 
 兩個 target 預設會輸出同一個檔名，因此 `electron-builder.yml` 明確分開命名——

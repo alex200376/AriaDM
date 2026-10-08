@@ -19,6 +19,7 @@ const extensionRoot = path.join(projectRoot, 'resources', 'extension')
 const srcDir = path.join(extensionRoot, 'src')
 
 const SHARED_FILES = [
+  'strings.js',
   'background.js',
   'pairing.js',
   'request.js',
@@ -56,15 +57,29 @@ function buildManifests() {
        * not widen what the extension is allowed to access.
        */
       matches: ['<all_urls>'],
-      // urls.js and formats.js first: the panel reads the site's item URL rules
-      // with the one and builds its menu rows with the other.
-      js: ['urls.js', 'formats.js', 'content.js'],
+      // strings.js, then urls.js and formats.js: the panel reads the item URL
+      // rules with the one and builds its menu rows with the other.
+      js: ['strings.js', 'urls.js', 'formats.js', 'content.js'],
       css: ['content.css'],
       run_at: 'document_idle',
       // Each frame looks for its own player.
       all_frames: true
     }
   ]
+
+  /*
+   * One keyboard path to the on-page panel, which is otherwise hover-only and so
+   * undiscoverable. The command id is fixed: background.js listens for exactly
+   * this name.
+   *
+   * The description is a literal because a manifest cannot call strings.js.
+   */
+  const commands = {
+    'download-page-video': {
+      suggested_key: { default: 'Ctrl+Shift+Y', mac: 'Command+Shift+Y' },
+      description: '下載此頁面的影片 / Download this page’s video'
+    }
+  }
 
   const chromeManifest = {
     manifest_version: 3,
@@ -76,6 +91,7 @@ function buildManifests() {
     permissions: ['contextMenus', 'storage', 'cookies', 'downloads', 'notifications', 'scripting', 'activeTab', 'tabs', 'alarms'],
     host_permissions: ['http://127.0.0.1/*', 'http://localhost/*', '<all_urls>'],
     background: { service_worker: 'background.js' },
+    commands,
     action: { default_popup: 'popup.html', default_title: 'AriaDM' },
     content_scripts: contentScripts,
     icons: { 16: 'icon16.png', 48: 'icon48.png', 128: 'icon128.png' }
@@ -89,11 +105,12 @@ function buildManifests() {
     permissions: ['contextMenus', 'storage', 'cookies', 'downloads', 'notifications', 'scripting', 'activeTab', 'tabs', 'alarms'],
     host_permissions: ['http://127.0.0.1/*', 'http://localhost/*', '<all_urls>'],
     // Firefox implements MV3 with an event page; it does not run a service
-    // worker. Scripts share one global scope and load in order, so request.js and
-    // pairing.js define their globals before background.js runs.
-    background: { scripts: ['request.js', 'pairing.js', 'background.js'] },
+    // worker. Scripts share one global scope and load in order, so strings.js,
+    // request.js and pairing.js define their globals before background.js runs.
+    background: { scripts: ['strings.js', 'request.js', 'pairing.js', 'background.js'] },
     action: { default_popup: 'popup.html', default_title: 'AriaDM' },
     content_scripts: contentScripts,
+    commands,
     icons: { 16: 'icon16.png', 48: 'icon48.png', 128: 'icon128.png' },
     browser_specific_settings: { gecko: { id: 'ariadm@local', strict_min_version: '115.0' } }
   }

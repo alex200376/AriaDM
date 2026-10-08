@@ -228,6 +228,56 @@ export interface Settings {
   seedRatio: number
   seedTime: number
 
+  /**
+   * Extra announce URLs appended to every torrent, including a magnet pasted
+   * from the clipboard.
+   *
+   * A torrent whose own tracker list is dead (or a magnet that carries none)
+   * finds no peers at all, and the fix everyone reaches for is adding a few
+   * public trackers. Empty by default, because a tracker list is a choice about
+   * which third parties see the download.
+   */
+  btTrackers: string[]
+  /**
+   * Refuse peers that do not support encryption.
+   *
+   * Off by default because it is a real trade-off rather than a free win: it
+   * hides the payload from a network observer but also drops plain-only peers,
+   * so a torrent can get slower or stop entirely.
+   */
+  btRequireEncryption: boolean
+  /** Weakest cipher accepted when `btRequireEncryption` is on. */
+  btMinCryptoLevel: 'plain' | 'arc4'
+  /**
+   * Fixed BitTorrent listen port, or 0 to let aria2 choose one per launch.
+   *
+   * A stable port is the only way a router's port forward can point anywhere, so
+   * it is what makes a machine reachable by peers rather than only able to
+   * connect out. 0 keeps the old behaviour and is the default, since a fixed
+   * port without a matching firewall rule achieves nothing.
+   */
+  btListenPort: number
+  btDht: boolean
+  /** IPv6 DHT. Off by default: many networks have no usable IPv6 route. */
+  btDht6: boolean
+  btPex: boolean
+  btLpd: boolean
+  /**
+   * Peers kept per torrent. 0 means aria2's own default.
+   *
+   * Higher finds peers faster on a popular swarm and costs memory and sockets;
+   * lower is the setting that makes a big swarm behave on a small machine.
+   */
+  btMaxPeers: number
+  /** Keep seeding in the background after the download itself is finished. */
+  btDetachSeedOnly: boolean
+  /** Seconds of idle before a torrent with no peers is stopped; 0 disables it. */
+  btStopTimeout: number
+  /** Custom peer id prefix; '' keeps aria2's own, which advertises the client. */
+  btPeerIdPrefix: string
+  /** Custom peer agent string; '' keeps aria2's own. */
+  btPeerAgent: string
+
   useSystemTray: boolean
   confirmOnExit: boolean
 
@@ -294,6 +344,14 @@ export interface AddDownloadInput {
    * engine chooses, which is the common case.
    */
   mediaFormatId?: string
+  /**
+   * Download only the audio track of a media page.
+   *
+   * Set by the browser extension's panel when it was anchored to an `<audio>`
+   * element, so a page that only plays music still lands as an audio file
+   * rather than the worst available video. Ignored by the plain-file routes.
+   */
+  mediaAudioOnly?: boolean
   /** Force this item through a specific engine. */
   engine: 'auto' | 'aria2' | 'ytdlp'
 }

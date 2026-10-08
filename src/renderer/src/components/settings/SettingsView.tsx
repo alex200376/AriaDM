@@ -10,6 +10,7 @@ import {
   Info,
   Loader2,
   Move,
+  Network,
   Plug,
   Plus,
   RefreshCw,
@@ -20,7 +21,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
-import type { AppPaths, CategoryRule, ScheduleRule, SpeedProfile } from '@shared/settings'
+import type { AppPaths, CategoryRule, ScheduleRule, Settings, SpeedProfile } from '@shared/settings'
 import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
 import { formatBytes, formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
@@ -41,6 +42,7 @@ import {
   SectionTitle,
   SelectField,
   Slider,
+  TextArea,
   TONE_DOT,
   Toggle
 } from '../ui/primitives'
@@ -60,6 +62,7 @@ type Tab = SettingsTab
 const TABS: { key: Tab; labelKey: TranslationKey; icon: ReactNode }[] = [
   { key: 'general', labelKey: 'settings.tab.general', icon: <SlidersHorizontal size={14} /> },
   { key: 'downloads', labelKey: 'settings.tab.downloads', icon: <Gauge size={14} /> },
+  { key: 'bittorrent', labelKey: 'settings.tab.bittorrent', icon: <Network size={14} /> },
   { key: 'schedules', labelKey: 'settings.tab.schedules', icon: <CalendarClock size={14} /> },
   { key: 'integrations', labelKey: 'settings.tab.integrations', icon: <Plug size={14} /> },
   { key: 'about', labelKey: 'settings.tab.about', icon: <Info size={14} /> }
@@ -203,6 +206,11 @@ const IPV6_MODE_OPTIONS: LocalisableOption[] = [
   { value: 'auto', labelKey: 'settings.ipv6Mode.auto' },
   { value: 'on', labelKey: 'settings.ipv6Mode.on' },
   { value: 'off', labelKey: 'settings.ipv6Mode.off' }
+]
+
+const CRYPTO_LEVEL_OPTIONS: LocalisableOption[] = [
+  { value: 'plain', labelKey: 'settings.bt.cryptoPlain' },
+  { value: 'arc4', labelKey: 'settings.bt.cryptoArc4' }
 ]
 
 /**
@@ -1991,6 +1999,185 @@ function AboutTab(): JSX.Element {
   )
 }
 
+/**
+ * The BitTorrent options.
+ *
+ * Every control here maps to an aria2 global option (see `btDaemonArgs` in
+ * `src/main/aria2/options.ts`), and every default is aria2's own behaviour, so
+ * the tab changes nothing until something is switched on.
+ *
+ * The listen port is the one setting aria2 reads only at startup, so its row
+ * says that a restart is needed rather than leaving the user to wonder why
+ * nothing happened. Everything else goes through `changeGlobalOption` and lands
+ * on the running engine.
+ */
+function BitTorrentTab(): JSX.Element {
+  const settings = useApp((state) => state.settings)
+  const patch = useApp((state) => state.patchSettings)
+
+  /**
+   * The tracker list as typed.
+   *
+   * Held locally so the textarea shows exactly what the user wrote: settings
+   * store the parsed array, so rendering straight from it would drop a blank line
+   * the moment the write landed and move the caret with it. The draft is
+   * discarded when the tab unmounts, which is when the saved value should win
+   * again.
+   */
+  const [trackerDraft, setTrackerDraft] = useState<string | null>(null)
+
+  if (!settings) return <></>
+
+  const changeTrackers = (raw: string): void => {
+    setTrackerDraft(raw)
+    void patch({
+      btTrackers: raw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+    })
+  }
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <SectionTitle>{t('settings.bt.title')}</SectionTitle>
+        <p className="mb-3 rounded-lg border border-line bg-elevated/30 p-2.5 text-[11px] leading-relaxed text-muted">
+          {t('settings.bt.hint')}
+        </p>
+
+        <Field label={t('settings.bt.trackers')} hint={t('settings.bt.trackersHint')}>
+          <TextArea
+            rows={4}
+            spellCheck={false}
+            placeholder={'udp://tracker.example.org:6969/announce'}
+            value={trackerDraft ?? settings.btTrackers.join('\n')}
+            onChange={(event) => changeTrackers(event.target.value)}
+          />
+        </Field>
+      </section>
+
+      <section>
+        <SectionTitle>{t('settings.bt.encryption')}</SectionTitle>
+        <div className="divide-y divide-line rounded-lg border border-line bg-elevated/30 px-3">
+          <Row label={t('settings.bt.encryption')} hint={t('settings.bt.encryptionHint')}>
+            <Toggle
+              checked={settings.btRequireEncryption}
+              onChange={(v) => void patch({ btRequireEncryption: v })}
+              label={t('settings.bt.encryption')}
+            />
+          </Row>
+        </div>
+
+        {/* Only meaningful with encryption on: with it off, aria2 accepts plain
+            peers whatever this says. */}
+        {settings.btRequireEncryption && (
+          <div className="mt-3">
+            <SelectField
+              label={t('settings.bt.cryptoLevel')}
+              value={settings.btMinCryptoLevel}
+              options={localiseOptions(CRYPTO_LEVEL_OPTIONS)}
+              onValueChange={(value) =>
+                void patch({ btMinCryptoLevel: value as Settings['btMinCryptoLevel'] })
+              }
+            />
+          </div>
+        )}
+      </section>
+
+      <section>
+        <SectionTitle>{t('settings.bt.identity')}</SectionTitle>
+        <div className="space-y-3">
+          <Field label={t('settings.bt.listenPort')} hint={t('settings.bt.listenPortHint')}>
+            <Input
+              type="number"
+              min={0}
+              max={65535}
+              value={settings.btListenPort}
+              onChange={(event) => void patch({ btListenPort: Number(event.target.value) || 0 })}
+            />
+          </Field>
+
+          <Field label={t('settings.bt.peers')} hint={t('settings.bt.peersHint')}>
+            <Input
+              type="number"
+              min={0}
+              max={2000}
+              value={settings.btMaxPeers}
+              onChange={(event) => void patch({ btMaxPeers: Number(event.target.value) || 0 })}
+            />
+          </Field>
+
+          <Field label={t('settings.bt.peerId')} hint={t('settings.bt.peerIdHint')}>
+            <Input
+              maxLength={20}
+              value={settings.btPeerIdPrefix}
+              placeholder="A2-1-37-0-"
+              onChange={(event) => void patch({ btPeerIdPrefix: event.target.value })}
+            />
+          </Field>
+
+          <Field label={t('settings.bt.peerAgent')} hint={t('settings.bt.peerAgentHint')}>
+            <Input
+              maxLength={64}
+              value={settings.btPeerAgent}
+              placeholder="aria2/1.37.0"
+              onChange={(event) => void patch({ btPeerAgent: event.target.value })}
+            />
+          </Field>
+        </div>
+      </section>
+
+      <section>
+        <SectionTitle>{t('settings.bt.seeding')}</SectionTitle>
+        <div className="divide-y divide-line rounded-lg border border-line bg-elevated/30 px-3">
+          <Row label={t('settings.bt.detachSeed')} hint={t('settings.bt.detachSeedHint')}>
+            <Toggle
+              checked={settings.btDetachSeedOnly}
+              onChange={(v) => void patch({ btDetachSeedOnly: v })}
+              label={t('settings.bt.detachSeed')}
+            />
+          </Row>
+          <Row label={t('settings.bt.stopTimeout')} hint={t('settings.bt.stopTimeoutHint')}>
+            <Input
+              type="number"
+              min={0}
+              max={86400}
+              className="w-24"
+              value={settings.btStopTimeout}
+              onChange={(event) => void patch({ btStopTimeout: Number(event.target.value) || 0 })}
+            />
+          </Row>
+        </div>
+      </section>
+
+      <section>
+        <SectionTitle>{t('settings.bt.dht')}</SectionTitle>
+        <div className="divide-y divide-line rounded-lg border border-line bg-elevated/30 px-3">
+          <Row label={t('settings.bt.dht')}>
+            <Toggle checked={settings.btDht} onChange={(v) => void patch({ btDht: v })} label={t('settings.bt.dht')} />
+          </Row>
+          <Row label={t('settings.bt.dht6')}>
+            <Toggle
+              checked={settings.btDht6}
+              onChange={(v) => void patch({ btDht6: v })}
+              label={t('settings.bt.dht6')}
+            />
+          </Row>
+          <Row label={t('settings.bt.pex')}>
+            <Toggle checked={settings.btPex} onChange={(v) => void patch({ btPex: v })} label={t('settings.bt.pex')} />
+          </Row>
+          <Row label={t('settings.bt.lpd')}>
+            <Toggle checked={settings.btLpd} onChange={(v) => void patch({ btLpd: v })} label={t('settings.bt.lpd')} />
+          </Row>
+        </div>
+
+        <p className="mt-3 text-[11px] leading-relaxed text-faint">{t('settings.bt.restartHint')}</p>
+      </section>
+    </div>
+  )
+}
+
 export function SettingsView(): JSX.Element {
   const tab = useApp((state) => state.settingsTab)
   const setTab = useApp((state) => state.setSettingsTab)
@@ -2034,6 +2221,7 @@ export function SettingsView(): JSX.Element {
               <ProfilesTab />
             </>
           )}
+          {tab === 'bittorrent' && <BitTorrentTab />}
           {tab === 'schedules' && (
             <>
               <SchedulesTab />

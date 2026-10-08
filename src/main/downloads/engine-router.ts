@@ -1,7 +1,7 @@
 import { DIRECT_MEDIA_TAG } from '@shared/download'
 import { isStreamManifestUrl } from '@shared/media-sniff'
 import { MEDIA_DIRECT_CONNECTIONS, type AddDownloadInput, type AddDownloadResult, type Settings } from '@shared/settings'
-import { defaultFormatId, provisionalFormatOption } from '@shared/media-formats'
+import { defaultFormatId, provisionalFormatId, provisionalFormatOption } from '@shared/media-formats'
 import {
   chooseEngine,
   needsPageSniff,
@@ -78,14 +78,14 @@ const PROBE_BUDGET_MS = 4_000
  * it the same answers a real probe would for the one choice that was made — the
  * default one. yt-dlp then resolves that selector during the download itself.
  */
-function provisionalProbe(url: string, hasFfmpeg: boolean): MediaProbe {
+function provisionalProbe(url: string, hasFfmpeg: boolean, audioOnly = false): MediaProbe {
   return {
     url,
     title: url,
     id: '',
     durationSeconds: 0,
     thumbnail: '',
-    formats: [provisionalFormatOption(hasFfmpeg, false)],
+    formats: [provisionalFormatOption(hasFfmpeg, audioOnly)],
     subtitles: [],
     isPlaylist: false,
     extractor: '',
@@ -261,6 +261,11 @@ export class EngineRouter {
       })
     }
 
+    // The extension's panel over an `<audio>` element asks for music, not for the
+    // worst available video: it is the one piece of context the page URL cannot
+    // carry.
+    const audioOnly = input.mediaAudioOnly === true
+
     const target = streamUrl || url
     this.options.log(
       streamUrl ? `engine router: ${url} -> manifest ${streamUrl}` : `engine router: ${url} -> yt-dlp`
@@ -313,7 +318,7 @@ export class EngineRouter {
 
       // `formats[0]` on a real probe is the synthetic best entry, so both paths
       // name the same format. Without a probe, this is the provisional default.
-      const resolved = probe ?? provisionalProbe(target, this.options.mediaJobs.hasFfmpeg)
+      const resolved = probe ?? provisionalProbe(target, this.options.mediaJobs.hasFfmpeg, audioOnly)
 
       if (resolved.directUrl) {
         this.options.log(`engine router: ${url} resolved to a direct file; using aria2`)
@@ -339,7 +344,15 @@ export class EngineRouter {
       // Not `formats[0]`: on a machine without ffmpeg the best entry cannot be
       // produced at all, and this path is the extension's "download this video" —
       // it has to just work.
-      const formatId = requested || defaultFormatId(resolved.formats, this.options.mediaJobs.hasFfmpeg)
+      // An audio-only request that named no quality asks for the best audio
+      // straight away. Falling through to the video default would download a
+      // picture the user never asked for, and on an audio-only page that default
+      // is often the only format there is.
+      const formatId =
+        requested ||
+        (audioOnly
+          ? provisionalFormatId(this.options.mediaJobs.hasFfmpeg, true)
+          : defaultFormatId(resolved.formats, this.options.mediaJobs.hasFfmpeg))
 
       /*
        * The chosen format may itself be a single plain file: a site yt-dlp
@@ -375,7 +388,7 @@ export class EngineRouter {
           // inside Program Files for an installed build, which is where the
           // "[Errno 13] Permission denied" on a .part file came from.
           dir: input.dir || settings.downloadDir,
-          audioOnly: false,
+          audioOnly,
           playlist: false,
           maxConcurrent: 0
         },

@@ -38,6 +38,14 @@ export interface  HandoffPayload {
   media?: boolean
   /** A quality the user chose from the extension's menu. See `onProbe`. */
   formatId?: string
+  /**
+   * The panel was anchored to an `<audio>` element, so keep only the audio.
+   *
+   * A separate flag rather than an implied one: the page is still handed over as
+   * a page (only yt-dlp can resolve it), and "this is music" is not something
+   * that can be recovered from the URL of a track.
+   */
+  audioOnly?: boolean
 }
 
 /**
@@ -478,6 +486,14 @@ export class HandoffServer {
 
         if (parsed.engine !== undefined && !['auto', 'aria2', 'ytdlp'].includes(parsed.engine)) {
           send(400, { ok: false, error: 'invalid engine' })
+          return
+        }
+
+        // A non-boolean here would be truthy in the engine router, so it is
+        // rejected rather than coerced: "audioOnly": "false" is a mistake, not
+        // a request for audio.
+        if (parsed.audioOnly !== undefined && typeof parsed.audioOnly !== 'boolean') {
+          send(400, { ok: false, error: 'invalid audioOnly' })
           return
         }
 

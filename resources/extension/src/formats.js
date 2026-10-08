@@ -10,7 +10,16 @@
  * file only decides how they read.
  */
 ;(function (root) {
-  const AUTO_LABEL = '自動選擇最佳畫質'
+  /**
+   * A label from the shared table.
+   *
+   * `strings.js` is loaded before this file in every context that uses it (see
+   * the manifest's `content_scripts` order and `popup.html`), so the table is
+   * always there in the browser. The key is returned when it is not, which names
+   * the mistake instead of silently showing the wrong language.
+   */
+  const s = (key, substitutions) =>
+    root.AriaDmStrings ? root.AriaDmStrings.t(key, substitutions) : key
 
   /** A file size a person can compare at a glance. */
   function sizeLabel(bytes) {
@@ -36,7 +45,7 @@
    * asks the app to choose, which is exactly what it did before this menu.
    */
   function menuFor(result) {
-    const rows = [{ formatId: '', label: AUTO_LABEL, note: '' }]
+    const rows = [{ formatId: '', label: s('menu.auto'), note: '' }]
     for (const format of (result && result.formats) || []) {
       if (!format || !format.formatId) continue
       rows.push({

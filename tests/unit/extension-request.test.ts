@@ -12,6 +12,10 @@ import { describe, expect, it, vi } from 'vitest'
  * fetch", and a service worker is not a place you can test it from.
  */
 
+interface Strings {
+  t(key: string, substitutions?: Record<string, unknown>): string
+}
+
 interface Policy {
   describeError(error: unknown): string
   requestWithRepair(
@@ -22,12 +26,31 @@ interface Policy {
   ): Promise<{ status: number }>
 }
 
+/**
+ * The shared string table, loaded the way the browser loads it.
+ *
+ * `describeError` reads its sentences from it, so the test supplies what the
+ * browser supplies and asserts against the table rather than one language.
+ */
+function loadStrings(): Strings {
+  const source = readFileSync(
+    new URL('../../resources/extension/src/strings.js', import.meta.url),
+    'utf8'
+  )
+  const target: { AriaDmStrings?: Strings } = {}
+  new Function('self', source)(target)
+  if (!target.AriaDmStrings) throw new Error('strings.js did not define AriaDmStrings')
+  return target.AriaDmStrings
+}
+
+const strings = loadStrings()
+
 function loadPolicy(): Policy {
   const source = readFileSync(
     new URL('../../resources/extension/src/request.js', import.meta.url),
     'utf8'
   )
-  const target: { AriaDmRequest?: Policy } = {}
+  const target: { AriaDmRequest?: Policy; AriaDmStrings?: Strings } = { AriaDmStrings: strings }
   // `self` is supplied, so the script does not boot into the test's global.
   new Function('self', source)(target)
   if (!target.AriaDmRequest) throw new Error('request.js did not define AriaDmRequest')
@@ -54,16 +77,17 @@ function call(fetch: ReturnType<typeof vi.fn>, index: number): { url: string; to
 
 describe('extension request policy', () => {
   it('turns a transport failure into something a person can act on', () => {
-    expect(policy.describeError(new TypeError('Failed to fetch'))).toMatch(/無法連線到 AriaDM/)
-    expect(policy.describeError(new Error('Load failed'))).toMatch(/無法連線到 AriaDM/)
-    expect(policy.describeError(new Error('NetworkError when attempting to fetch resource.'))).toMatch(
-      /無法連線到 AriaDM/
-    )
+    const advice = strings.t('error.connect')
+    expect(policy.describeError(new TypeError('Failed to fetch'))).toBe(advice)
+    expect(policy.describeError(new Error('Load failed'))).toBe(advice)
+    expect(policy.describeError(new Error('NetworkError when attempting to fetch resource.'))).toBe(advice)
+    // The raw DOM sentence is what this replaced, so it must not survive.
+    expect(advice).not.toMatch(/failed to fetch/i)
   })
 
   it('keeps an unrecognised message rather than inventing one', () => {
     expect(policy.describeError(new Error('HTTP 404'))).toBe('HTTP 404')
-    expect(policy.describeError(undefined)).toBe('未知錯誤')
+    expect(policy.describeError(undefined)).toBe(strings.t('error.unknown'))
   })
 
   it('passes a healthy request straight through, with the stored token', async () => {

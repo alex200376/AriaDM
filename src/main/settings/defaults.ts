@@ -92,6 +92,25 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     seedRatio: 1,
     seedTime: 0,
 
+    // BitTorrent advanced options. Every default here is aria2's own behaviour,
+    // so adding these settings changes nothing until one is turned on.
+    btTrackers: [],
+    btRequireEncryption: false,
+    btMinCryptoLevel: 'plain',
+    // 0 = aria2 picks a port per launch. A fixed port without a firewall rule is
+    // worse than useless, so it is opt-in.
+    btListenPort: 0,
+    btDht: true,
+    btDht6: false,
+    btPex: true,
+    btLpd: true,
+    // 0 means "let aria2 decide", which is aria2's own default of 55 peers.
+    btMaxPeers: 0,
+    btDetachSeedOnly: false,
+    btStopTimeout: 0,
+    btPeerIdPrefix: '',
+    btPeerAgent: '',
+
     useSystemTray: true,
     confirmOnExit: false,
 

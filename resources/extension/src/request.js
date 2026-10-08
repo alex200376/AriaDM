@@ -14,6 +14,16 @@
  */
 ;(function (root) {
   /**
+   * A message from the shared table.
+   *
+   * `strings.js` is loaded before this file (see the manifest and popup.html), so
+   * the table is there in the browser; the key comes back when it is not, which
+   * names the mistake rather than showing the wrong language.
+   */
+  const s = (key, substitutions) =>
+    root.AriaDmStrings ? root.AriaDmStrings.t(key, substitutions) : key
+
+  /**
    * Human text for a transport failure.
    *
    * The raw DOM message is "Failed to fetch", which tells the user nothing and
@@ -22,9 +32,9 @@
   function describeError(error) {
     const raw = String((error && error.message) || error || '')
     if (/failed to fetch|networkerror|load failed|network request failed/i.test(raw)) {
-      return '無法連線到 AriaDM：請確認應用程式正在執行，或按「重新連線」。'
+      return s('error.connect')
     }
-    return raw || '未知錯誤'
+    return raw || s('error.unknown')
   }
 
   /**

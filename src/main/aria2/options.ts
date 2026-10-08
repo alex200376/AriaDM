@@ -63,6 +63,157 @@ export function clampMaxConcurrentDownloads(value: number): number {
 }
 
 /**
+ * Ranges for the BitTorrent options.
+ *
+ * Unlike `RANGES` above, zero is meaningful for the port and the peer count — it
+ * is how the UI says "let aria2 decide" — so these do not reuse `clamp`, which
+ * treats anything at or below zero as "unset" and substitutes a fallback. An
+ * out-of-range value is instead clamped into the range, because aria2 refuses to
+ * start at all on a bad argument (`errorCode=28`) and a typing mistake in a port
+ * field must not cost the user their engine.
+ */
+const BT_RANGES = {
+  listenPort: { min: 1024, max: 65535 },
+  maxPeers: { min: 1, max: 2000 },
+  stopTimeout: { min: 1, max: 86_400 }
+} as const
+
+/** 0 stays 0 (unset); anything else is pulled into a port aria2 accepts. */
+export function clampBtPort(value: number): number {
+  const rounded = Math.round(Number.isFinite(value) ? value : 0)
+  if (rounded <= 0) return 0
+  return Math.min(Math.max(rounded, BT_RANGES.listenPort.min), BT_RANGES.listenPort.max)
+}
+
+/** 0 stays 0 (aria2's own default of 55 peers). */
+export function clampBtMaxPeers(value: number): number {
+  const rounded = Math.round(Number.isFinite(value) ? value : 0)
+  if (rounded <= 0) return 0
+  return Math.min(Math.max(rounded, BT_RANGES.maxPeers.min), BT_RANGES.maxPeers.max)
+}
+
+/** 0 stays 0 (the whole feature off). */
+export function clampBtStopTimeout(value: number): number {
+  const rounded = Math.round(Number.isFinite(value) ? value : 0)
+  if (rounded <= 0) return 0
+  return Math.min(Math.max(rounded, BT_RANGES.stopTimeout.min), BT_RANGES.stopTimeout.max)
+}
+
+/**
+ * The usable announce URLs out of a user-supplied tracker list.
+ *
+ * Deliberately filters rather than rejects: a list pasted from a forum page
+ * carries blank lines, comments and the occasional `wss://` entry aria2 cannot
+ * use, and one bad line must not take the rest of the list with it. `udp://` is
+ * accepted because that is what most public trackers announce on.
+ */
+export function normaliseTrackers(trackers: string[]): string[] {
+  const seen = new Set<string>()
+  const usable: string[] = []
+  for (const entry of trackers) {
+    const trimmed = entry.trim()
+    if (!/^(https?|udp):\/\/[^\s]+$/i.test(trimmed)) continue
+    if (seen.has(trimmed)) continue
+    seen.add(trimmed)
+    usable.push(trimmed)
+  }
+  return usable
+}
+
+/**
+ * A peer id prefix or agent string aria2 will accept.
+ *
+ * These are the values that end up verbatim in the wire protocol, so they are
+ * restricted to printable ASCII and truncated — a value aria2 rejects stops the
+ * engine from starting, which is a steep price for a cosmetic setting.
+ */
+export function cleanPeerText(value: string, maxLength: number): string {
+  const printable = value.replace(/[^\x20-\x7e]/g, '').trim()
+  return printable.slice(0, maxLength)
+}
+
+/**
+ * The BitTorrent half of the daemon's argument list.
+ *
+ * Every option here is read once, when aria2 starts, so a change needs an engine
+ * restart — except for the subset `btGlobalOptions` below hands to
+ * `changeGlobalOption`, which is why the two functions have to agree about what
+ * "unset" means.
+ */
+export function btDaemonArgs(settings: Settings): string[] {
+  const args: string[] = [
+    settings.btDht ? '--enable-dht=true' : '--enable-dht=false',
+    settings.btPex ? '--enable-peer-exchange=true' : '--enable-peer-exchange=false',
+    settings.btLpd ? '--bt-enable-lpd=true' : '--bt-enable-lpd=false'
+  ]
+
+  // Only ever emitted when true: passing `--enable-dht6=false` is the smaller
+  // argument list, and aria2's own default is already false.
+  if (settings.btDht6) args.push('--enable-dht6=true')
+
+  const trackers = normaliseTrackers(settings.btTrackers)
+  if (trackers.length > 0) args.push(`--bt-tracker=${trackers.join(',')}`)
+
+  if (settings.btRequireEncryption) {
+    args.push('--bt-require-crypto=true')
+    if (settings.btMinCryptoLevel === 'arc4') args.push('--bt-min-crypto-level=arc4')
+  }
+
+  // Both listeners move together: a fixed port for one and a random one for the
+  // other would leave the port forward pointing at half the traffic.
+  const port = clampBtPort(settings.btListenPort)
+  if (port > 0) args.push(`--listen-port=${port}`, `--dht-listen-port=${port}`)
+
+  const peers = clampBtMaxPeers(settings.btMaxPeers)
+  if (peers > 0) args.push(`--bt-max-peers=${peers}`)
+
+  if (settings.btDetachSeedOnly) args.push('--bt-detach-seed-only=true')
+
+  const stopTimeout = clampBtStopTimeout(settings.btStopTimeout)
+  if (stopTimeout > 0) args.push(`--bt-stop-timeout=${stopTimeout}`)
+
+  const prefix = cleanPeerText(settings.btPeerIdPrefix, 20)
+  if (prefix) args.push(`--peer-id-prefix=${prefix}`)
+  const agent = cleanPeerText(settings.btPeerAgent, 64)
+  if (agent) args.push(`--peer-agent=${agent}`)
+
+  return args
+}
+
+/**
+ * The BitTorrent options a running daemon actually applies.
+ *
+ * Measured against the pinned aria2 build rather than taken from the manual,
+ * because the manual is not the whole story. `aria2.changeGlobalOption`
+ * *accepts* every option below and several more with no error — and then
+ * silently leaves some of them where they were. Measured on 1.37.0,
+ * `enable-dht`, `bt-detach-seed-only`, `peer-id-prefix` and `peer-agent` are all
+ * in that second group: the call succeeds, and `getGlobalOption` still reports
+ * the old value afterwards. They belong to `btDaemonArgs` and wait for the next
+ * engine restart; sending them here would change nothing while looking like it
+ * had, which is worse than not offering to.
+ *
+ * The listen port is restart-only for a plainer reason: it is bound when the
+ * daemon starts.
+ */
+export function btGlobalOptions(settings: Settings): Record<string, string> {
+  const options: Record<string, string> = {
+    'enable-peer-exchange': settings.btPex ? 'true' : 'false',
+    'bt-enable-lpd': settings.btLpd ? 'true' : 'false',
+    'bt-require-crypto': settings.btRequireEncryption ? 'true' : 'false',
+    'bt-min-crypto-level': settings.btMinCryptoLevel,
+    'bt-max-peers': String(clampBtMaxPeers(settings.btMaxPeers)),
+    'bt-stop-timeout': String(clampBtStopTimeout(settings.btStopTimeout))
+  }
+
+  // An empty string is how aria2 is told to clear the list; omitting the key
+  // would leave whatever was set before in place.
+  options['bt-tracker'] = normaliseTrackers(settings.btTrackers).join(',')
+
+  return options
+}
+
+/**
  * Worker tolerance defaults. These are deliberate product choices:
  *  - `--no-conf=true` isolates us completely from any aria2.conf on the machine,
  *    so a user's unrelated aria2 setup can never silently change our behaviour.
@@ -121,11 +272,11 @@ export function buildDaemonArgs(options: DaemonArgOptions): string[] {
     '--follow-torrent=mem',
     '--bt-save-metadata=true',
     '--bt-metadata-only=false',
-    '--enable-dht=true',
-    '--enable-peer-exchange=true',
-    '--bt-enable-lpd=true',
     '--disk-cache=64M',
     '--bt-max-open-files=100',
+
+    // Tracker list, encryption, listen port, DHT/PEX/LPD and peer identity.
+    ...btDaemonArgs(settings),
 
     '--check-certificate=true',
     '--ftp-pasv=true',

@@ -163,6 +163,34 @@ describe('EngineRouter', () => {
     }
   })
 
+  it('keeps an audio-only request to the audio track', async () => {
+    // The extension's panel over an <audio> element is the only place that knows
+    // the page is music, and nothing downstream can recover that from the page
+    // URL — so it travels as a flag, and it has to arrive as one.
+    const { router, addMedia } = makeRouter({})
+
+    const result = await router.add(input({ engine: 'ytdlp', mediaAudioOnly: true }))
+
+    expect(result.gids).toEqual(['ytdlp:1'])
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ audioOnly: true, formatId: 'bestaudio/best' })
+  })
+
+  it('asks for the best audio even when the probe never answers', async () => {
+    const { router, addMedia } = makeRouter({ failProbe: true })
+
+    await router.add(input({ engine: 'ytdlp', mediaAudioOnly: true }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ audioOnly: true, formatId: 'bestaudio/best' })
+  })
+
+  it('still defaults to video when the audio flag is absent', async () => {
+    const { router, addMedia } = makeRouter({})
+
+    await router.add(input({ engine: 'ytdlp' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ audioOnly: false })
+  })
+
   it('refuses a named quality when the probe that offered it cannot answer', async () => {
     // A quality is only real against the list it was chosen from, so without a
     // probe there is nothing to honour — and silently downloading a different

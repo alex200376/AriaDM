@@ -24,6 +24,14 @@
 
   const DISCOVERY_HOST = '127.0.0.1'
 
+  /** A message from the shared table; the key itself when it has not loaded. */
+  const s = (key, substitutions) =>
+    self.AriaDmStrings ? self.AriaDmStrings.t(key, substitutions) : key
+
+  /** The list separator the current language would use. */
+  const separator = () =>
+    (self.AriaDmStrings?.language ?? '').startsWith('zh') ? '、' : ', '
+
   function discoverUrl(port) {
     return `http://${DISCOVERY_HOST}:${port}/discover`
   }
@@ -75,9 +83,11 @@
     const found = await discover()
     if (!found) {
       await chrome.storage.local.set({
-        pairError:
-          `找不到 AriaDM（已嘗試連接埠 ${DISCOVERY_PORTS.join('、')}）。` +
-          '請確認應用程式正在執行，且「設定 → 整合與工具」中已啟用瀏覽器整合。',
+        // The ports are part of the message because "it did not find the app" is
+        // otherwise indistinguishable from "the extension is broken".
+        pairError: s('error.pairFailed', {
+          ports: DISCOVERY_PORTS.join(separator())
+        }),
         discoveryPort: null
       })
       return { ok: false, error: 'not-found', ports: DISCOVERY_PORTS.slice() }
