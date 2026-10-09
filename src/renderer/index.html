@@ -7,10 +7,18 @@
       The renderer never loads remote content, so the CSP is maximally strict.
       'unsafe-inline' is required for style because Tailwind and the progress
       bars set inline styles; scripts have no such exemption.
+
+      `blob:` is in `img-src` for the wallpaper, and only for that: the picture
+      reaches CSS as a `blob:` URL built in this process from the bytes the main
+      process read. It cannot be the data URL, because a CSS declaration over 2 MiB
+      is dropped without a word — a normal photo is bigger than that, and the
+      window simply showed no picture (see `@shared/wallpaper-url`). A blob URL
+      cannot be conjured by remote content either: it can only be created by a
+      script already running in this window.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>AriaDM</title>
   </head>

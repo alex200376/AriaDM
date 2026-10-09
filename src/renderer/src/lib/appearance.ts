@@ -1,5 +1,6 @@
 import { accentTriples } from '@shared/theme'
 import { wallpaperPan, wallpaperSize, type WallpaperSize } from '@shared/wallpaper'
+import { wallpaperCssUrl } from '@shared/wallpaper-url'
 
 /**
  * Everything that paints a window, in one place.
@@ -57,6 +58,32 @@ const WALLPAPER_PROPERTIES = [
 ]
 
 /**
+ * The picture's `blob:` URL, kept so the sizes this costs are paid once.
+ *
+ * `applyAppearance` runs on every settings refresh — including every window focus
+ * — and turning the data URL into a blob each time would mean a base64 decode and
+ * a megabyte-sized copy every time the window came back to the front. Keyed by the
+ * data URL it was made from, and the previous URL is revoked as the next one is
+ * made, so trying several pictures in a row leaves one alive rather than one each.
+ *
+ * This indirection is not an optimisation: a CSS declaration past 2 MiB is dropped
+ * by the browser without a word, so the data URL *cannot* be what the declaration
+ * holds. See `@shared/wallpaper-url`.
+ */
+let cssPictureUrl: { dataUrl: string; url: string } | null = null
+
+/** The URL the stylesheet gets for this picture. */
+function pictureUrlFor(dataUrl: string): string {
+  if (cssPictureUrl !== null && cssPictureUrl.dataUrl === dataUrl) return cssPictureUrl.url
+  if (cssPictureUrl !== null && cssPictureUrl.url.startsWith('blob:')) {
+    URL.revokeObjectURL(cssPictureUrl.url)
+  }
+  const url = wallpaperCssUrl(dataUrl, (blob) => URL.createObjectURL(blob))
+  cssPictureUrl = { dataUrl, url }
+  return url
+}
+
+/**
  * The picture on screen, kept so a resize or a slider can recompose it without
  * decoding the data URL again. `natural` stays null until it has loaded, which is
  * why the geometry is only written once the picture's real size is known.
@@ -106,12 +133,16 @@ function measure(root: HTMLElement, look: WallpaperLook): void {
     root.style.removeProperty('--wallpaper-size')
     root.style.removeProperty('--wallpaper-position')
   }
-  image.src = look.wallpaper
+  // The blob URL, not the data URL: the bytes are already in memory as a Blob, and
+  // hand-measuring through the same URL CSS was given keeps one decode, not two.
+  image.src = pictureUrlFor(look.wallpaper)
 }
 
 /** Every wallpaper custom property except the geometry. */
 function paintLook(root: HTMLElement, look: WallpaperLook): void {
-  root.style.setProperty('--wallpaper-image', `url("${look.wallpaper}")`)
+  // A `blob:` URL, never the data URL itself: a declaration over 2 MiB is dropped
+  // silently, which is how a large picture ended up painting nothing at all.
+  root.style.setProperty('--wallpaper-image', `url("${pictureUrlFor(look.wallpaper)}")`)
   root.style.setProperty('--wallpaper-blur', `${look.blur}px`)
   root.style.setProperty('--wallpaper-dim', String(look.dim / 100))
   root.style.setProperty('--app-alpha', String(look.opacity / 100))
