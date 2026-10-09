@@ -42,7 +42,10 @@
   - 有具名位址時（`<source src>`、或 Resource Timing 讀到的 manifest）true——與是否正在播放無關。
   - `isPlaying` 另以 2 項驗證：播放中為 true；暫停、`currentTime` 為 0、已結束、`readyState` 未達 2、`null` 皆為 false。
 - **擴充功能的產物與原始碼逐位元組相同**（`src/`、`chrome/`、`firefox/` 三處的 `urls.js` 與 `content.js` SHA-256 一致），並確認封裝後的 `dist/win-unpacked/resources/extension/` 也是同一份。
-- **封裝後的產物確含這批變更**：`app.asar` 內可找到 `localMediaEvidence` 與 `isPlaying`，`resources/extension/chrome/urls.js` 亦同；安裝檔與免安裝版皆為有效的 PE 檔（`MZ`）。
+- **封裝後的產物確含這批變更**，且兩個部分各自出貨：
+  - 行程內修正（tick 排隊）：`dist/win-unpacked/resources/app.asar` 內可找到 `tickChain`（3 處）與 `invalidateStopped`（4 處）。
+  - 擴充功能**不在 `app.asar` 內**，而是以獨立資源目錄出貨：`dist/win-unpacked/resources/extension/chrome/urls.js` 內可找到 `localMediaEvidence`（2 處）與 `isPlaying`（4 處）。
+  - 安裝檔與免安裝版皆為有效的 PE 檔（`MZ`）。
 - 未以自動化驗證、需人工確認的部分：面板在真實瀏覽器上對這類 MSE 播放器的行為——需要載入未封裝擴充功能並造訪實際站台；`isPlaying` 依賴的 `readyState`、`currentTime` 只有真實播放中才有值。
 
 ## 下載
