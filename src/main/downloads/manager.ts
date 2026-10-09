@@ -140,6 +140,8 @@ export class DownloadManager extends EventEmitter {
   private global: GlobalStat = emptyGlobalStat()
   private timer: NodeJS.Timeout | null = null
   private inFlight = false
+  /** The tail of the serialised tick chain; see `tick`. */
+  private tickChain: Promise<void> = Promise.resolve()
   private wasBusy = false
 
   /**
@@ -184,11 +186,11 @@ export class DownloadManager extends EventEmitter {
       // A discrete event means something changed right now; refresh promptly
       // instead of waiting for the next scheduled tick.
       if (/Complete|Error|Start|Stop|Pause/.test(notification.method)) {
-        void this.tick()
+        void this.poll()
       }
     })
 
-    this.timer = setInterval(() => void this.tick(), this.pollIntervalMs)
+    this.timer = setInterval(() => void this.poll(), this.pollIntervalMs)
     this.timer.unref?.()
     // Nothing has been sent yet, so the first payload is the whole list.
     this.sendFull = true
@@ -325,8 +327,37 @@ export class DownloadManager extends EventEmitter {
     this.stoppedSignature = null
   }
 
+  /**
+   * Run one poll, queued behind any poll already in flight.
+   *
+   * This used to drop the request instead (`if (this.inFlight) return`), so a
+   * command that landed while a poll was running was never reflected by it: the
+   * command's own tick returned at once and `getItems()` went on answering with
+   * the snapshot from *before* the change — a download the user had just deleted
+   * was still there, and the removal only reached the renderer on the next
+   * scheduled poll. The file was gone from disk and the history record was gone
+   * with it, so the item was a ghost for as long as that took. Callers await this,
+   * which is what makes a command's own read observe the command.
+   */
   async tick(): Promise<void> {
+    const run = this.tickChain.then(() => this.pollOnce())
+    this.tickChain = run.catch(() => undefined)
+    return run
+  }
+
+  /**
+   * The scheduled path: a poll already under way is poll enough.
+   *
+   * Deliberately not `tick`, which would queue another pass every interval and
+   * let a slow engine build a backlog of them. A command is a different matter —
+   * it has changed something and needs a poll after it, so it waits its turn.
+   */
+  private poll(): void {
     if (this.inFlight) return
+    void this.tick()
+  }
+
+  private async pollOnce(): Promise<void> {
     if (!this.supervisor.isRunning) {
       this.emitTick()
       return
@@ -595,6 +626,11 @@ export class DownloadManager extends EventEmitter {
     }
 
     this.history.remove(gids)
+    // The purge above took these out of aria2's stopped list, so the cached one
+    // is known stale: a forceRemove and its purge move the engine's counters and
+    // put them back, and a signature that nets out to what it was would leave the
+    // removed items in place.
+    this.invalidateStopped()
     await this.tick()
   }
 

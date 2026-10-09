@@ -21,6 +21,8 @@ interface Urls {
   isStreamedAddress(video: unknown): boolean
   observedStreamAddress(location: unknown, options?: unknown): string
   playableAddress(video: unknown, location: unknown, options?: unknown): string
+  isPlaying(video: unknown): boolean
+  localMediaEvidence(video: unknown, location: unknown, options?: unknown): boolean
 }
 
 function loadUrls(): Urls {
@@ -668,5 +670,125 @@ describe('mediaFileAddress', () => {
     expect(urls.mediaFileAddress('mediastream:1')).toBe(false)
     expect(urls.mediaFileAddress('')).toBe(false)
     expect(urls.mediaFileAddress(undefined)).toBe(false)
+  })
+})
+
+/**
+ * The third reported player, as it is written on the page:
+ *
+ *     <video id="lelevideo" class="leleplayer-video leleplayer-video-current"
+ *            playsinline webkit-playsinline preload="auto"
+ *            src="blob:https://play.777tv.ai/5f2b02ab-8d3e-4e38-a640-d6cbf85a5b05">
+ *
+ * Its `id` and class are the site's own invention and its address names no file,
+ * so both are read by nothing here. What it does carry is the fact that it is
+ * playing, and that is true of the element whatever a site called it.
+ */
+const LELE_PLAYER = {
+  id: 'lelevideo',
+  className: 'leleplayer-video leleplayer-video-current',
+  currentSrc: 'blob:https://play.777tv.ai/5f2b02ab-8d3e-4e38-a640-d6cbf85a5b05',
+  src: 'blob:https://play.777tv.ai/5f2b02ab-8d3e-4e38-a640-d6cbf85a5b05',
+  paused: false,
+  ended: false,
+  currentTime: 372.5,
+  readyState: 4,
+  getBoundingClientRect: () => ({ width: 1280, height: 720 }),
+  querySelectorAll: () => []
+}
+
+/** The same element before the user pressed play, or after they paused it. */
+const LELE_PLAYER_IDLE = { ...LELE_PLAYER, paused: true, currentTime: 0, readyState: 1 }
+
+/**
+ * A bare player, in the shape a real element always has.
+ *
+ * The measured fixtures above are the reported players; this is the one used to
+ * vary a single field at a time.
+ */
+function player(overrides: Record<string, unknown>): Record<string, unknown> {
+  return {
+    currentSrc: '',
+    src: '',
+    paused: false,
+    ended: false,
+    currentTime: 0,
+    readyState: 0,
+    getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    querySelectorAll: () => [],
+    ...overrides
+  }
+}
+
+/**
+ * Whether a page can be called media without asking the app.
+ *
+ * This is the gate the panel is armed on, on every host nobody has written a rule
+ * for, and the reported failure was it never arming at all — the app's fetch came
+ * back 403 from a bot check, so its answer was "unknown" for a page the user was
+ * watching a video on.
+ */
+describe('localMediaEvidence', () => {
+  it('arms on a playing blob player that names no address anywhere', () => {
+    // The reported 777tv page. The manifest is fetched piecemeal under a signed
+    // address, so neither the DOM nor the resource timings hold a stream the app
+    // could be handed — but the browser is decoding this video in front of the
+    // user, and that is what the panel is for.
+    const body = node({ side: 2000 })
+    const location = page('https://play.777tv.ai/watch/42', body, body)
+
+    expect(
+      urls.localMediaEvidence(LELE_PLAYER, location, {
+        entries: [{ name: 'https://play.777tv.ai/app.js' }]
+      })
+    ).toBe(true)
+  })
+
+  it('leaves a player that is not playing to the app', () => {
+    // A placeholder, a preload, an ended player: all `<video>`, none of them
+    // media worth offering. Here the app is still asked, as it always was.
+    const body = node({ side: 2000 })
+    const location = page('https://play.777tv.ai/watch/42', body, body)
+    const options = { entries: [{ name: 'https://play.777tv.ai/app.js' }] }
+
+    expect(urls.localMediaEvidence(LELE_PLAYER_IDLE, location, options)).toBe(false)
+    expect(urls.localMediaEvidence(null, location, options)).toBe(false)
+    expect(urls.localMediaEvidence(player({}), location, options)).toBe(false)
+  })
+
+  it('arms on a named address whether or not anything is playing', () => {
+    // An address in the markup is evidence on its own — the reported rule34 page,
+    // whose `<source>` names the file — and so is a stream read out of the page's
+    // own resource timings, even for a player that is paused.
+    const rule34 = page('https://rule34.xxx/index.php?page=post&s=view&id=1', node({ side: 2000 }), node({ side: 2000 }))
+    expect(urls.localMediaEvidence(RULE34_VIDEO, rule34)).toBe(true)
+
+    const body = node({ side: 2000 })
+    const blob = page('https://play.777tv.ai/watch/42', body, body)
+    expect(
+      urls.localMediaEvidence(LELE_PLAYER_IDLE, blob, { entries: PLAYER_ENTRIES })
+    ).toBe(true)
+  })
+})
+
+/**
+ * Playback, read off the element.
+ *
+ * Split out from the rule above because it is the one signal that survives every
+ * player built so far: no selector, no attribute and no site-specific shape.
+ */
+describe('isPlaying', () => {
+  it('counts a video that is playing, whichever player it is', () => {
+    expect(urls.isPlaying(LELE_PLAYER)).toBe(true)
+    expect(urls.isPlaying(player({ currentTime: 0.5, readyState: 2 }))).toBe(true)
+  })
+
+  it('does not count a placeholder, a preload, or a finished video', () => {
+    expect(urls.isPlaying(LELE_PLAYER_IDLE)).toBe(false)
+    expect(urls.isPlaying(player({ currentTime: 90, ended: true, readyState: 4 }))).toBe(false)
+    // Started, but the frame for this position is not decoded yet.
+    expect(urls.isPlaying(player({ currentTime: 0.1, readyState: 1 }))).toBe(false)
+    expect(urls.isPlaying(player({}))).toBe(false)
+    expect(urls.isPlaying(null)).toBe(false)
   })
 })

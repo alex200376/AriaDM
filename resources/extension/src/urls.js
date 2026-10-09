@@ -284,6 +284,31 @@
   }
 
   /**
+   * True when a player is feeding the user video right now.
+   *
+   * The last resort, and the only signal that survives every player built so far:
+   * a `<video>` whose address cannot be named — a Media Source Extension feeding
+   * it from a `blob:` and a manifest this page never mentions — nevertheless
+   * tells us, by decoding frames, that the page holds media. Read the element
+   * rather than the page, because the element is where the evidence is.
+   *
+   * Deliberately not "a `<video>` exists": a placeholder, a preload, an ended
+   * player and a paused one are all `<video>` and none of them is playing. What
+   * counts is that playback is under way — not paused, not ended, past the first
+   * moment, and with a frame decoded — which on a page nobody has looked at is a
+   * far better reason to offer a download than any markup.
+   */
+  function isPlaying(video) {
+    if (!video) return false
+    if (video.paused === true || video.ended === true) return false
+    const time = typeof video.currentTime === 'number' ? video.currentTime : 0
+    if (!(time > 0)) return false
+    // HAVE_CURRENT_DATA and up: a frame for the current position exists.
+    if (typeof video.readyState === 'number' && video.readyState < 2) return false
+    return true
+  }
+
+  /**
    * The site a hostname belongs to, as the last two labels.
    *
    * A player's CDN almost always lives on a sibling subdomain (`cdn.example` next
@@ -373,6 +398,31 @@
       linkedMediaAddress(video, location, options) ||
       observedStreamAddress(location, options)
     )
+  }
+
+  /**
+   * True when this page can be called media without asking the app about it.
+   *
+   * The panel has to appear on a site nobody has looked at, and asking the app is
+   * how it used to get there — but that question is a request the app may not be
+   * able to answer at all: a bot check replies 403 to every non-browser fetch, and
+   * the answer then is "unknown", leaving no panel on the one page the user was
+   * demonstrably watching a video on. Two things on the page itself are worth
+   * more than that answer, and neither costs a fetch:
+   *
+   *  - an address that can be named — what the browser resolved, the page's own
+   *    download button, the stream a `blob:` player was fed (see `playableAddress`);
+   *  - a player that is playing right now (see `isPlaying`), which is what remains
+   *    when the player names nothing: a Media Source Extension whose segments are
+   *    signed and fetched piecemeal leaves the DOM empty while the browser decodes
+   *    the video in front of the user.
+   *
+   * Only the second can be wrong about the *address*, and it does not guess one —
+   * the page URL is what such a page sends, exactly as it would have had the app
+   * confirmed it.
+   */
+  function localMediaEvidence(video, location, options) {
+    return playableAddress(video, location, options) !== '' || isPlaying(video)
   }
 
   /**
@@ -499,8 +549,10 @@
     linkedMediaAddress,
     isManifestAddress,
     isStreamedAddress,
+    isPlaying,
     observedStreamAddress,
     playableAddress,
+    localMediaEvidence,
     MAX_CARD_DEPTH,
     MAX_CARD_SCALE
   }

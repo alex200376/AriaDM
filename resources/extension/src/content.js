@@ -636,13 +636,15 @@
       const anchor = findMediaElement().element
 
       /*
-       * A player whose file can be named locally needs no opinion from the app.
+       * A page that answers for itself needs no opinion from the app.
        *
-       * `playableAddress` answers that in three ways, all exact: the address the
-       * browser resolved (`<video><source src="…clip.mp4">`), the media file the
-       * page's own download button points at, and — for a `blob:` player, which
-       * names nothing at all in the DOM — the stream the page actually requested,
-       * read from its own resource timings.
+       * Two things count, and both are read from the player rather than from the
+       * page: an address that can be named — what the browser resolved, the file
+       * the page's own download button points at, the stream a `blob:` player was
+       * fed (read from the page's resource timings) — and a player that is playing
+       * right now, which is all a signed Media Source Extension stream leaves
+       * behind. The rule lives in `urls.js` where it is tested: it decides
+       * whether a download is offered at all.
        *
        * On a host that answers every non-browser request with 403 (rule34, and
        * every other Cloudflare-fronted site) these are the *only* answers that
@@ -651,7 +653,7 @@
        * watching a video on. That question also costs the app a real page fetch,
        * so this is both more reliable and cheaper.
        */
-      if (anchor && self.AriaDmUrls.playableAddress(anchor, location) !== '') {
+      if (anchor && self.AriaDmUrls.localMediaEvidence(anchor, location)) {
         window.clearInterval(timer)
         activate()
         return
