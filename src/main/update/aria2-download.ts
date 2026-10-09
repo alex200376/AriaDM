@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
+import { t } from '@shared/i18n'
+
 /**
  * Download the update installer with the bundled aria2 engine.
  *
@@ -189,7 +191,7 @@ export async function downloadWithAria2(request: Aria2DownloadRequest): Promise<
 
     child.on('close', (code) => {
       if (request.signal.aborted) {
-        void discard(target).then(() => finish({ ok: false, error: '已取消下載' }))
+        void discard(target).then(() => finish({ ok: false, error: t('update.cancelled') }))
         return
       }
       if (code === 0) {
@@ -199,7 +201,7 @@ export async function downloadWithAria2(request: Aria2DownloadRequest): Promise<
       }
       const detail = lastMeaningfulLine(output)
       void discard(target).then(() =>
-        finish({ ok: false, error: detail || `aria2 結束碼 ${code}` })
+        finish({ ok: false, error: detail || t('update.aria2ExitCode', { code: code ?? t('supervisor.unknownCode') }) })
       )
     })
   })

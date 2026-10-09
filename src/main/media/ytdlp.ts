@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import path from 'node:path'
 
+import { t } from '@shared/i18n'
 import type { AudioFormat, MediaFormatInfo, MediaPlaylistInfo, SubtitleTrack } from '@shared/settings'
 import { sanitizeFileName } from '@shared/uri'
 
@@ -261,13 +262,13 @@ export function parseFormats(payload: RawProbe, hasFfmpeg: boolean): MediaFormat
 
   entries.push({
     formatId: 'bestvideo+bestaudio/best',
-    label: '最佳畫質（自動合併音訊）',
+    label: t('main.format.best'),
     ext: 'mp4',
-    resolution: best ? humanResolution(best) : '最佳',
+    resolution: best ? humanResolution(best) : t('main.format.bestResolution'),
     filesize: null,
     vcodec: 'auto',
     acodec: 'auto',
-    note: hasFfmpeg ? '建議' : '需要 ffmpeg 才能合併',
+    note: hasFfmpeg ? t('main.format.recommended') : t('main.format.needsFfmpeg'),
     needsFfmpeg: true
   })
 
@@ -287,7 +288,7 @@ export function parseFormats(payload: RawProbe, hasFfmpeg: boolean): MediaFormat
     if (!format.format_id) continue
     entries.push({
       formatId: format.format_id,
-      label: `${humanResolution(format) || format.format_note || '影片'} · ${format.ext ?? 'mp4'}`,
+      label: `${humanResolution(format) || format.format_note || t('main.format.video')} · ${format.ext ?? 'mp4'}`,
       ext: format.ext ?? 'mp4',
       resolution: humanResolution(format),
       filesize: format.filesize ?? format.filesize_approx ?? null,
@@ -303,7 +304,7 @@ export function parseFormats(payload: RawProbe, hasFfmpeg: boolean): MediaFormat
     if (!format.format_id) continue
     entries.push({
       formatId: format.format_id,
-      label: `純音訊 · ${format.ext ?? 'm4a'}${format.tbr ? ` · ${Math.round(format.tbr)}kbps` : ''}`,
+      label: `${t('main.format.audioOnly')} · ${format.ext ?? 'm4a'}${format.tbr ? ` · ${Math.round(format.tbr)}kbps` : ''}`,
       ext: format.ext ?? 'm4a',
       resolution: 'audio',
       filesize: format.filesize ?? format.filesize_approx ?? null,
@@ -316,13 +317,13 @@ export function parseFormats(payload: RawProbe, hasFfmpeg: boolean): MediaFormat
 
   entries.push({
     formatId: 'bestaudio/best',
-    label: '純音訊（最佳）',
+    label: t('main.format.audioOnlyBest'),
     ext: 'm4a',
     resolution: 'audio',
     filesize: null,
     vcodec: 'none',
     acodec: 'auto',
-    note: '直接抓取既有音軌，不需重新編碼',
+    note: t('main.format.audioOnlyNote'),
     needsFfmpeg: false
   })
 
@@ -448,7 +449,7 @@ export async function probeFormats(
       if (settled) return
       settled = true
       child.kill()
-      reject(new Error('讀取影片資訊逾時。'))
+      reject(new Error(t('main.media.probeTimeout')))
     }, timeoutMs)
 
     child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk))
@@ -458,7 +459,7 @@ export async function probeFormats(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      reject(new Error(`無法執行 yt-dlp：${error.message}`))
+      reject(new Error(t('main.media.spawnFailed', { reason: error.message })))
     })
 
     child.on('exit', (code) => {
@@ -469,7 +470,7 @@ export async function probeFormats(
       const output = Buffer.concat(stdout).toString('utf8').trim()
       if (code !== 0 || output.length === 0) {
         const message = Buffer.concat(stderr).toString('utf8').trim().split(/\r?\n/).slice(-3).join(' ')
-        reject(new Error(message || `yt-dlp 結束，代碼 ${code ?? '未知'}`))
+        reject(new Error(message || t('main.media.exitCode', { code: code ?? t('main.media.exitCodeUnknown') })))
         return
       }
 
@@ -477,7 +478,7 @@ export async function probeFormats(
       try {
         payload = JSON.parse(output) as RawProbe
       } catch {
-        reject(new Error('無法解析 yt-dlp 的輸出。'))
+        reject(new Error(t('main.media.probeFailed')))
         return
       }
 
@@ -520,7 +521,7 @@ export async function probePlaylist(
       if (settled) return
       settled = true
       child.kill()
-      reject(new Error('讀取播放清單逾時。'))
+      reject(new Error(t('main.media.playlistTimeout')))
     }, timeoutMs)
 
     child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk))
@@ -530,7 +531,7 @@ export async function probePlaylist(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      reject(new Error(`無法執行 yt-dlp：${error.message}`))
+      reject(new Error(t('main.media.spawnFailed', { reason: error.message })))
     })
 
     child.on('exit', (code) => {
@@ -541,14 +542,14 @@ export async function probePlaylist(
       const output = Buffer.concat(stdout).toString('utf8').trim()
       if (code !== 0 || output.length === 0) {
         const message = Buffer.concat(stderr).toString('utf8').trim().split(/\r?\n/).slice(-3).join(' ')
-        reject(new Error(message || `yt-dlp 結束，代碼 ${code ?? '未知'}`))
+        reject(new Error(message || t('main.media.exitCode', { code: code ?? t('main.media.exitCodeUnknown') })))
         return
       }
 
       try {
         resolve(parsePlaylist(JSON.parse(output) as RawProbe))
       } catch {
-        reject(new Error('無法解析 yt-dlp 的輸出。'))
+        reject(new Error(t('main.media.probeFailed')))
       }
     })
   })
@@ -896,7 +897,7 @@ export class YtDlpRunner extends EventEmitter {
     child.on('error', (error) => {
       if (this.settled || this.stopped) return
       this.settled = true
-      this.emit('failed', `無法執行 yt-dlp：${error.message}`)
+      this.emit('failed', t('main.media.spawnFailed', { reason: error.message }))
     })
 
     child.on('exit', (code) => {
@@ -907,7 +908,7 @@ export class YtDlpRunner extends EventEmitter {
         this.emit('done')
       } else {
         const detail = this.stderrTail.slice(-3).join(' ').trim()
-        this.emit('failed', detail || `yt-dlp 結束，代碼 ${code ?? '未知'}`)
+        this.emit('failed', detail || t('main.media.exitCode', { code: code ?? t('main.media.exitCodeUnknown') }))
       }
     })
   }

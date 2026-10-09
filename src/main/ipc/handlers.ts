@@ -20,6 +20,7 @@ import {
   type SystemPowerAction,
   type UriListClassification
 } from '@shared/ipc'
+import { t } from '@shared/i18n'
 import { classifyMediaError, type MediaErrorKind } from '@shared/media-errors'
 import { matchMediaSite, needsPageSniff } from '@shared/media-sites'
 import { classifyUriList, isSupportedUri } from '@shared/uri'
@@ -238,7 +239,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
   ipcMain.handle(IPC.downloadsChangeOptions, async (_event, gid: string, patch) => {
     // The media engine exposes none of these knobs, so refusing loudly beats
     // silently accepting a change that will never take effect.
-    if (isMediaGid(gid)) throw new Error('yt-dlp 下載不支援修改這些選項。')
+    if (isMediaGid(gid)) throw new Error(t('main.item.optionsUnsupported'))
     await manager.changeOptions(gid, patch)
   })
 
@@ -254,7 +255,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
   ipcMain.handle(IPC.downloadsOpenFile, async (_event, gid: string) => {
     const item = findItem(gid)
     const target = item ? targetFor(item) : null
-    if (!target) throw new Error('找不到檔案路徑。')
+    if (!target) throw new Error(t('main.item.noFile'))
     const error = await shell.openPath(target)
     if (error) throw new Error(error)
   })
@@ -262,14 +263,14 @@ export function registerIpcHandlers(context: HandlerContext): void {
   ipcMain.handle(IPC.downloadsShowInFolder, async (_event, gid: string) => {
     const item = findItem(gid)
     const target = item ? targetFor(item) : null
-    if (!target) throw new Error('找不到檔案路徑。')
+    if (!target) throw new Error(t('main.item.noFile'))
     shell.showItemInFolder(target)
   })
 
   ipcMain.handle(IPC.downloadsCopyLink, async (_event, gid: string) => {
     const item = findItem(gid)
     const uri = item?.files[0]?.uris?.[0]?.uri ?? history.get(gid)?.uris[0]
-    if (!uri) throw new Error('找不到來源連結。')
+    if (!uri) throw new Error(t('main.item.noUri'))
     clipboard.writeText(uri)
     // Tell the clipboard watcher this text is ours, so enabling the feature does
     // not immediately re-offer a link the user just copied from the app.
@@ -330,7 +331,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
 
   ipcMain.handle(IPC.downloadsRunPostAction, async (_event, gid: string) => {
     const item = findItem(gid)
-    if (!item) throw new Error('找不到下載項目。')
+    if (!item) throw new Error(t('main.item.notFound'))
     await context.runPostActionFor(item)
   })
 
@@ -372,7 +373,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
     const options: Electron.OpenDialogOptions = {
       defaultPath,
       properties: ['openFile'],
-      filters: [{ name: '圖片', extensions: IMAGE_EXTENSIONS }]
+      filters: [{ name: t('main.dialog.images'), extensions: IMAGE_EXTENSIONS }]
     }
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
@@ -401,7 +402,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
   ipcMain.handle(
     IPC.integrationsGetMediaFormats,
     async (_event, url: string, refreshCredentials?: boolean) => {
-      if (!settingsStore.get().ytdlpEnabled) throw new Error('影音下載功能已停用。')
+      if (!settingsStore.get().ytdlpEnabled) throw new Error(t('main.media.disabled'))
       return withExtensionCookies(context, url, async (cookieHeader) => {
         // Building the menu is the caller asking what this link contains *now* —
         // including when it is the dialog's "probe again" button. The answer a
@@ -451,7 +452,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
   })
 
   ipcMain.handle(IPC.integrationsGetMediaPlaylist, async (_event, url: string) => {
-    if (!settingsStore.get().ytdlpEnabled) throw new Error('影音下載功能已停用。')
+    if (!settingsStore.get().ytdlpEnabled) throw new Error(t('main.media.disabled'))
     return withExtensionCookies(context, url, (cookieHeader) =>
       mediaJobs.probePlaylist(url, { cookieHeader })
     )
@@ -499,7 +500,7 @@ export function registerIpcHandlers(context: HandlerContext): void {
   ipcMain.handle(IPC.appOpenExternal, async (_event, url: string) => {
     // Only ever hand http(s) to the shell; anything else could be a local
     // handler or a file URL the UI did not intend to launch.
-    if (!/^https?:\/\//i.test(url)) throw new Error('僅允許開啟 http(s) 連結。')
+    if (!/^https?:\/\//i.test(url)) throw new Error(t('main.open.httpOnly'))
     await shell.openExternal(url)
   })
 
@@ -532,8 +533,8 @@ export function registerIpcHandlers(context: HandlerContext): void {
   ipcMain.handle(IPC.windowIsMaximised, (event) => senderWindow(event)?.isMaximized() ?? false)
 
   ipcMain.handle(IPC.appReveal, async (_event, target: string) => {
-    if (typeof target !== 'string' || !target) throw new Error('缺少要開啟的路徑。')
-    if (!fs.existsSync(target)) throw new Error('路徑不存在。')
+    if (typeof target !== 'string' || !target) throw new Error(t('main.open.pathMissing'))
+    if (!fs.existsSync(target)) throw new Error(t('main.open.pathNotExist'))
     // A folder is opened; a file is shown *selected* in its folder, which is what
     // "show me this log file" should do.
     if (fs.statSync(target).isDirectory()) {
@@ -557,9 +558,9 @@ export function registerIpcHandlers(context: HandlerContext): void {
   // The manual escape hatch: run a verified installer with its normal window.
   ipcMain.handle(IPC.updateOpenInstaller, async (_event, file: string) => {
     if (typeof file !== 'string' || !/\.exe$/i.test(file)) {
-      throw new Error('僅允許開啟更新安裝程式。')
+      throw new Error(t('main.update.installerOnly'))
     }
-    if (!fs.existsSync(file)) throw new Error('安裝程式已不存在，請重新下載。')
+    if (!fs.existsSync(file)) throw new Error(t('main.update.installerGone'))
     const error = await shell.openPath(file)
     if (error) throw new Error(error)
   })

@@ -1,4 +1,5 @@
 import { DIRECT_MEDIA_TAG } from '@shared/download'
+import { t } from '@shared/i18n'
 import { isStreamManifestUrl } from '@shared/media-sniff'
 import { MEDIA_DIRECT_CONNECTIONS, type AddDownloadInput, type AddDownloadResult, type Settings } from '@shared/settings'
 import { defaultFormatId, provisionalFormatId, provisionalFormatOption } from '@shared/media-formats'
@@ -197,9 +198,7 @@ export class EngineRouter {
        */
       const only = input.uris.length === 1 ? input.uris[0]! : ''
       if (only !== '' && isStreamManifestUrl(only)) {
-        throw new Error(
-          '這個連結是串流影音清單（HLS/DASH），需要 yt-dlp 才能下載成影片，請先安裝 yt-dlp。'
-        )
+        throw new Error(t('main.router.streamNeedsYtdlp'))
       }
 
       // The engine is named rather than inherited: a request that asked for
@@ -208,7 +207,7 @@ export class EngineRouter {
       const result = await this.options.manager.add({ ...input, engine: 'aria2' })
       const warnings = [...result.warnings]
       if (shouldWarnAboutMissingYtDlp(request, availability)) {
-        warnings.push('偵測到影音網站，但尚未安裝 yt-dlp，已改用一般下載。')
+        warnings.push(t('main.router.ytdlpFallback'))
       }
       /*
        * A page the site refused to serve is a different thing from a page that
@@ -219,9 +218,7 @@ export class EngineRouter {
        * fetch, so no player is ever seen.
        */
       if (scan.blocked) {
-        warnings.push(
-          '這個網頁拒絕了讀取（伺服器回應錯誤，可能有 Cloudflare 等防護），已改用一般下載；若仍失敗，請改用瀏覽器或擴充功能按鈕下載。'
-        )
+        warnings.push(t('main.router.pageBlocked'))
       }
       return { ...result, warnings }
     }
@@ -314,7 +311,9 @@ export class EngineRouter {
         }
       }
 
-      if (probe === null && !provisionalFallback) throw new Error(error || '讀取影片資訊逾時。')
+      if (probe === null && !provisionalFallback) {
+        throw new Error(error || t('main.media.probeTimeout'))
+      }
 
       // `formats[0]` on a real probe is the synthetic best entry, so both paths
       // name the same format. Without a probe, this is the provisional default.
@@ -413,13 +412,18 @@ export class EngineRouter {
        * the manifest instead is worse still: a play list saved under a `.mp4`
        * name. So both cases report the failure.
        */
-      if (input.engine === 'ytdlp' || streamUrl !== '') throw new Error(`無法取得影片：${message}`)
+      if (input.engine === 'ytdlp' || streamUrl !== '') {
+        throw new Error(t('main.media.fetchFailed', { reason: message }))
+      }
 
       // An auto-routed link is different: the user just wanted the file, so a
       // fallback still gets them something useful.
       this.options.log(`engine router: falling back to aria2 for ${url}`)
       const result = await this.options.manager.add(input)
-      return { ...result, warnings: [...result.warnings, `yt-dlp 無法處理此連結，已改用一般下載：${message}`] }
+      return {
+        ...result,
+        warnings: [...result.warnings, t('main.router.ytdlpFailed', { reason: message })]
+      }
     }
   }
 }

@@ -13,6 +13,7 @@ import type {
   UpdateProgress,
   UpdateRepairResult
 } from '@shared/ipc'
+import { t } from '@shared/i18n'
 
 import type { InstallInfo } from './install-kind'
 import { checkForUpdate } from './update-checker'
@@ -340,7 +341,7 @@ export class UpdateManager {
    * only watches events still sees it.
    */
   async download(): Promise<UpdateProgress> {
-    if (!this.info?.downloadUrl) throw new Error('沒有可下載的更新檔。')
+    if (!this.info?.downloadUrl) throw new Error(t('update.noDownloadUrl'))
 
     /*
      * Claim the in-flight slot before anything can await.
@@ -369,7 +370,7 @@ export class UpdateManager {
     // Reassigned on a retry: the digest we compare against may itself be the
     // part that was stale.
     let info = this.info
-    if (!info?.downloadUrl) throw new Error('沒有可下載的更新檔。')
+    if (!info?.downloadUrl) throw new Error(t('update.noDownloadUrl'))
 
     const name = installerNameFor(info)
     const dir = this.deps.installerDir()
@@ -418,7 +419,7 @@ export class UpdateManager {
 
       for (let attempt = 0; attempt < MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
         const baseUrl = info.downloadUrl
-        if (!baseUrl) throw new Error('沒有可下載的更新檔。')
+        if (!baseUrl) throw new Error(t('update.noDownloadUrl'))
         const url = attempt === 0 ? baseUrl : cacheBusted(baseUrl)
         this.deps.log(`downloading ${url} -> ${target}`)
 
@@ -447,7 +448,7 @@ export class UpdateManager {
         // A short read means the connection dropped mid-file. Installing a
         // partial installer is worse than asking the user to try again.
         if (total > 0 && received !== total) {
-          throw new Error(`更新檔不完整（${received}/${total} bytes）`)
+          throw new Error(t('update.incomplete', { received, total }))
         }
 
         /*
@@ -470,7 +471,7 @@ export class UpdateManager {
             `(expected ${info.downloadSha256}, got ${actual})`
         )
         if (attempt + 1 >= MAX_DOWNLOAD_ATTEMPTS) {
-          throw new Error('更新檔內容與發佈的檢查碼不符（可能已損毀），請再試一次。')
+          throw new Error(t('update.checksumMismatch'))
         }
         // Take the release's word again as well: the digest we were comparing
         // against may have been the stale part, not the file.
@@ -493,7 +494,7 @@ export class UpdateManager {
       await fsp.rm(partial, { force: true }).catch(() => {})
       // A file that failed verification must not linger as a runnable leftover.
       await fsp.rm(target, { force: true }).catch(() => {})
-      const message = controller.signal.aborted || isAbort(error) ? '已取消下載' : (error as Error).message
+      const message = controller.signal.aborted || isAbort(error) ? t('update.cancelled') : (error as Error).message
       this.emit({ phase: 'error', received: 0, total: 0, percent: -1, error: message }, true)
       throw new Error(message)
     }
@@ -540,7 +541,7 @@ export class UpdateManager {
       // A cancelled engine reports failure like any other; without this the
       // fetch path would immediately start downloading what the user just
       // cancelled.
-      if (controller.signal.aborted) throw new Error('已取消下載')
+      if (controller.signal.aborted) throw new Error(t('update.cancelled'))
       if (!result.ok) {
         this.deps.log(
           `update: the bundled engine could not fetch the installer` +
@@ -602,8 +603,8 @@ export class UpdateManager {
    * the user can run it themselves.
    */
   async install(): Promise<void> {
-    if (!this.installer) throw new Error('更新尚未下載完成。')
-    if (!this.deps.canInstall()) throw new Error('此版本不支援自動安裝，請手動下載。')
+    if (!this.installer) throw new Error(t('update.notDownloaded'))
+    if (!this.deps.canInstall()) throw new Error(t('update.installUnsupported'))
 
     const info = this.deps.installInfo()
     this.emit(
@@ -624,7 +625,7 @@ export class UpdateManager {
 
     const outcome = await this.launch()
     if (!outcome.started) {
-      throw new Error(this.state.error || outcome.reason || '無法啟動安裝程式。')
+      throw new Error(this.state.error || outcome.reason || t('update.installerWontStart'))
     }
     this.deps.requestQuit()
   }
@@ -636,7 +637,7 @@ export class UpdateManager {
    * if the app is closing for another reason while an update is queued.
    */
   async launchInstaller(): Promise<{ started: boolean; reason?: string }> {
-    if (!this.installer) return { started: false, reason: '更新尚未下載完成。' }
+    if (!this.installer) return { started: false, reason: t('update.notDownloaded') }
     return this.launch()
   }
 
@@ -735,10 +736,10 @@ export class UpdateManager {
 
   private async launch(): Promise<{ started: boolean; reason?: string }> {
     const file = this.installer
-    if (!file) return { started: false, reason: '更新尚未下載完成。' }
+    if (!file) return { started: false, reason: t('update.notDownloaded') }
 
     if (process.platform !== 'win32') {
-      const reason = '此平台不支援自動安裝。'
+      const reason = t('update.installUnsupportedPlatform')
       this.fail(reason)
       return { started: false, reason }
     }
@@ -747,11 +748,11 @@ export class UpdateManager {
     // asset or a mangled transfer all look like a file that was not signed by
     // whoever signed this build.
     if (this.deps.verifyInstaller) {
-      const verdict = await this.deps.verifyInstaller(file).catch(() => ({ ok: false, reason: '簽章檢查失敗' }))
+      const verdict = await this.deps.verifyInstaller(file).catch(() => ({ ok: false, reason: t('update.signatureCheckFailed') }))
       if (!verdict.ok) {
-        const reason = verdict.reason ?? '簽章無法驗證'
+        const reason = verdict.reason ?? t('update.signatureUnverified')
         this.deps.log(`update installer rejected by the signature check: ${reason}`)
-        this.fail(`${reason}，已停止安裝。請重新下載更新檔。`)
+        this.fail(t('update.installStopped', { reason }))
         return { started: false, reason }
       }
       this.deps.log('update installer signature accepted')
@@ -784,16 +785,16 @@ export class UpdateManager {
           this.deps.log(
             'update installer reported a damaged file; discarded so the next attempt downloads it again'
           )
-          const damaged = '安裝程式回報檔案已損毀，已刪除更新檔；再試一次會重新下載。'
-          this.fail(`${damaged}若持續失敗，可到發佈頁面手動下載。`)
+          const damaged = t('update.installerDamaged')
+          this.fail(t('update.manualFallback', { message: damaged }))
           return { started: false, reason: damaged }
         }
 
         const reason = info.needsElevation
-          ? '安裝程式沒有啟動，通常是 Windows 的權限提示被取消。'
-          : '安裝程式啟動後立即結束。'
+          ? t('update.notStartedElevation')
+          : t('update.notStartedImmediately')
         this.deps.log(`update installer not confirmed running: ${reason}`)
-        this.fail(`${reason}你可以改用「開啟安裝程式」手動完成更新。`)
+        this.fail(t('update.manualInstallerHint', { reason }))
         return { started: false, reason }
       }
 
@@ -813,7 +814,7 @@ export class UpdateManager {
       } catch (openError) {
         this.deps.log(`could not open installer: ${(openError as Error).message}`)
       }
-      this.fail(opened ? `${message}（已改為手動開啟安裝程式）` : message)
+      this.fail(opened ? t('update.openedManually', { message }) : message)
       return { started: false, reason: message }
     }
   }
@@ -864,7 +865,7 @@ export class UpdateManager {
     try {
       const header = Buffer.alloc(2)
       await handle.read(header, 0, 2, 0)
-      if (header.toString('latin1') !== 'MZ') throw new Error('下載的更新檔不是可執行檔')
+      if (header.toString('latin1') !== 'MZ') throw new Error(t('update.notExecutable'))
     } finally {
       await handle.close()
     }

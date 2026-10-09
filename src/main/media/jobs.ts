@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 
 import type { DownloadItem } from '@shared/download'
+import { t } from '@shared/i18n'
 import { classifyMediaError, type MediaErrorKind } from '@shared/media-errors'
 import type { AddMediaInput, AudioFormat, MediaFormatInfo, MediaPlaylistInfo } from '@shared/settings'
 import { extensionOf } from '@shared/uri'
@@ -506,7 +507,7 @@ export class MediaJobs extends EventEmitter {
     options: { reuse?: boolean; ignoreHostVerdict?: boolean } = {}
   ): Promise<MediaProbe> {
     const binary = this.options.getBinaryPath()
-    if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
+    if (!binary) throw new Error(t('main.media.notInstalled'))
 
     const key = this.probeKey(url, context)
     if (options.reuse !== false) {
@@ -709,7 +710,7 @@ export class MediaJobs extends EventEmitter {
    */
   async probePlaylist(url: string, context: HttpContext = {}): Promise<MediaPlaylistInfo> {
     const binary = this.options.getBinaryPath()
-    if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
+    if (!binary) throw new Error(t('main.media.notInstalled'))
     // The list itself is all this asks for, so the session file is written only
     // for the duration of the request and then deleted.
     const { http, cookieArgs, cookieFile } = await this.prepareCredentials(url, context)
@@ -722,14 +723,14 @@ export class MediaJobs extends EventEmitter {
 
   async add(input: AddMediaInput, probe: MediaProbe, http: HttpContext = {}): Promise<{ gid: string }> {
     const binary = this.options.getBinaryPath()
-    if (!binary) throw new Error('尚未安裝 yt-dlp，請在設定中下載。')
+    if (!binary) throw new Error(t('main.media.notInstalled'))
 
     const format = this.findFormat(probe, input.formatId)
     if (format?.needsFfmpeg && !this.hasFfmpeg) {
       // The user asked for a specific quality that cannot be produced here, so
       // this stays an error — but one the dialog can answer with an install
       // button (see the ffmpeg rule in shared/media-errors).
-      throw new Error('這個格式需要合併音訊與視訊，請先安裝 ffmpeg 媒體包，或改選單檔畫質。')
+      throw new Error(t('main.media.ffmpegRequired'))
     }
 
     /*
@@ -745,10 +746,10 @@ export class MediaJobs extends EventEmitter {
     const audioFormat: AudioFormat = input.audioFormat ?? 'native'
 
     if (subtitles?.embed && !this.hasFfmpeg) {
-      throw new Error('嵌入字幕需要 ffmpeg，請先安裝 ffmpeg 媒體包，或改為另存字幕檔。')
+      throw new Error(t('main.media.ffmpegSubtitles'))
     }
     if (audioFormat !== 'native' && !this.hasFfmpeg) {
-      throw new Error('轉換音訊格式需要 ffmpeg，請先安裝 ffmpeg 媒體包，或改選「原始音訊」。')
+      throw new Error(t('main.media.ffmpegAudioConvert'))
     }
 
     /*
@@ -1131,7 +1132,7 @@ export class MediaJobs extends EventEmitter {
     const name =
       job.outputPaths.length > 0
         ? path.basename(job.outputPaths[0]!)
-        : `${job.title}${job.playlist ? '（播放清單）' : ''}`
+        : `${job.title}${job.playlist ? t('main.media.playlistSuffix') : ''}`
 
     return {
       gid: job.gid,

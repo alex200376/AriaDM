@@ -17,6 +17,7 @@ import type {
   ToastPayload,
   ToolkitStatus
 } from '@shared/download'
+import { mergeItems } from '@shared/merge-items'
 import type { HandoffInfo, NavigationPayload } from '@shared/ipc'
 import type {
   AppPaths,
@@ -355,7 +356,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   applyTick(payload) {
     set({
-      items: payload.items,
+      items: payload.full
+        ? payload.items
+        : mergeItems(get().items, payload.items, payload.removedGids),
       global: payload.global,
       engine: payload.engine,
       speedSeries: payload.speedSeries

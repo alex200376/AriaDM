@@ -6,6 +6,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+import type { TickPayload } from '@shared/download'
+
 import { DownloadManager } from '../../src/main/downloads/manager'
 import { HistoryStore } from '../../src/main/downloads/history-store'
 import { Aria2Supervisor } from '../../src/main/aria2/supervisor'
@@ -31,6 +33,12 @@ suite('aria2 engine end to end', () => {
   let manager: DownloadManager
   let idleEdges = 0
   const logs: string[] = []
+
+  /**
+   * Every payload the manager emitted, recorded from before `start` so the very
+   * first one — the full snapshot — is part of what the delta tests inspect.
+   */
+  const ticks: TickPayload[] = []
 
   beforeAll(async () => {
     root = await fsp.mkdtemp(path.join(os.tmpdir(), 'ariadm-e2e-'))
@@ -75,6 +83,7 @@ suite('aria2 engine end to end', () => {
       pollIntervalMs: 150,
       hooks: { onQueueIdle: () => (idleEdges += 1) }
     })
+    manager.on('tick', (payload: TickPayload) => ticks.push(payload))
 
     await supervisor.start()
     await manager.start()
@@ -317,6 +326,62 @@ suite('aria2 engine end to end', () => {
     // dropping to zero the moment the last byte lands. The per-item figure is
     // ours and must be zero for anything not active.
     expect(manager.getItems().every((item) => item.downloadSpeed === 0)).toBe(true)
+  })
+
+  /**
+   * The tick contract.
+   *
+   * A tick used to be the whole queue, so a thousand finished downloads were
+   * cloned and re-rendered every second for as long as the app stayed open — the
+   * one part of the list that cannot change. It is a delta now, and this is what
+   * pins that down: the first payload is everything, the ones after it carry only
+   * what moved, and a queue that is not moving says nothing at all.
+   */
+  it('sends the whole list once and only changes after that', async () => {
+    expect(ticks[0]?.full).toBe(true)
+    expect(ticks[0]?.removedGids).toEqual([])
+    expect(ticks.slice(1).every((payload) => payload.full === false)).toBe(true)
+
+    // The queue is drained by this point, so anything that arrives is an empty
+    // delta: never a resend of a finished download.
+    const from = ticks.length
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    const quiet = ticks.slice(from)
+    expect(quiet.every((payload) => payload.items.length === 0)).toBe(true)
+    expect(quiet.every((payload) => payload.removedGids.length === 0)).toBe(true)
+  })
+
+  it('announces a finished download as an upsert and its removal as a removal', async () => {
+    const dir = path.join(root, 'downloads', 'delta')
+    await fsp.mkdir(dir, { recursive: true })
+
+    const { gids } = await manager.add(
+      makeInput({ uris: [`${server.origin}/payload.bin`], out: 'delta.bin', dir, split: 4 })
+    )
+    const gid = gids[0]!
+    await waitFor(() => manager.getItem(gid)?.status === 'complete', {
+      label: 'the delta download to finish'
+    })
+
+    const upserts = ticks.flatMap((payload) => payload.items.filter((item) => item.gid === gid))
+    expect(upserts.length).toBeGreaterThan(0)
+    expect(upserts[upserts.length - 1]!.status).toBe('complete')
+
+    // Nothing is resent once it has stopped: the presence of the item in later
+    // payloads would mean the caching this relies on is not working.
+    const settledAt = ticks.length
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(
+      ticks
+        .slice(settledAt)
+        .flatMap((payload) => payload.items)
+        .some((item) => item.gid === gid)
+    ).toBe(false)
+
+    await manager.remove([gid], false)
+    await waitFor(() => ticks.some((payload) => payload.removedGids.includes(gid)), {
+      label: 'the removal to reach the renderer'
+    })
   })
 
   it('kept a usable engine log', () => {

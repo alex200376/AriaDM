@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes } from 'node:crypto'
 import type { Socket } from 'node:net'
 
+import { t } from '@shared/i18n'
 import type { MediaFormatInfo } from '@shared/settings'
 
 import { hostOf } from '../media/cookie-vault'
@@ -245,7 +246,7 @@ export class HandoffServer {
       server.on('error', (error: NodeJS.ErrnoException) => {
         this.lastError =
           error.code === 'EADDRINUSE'
-            ? `連接埠 ${this.options.port} 已被占用，請在設定中改用其他連接埠。`
+            ? t('handoff.portInUse', { port: this.options.port })
             : error.message
         this.options.log(`handoff server error: ${this.lastError}`)
         reject(error)

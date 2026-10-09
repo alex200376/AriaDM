@@ -946,5 +946,196 @@ export const en = {
   // -- language setting ----------------------------------------------------
   'settings.language.en': 'English',
   'settings.language.zhTW': '繁體中文',
-  'settings.language.hint': 'The language used for interface text; “Match the system” follows the operating system.'
+  'settings.language.hint': 'The language used for interface text; “Match the system” follows the operating system.',
+
+  // -- video-path strings (migrated from the hard-coded Chinese) ---------
+  // -- engine router -------------------------------------------------------
+  'main.router.streamNeedsYtdlp':
+    'This link is a streaming manifest (HLS/DASH); only yt-dlp can turn it into a video. Install yt-dlp first.',
+  'main.router.pageBlocked':
+    'The page refused to be read (the server answered with an error, possibly a Cloudflare check), so this fell back to a plain download. If it still fails, use the browser or the extension button.',
+
+  // -- yt-dlp runner -------------------------------------------------------
+  'main.media.fetchFailed': 'Could not fetch the video: {reason}',
+  'main.media.playlistTimeout': 'Reading the playlist timed out.',
+  'main.media.exitCodeUnknown': 'unknown',
+  'main.media.playlistSuffix': ' (playlist)',
+  'main.media.ffmpegSubtitles':
+    'Embedding subtitles needs ffmpeg. Install the ffmpeg media pack, or save the subtitles as a file instead.',
+  'main.media.ffmpegAudioConvert':
+    'Converting the audio format needs ffmpeg. Install the ffmpeg media pack, or pick “Original track”.',
+
+  // -- quality menu labels -------------------------------------------------
+  'main.format.best': 'Best quality (audio merged automatically)',
+  'main.format.bestResolution': 'Best',
+  'main.format.recommended': 'Recommended',
+  'main.format.needsFfmpeg': 'Needs ffmpeg to merge',
+  'main.format.video': 'Video',
+  'main.format.audioOnly': 'Audio only',
+  'main.format.audioOnlyBest': 'Audio only (best)',
+  'main.format.audioOnlyNote': 'Keeps the existing audio track, no re-encoding',
+  'main.format.singleFile': 'Best (single file)',
+  'main.format.noFfmpegNote': 'Downloads without ffmpeg',
+
+  // -- download naming -----------------------------------------------------
+  'main.item.metadataPending': 'Fetching metadata',
+
+  // -- yt-dlp failure messages (classifyMediaError) ------------------------
+  'media.err.botCheck':
+    'The site wants you to sign in. Turn on “Use browser cookies” in Settings, and AriaDM reuses the session you are already signed in with.',
+  'media.err.age':
+    'This video is age-restricted, so it needs a signed-in session. Turn on “Use browser cookies”.',
+  'media.err.cookiesLocked':
+    'The browser is running and its cookie database is locked, so it cannot be read. Quit that browser completely — background and tray processes included — and try again.',
+  'media.err.cookiesUndecryptable':
+    'This browser encrypts its cookies with an app-bound key (Chromium 127 or later) that yt-dlp cannot use. Switch to Chrome, Edge or Firefox, or send the link from the browser extension so AriaDM can take the session directly.',
+  'media.err.cookiesMissing':
+    'No cookie database was found for this browser. Check that it is installed, or pick which browser to read in Settings → Integrations & tools → Video downloads.',
+  'media.err.session':
+    'The site will not play with the current sign-in state and returned an unplayable page (YouTube does this with a signed-in cookie jar). Retrying without credentials also failed, so update yt-dlp or use another browser’s cookies in Settings.',
+  'media.err.emptyResponse':
+    'The site returned nothing for this request (common when contacting Instagram with a session). Try again later, and update yt-dlp if it keeps happening.',
+  'media.err.fs':
+    'The save folder could not be written (no permission, or the disk is full). Pick another location in Settings, or make sure the folder is writable.',
+  'media.err.tweetHidden':
+    'This post is hidden from signed-out visitors (it may be marked sensitive), so its video is not visible. Turn on “Use browser cookies”, or send the link from the browser extension.',
+  'media.err.authRequired':
+    'This content needs a signed-in session. Turn on “Use browser cookies”, or check that you are signed in in your browser.',
+  'media.err.rateLimit':
+    'The site is temporarily limiting requests (too many in a short time). Wait a few minutes, or turn on “Use browser cookies” to download as a signed-in user.',
+  'media.err.geo': 'This video is blocked in your region.',
+  'media.err.unavailable': 'This video was deleted, made private, or the author closed access to it.',
+  'media.err.noVideoInPost': 'There is no video in this post (it may be an image or a carousel), so there is nothing to download.',
+  'media.err.formatGone': 'That quality no longer exists. Detect the available formats again.',
+  'media.err.ffmpegNeeded':
+    'This action needs ffmpeg (merging video and audio, embedding subtitles, or converting the audio format). Install the ffmpeg media pack first.',
+  'media.err.ffmpegMerge':
+    'This format needs its audio and video muxed. Install the ffmpeg media pack, or pick a single-file quality.',
+  'media.err.extractor':
+    'yt-dlp cannot read this site at the moment (the site changed). Updating yt-dlp and trying again usually fixes it.',
+  'media.err.noVideoHere':
+    'There is no video here that AriaDM can download. For a direct link, use a regular download instead.',
+  'media.err.timeout': 'The connection timed out. Check your network and try again.',
+  'media.err.network': 'Could not reach the site. Check your network or proxy settings.',
+  'media.err.generic': 'The video download failed.',
+  'media.err.versionSuffix': ' (current version {version})',
+
+  // -- action button labels ------------------------------------------------
+  'media.err.action.cookies': 'Enable browser cookies',
+  'media.err.action.otherBrowser': 'Use another browser',
+  'media.err.action.switchBrowser': 'Change browser',
+  'media.err.action.updateYtdlp': 'Update yt-dlp',
+  'media.err.action.reprobe': 'Detect formats again',
+  'media.err.action.installFfmpeg': 'Install ffmpeg',
+
+  // -- app-shell strings (migrated from the hard-coded Chinese) ---------
+  // -- toolkit --------------------------------------------------------------
+  'toolkit.noExtractor': 'No usable extraction tool was found.\n{detail}',
+  'toolkit.hashMismatch': 'The file hash does not match the pinned value; download it again.',
+  'toolkit.verifyFailed': 'The file could not be verified: {message}',
+  'toolkit.latestVersion': 'latest',
+  'toolkit.busy': 'Another tool is already downloading ({kind}).',
+  'toolkit.noAria2Build':
+    'No prebuilt aria2 is available for {platform}-{arch}; use an aria2c from your system package manager instead.',
+  'toolkit.aria2HashMismatch':
+    'The aria2 archive failed its hash check, so the install was aborted.\nExpected {expected}\nActual {actual}',
+  'toolkit.binaryMissing': '{binary} is not inside the archive.',
+  'toolkit.ytdlpHashMismatch':
+    'The yt-dlp hash does not match the upstream SHA2-256SUMS, so the install was aborted.\nUpstream {published}\nActual {actual}',
+  'toolkit.ffmpegManual': 'Install ffmpeg with your system package manager; AriaDM detects it automatically.',
+
+  // -- updater --------------------------------------------------------------
+  'update.cancelled': 'Download cancelled',
+  'update.aria2ExitCode': 'aria2 exited with code {code}',
+  'update.signatureUnreadable': 'The update file’s signature could not be read',
+  'update.signatureMissing': 'The update file is not signed',
+  'update.signatureStatus': 'The signature status is {status}',
+  'update.signaturePublisherMismatch': 'The update file was signed by a different publisher than this build',
+  'update.noDownloadUrl': 'There is no update file to download.',
+  'update.incomplete': 'The update file is incomplete ({received}/{total} bytes)',
+  'update.checksumMismatch':
+    'The update file does not match the published checksum (it may be damaged); please try again.',
+  'update.notDownloaded': 'The update has not finished downloading.',
+  'update.installUnsupported': 'This build cannot install updates itself; download it manually.',
+  'update.installerWontStart': 'The installer could not be started.',
+  'update.installUnsupportedPlatform': 'This platform does not support installing updates automatically.',
+  'update.signatureCheckFailed': 'The signature check failed',
+  'update.signatureUnverified': 'The signature could not be verified',
+  'update.installStopped': '{reason} The install was stopped; download the update again.',
+  'update.installerDamaged':
+    'The installer reported the file as damaged, so it was deleted; trying again downloads it afresh.',
+  'update.manualFallback': '{message} If it keeps failing, download it manually from the release page.',
+  'update.notStartedElevation':
+    'The installer did not start, which usually means the Windows permission prompt was declined.',
+  'update.notStartedImmediately': 'The installer exited immediately after starting.',
+  'update.manualInstallerHint': '{reason} You can use “Open installer” to finish the update by hand.',
+  'update.openedManually': '{message} (the installer was opened manually instead)',
+  'update.notExecutable': 'The downloaded update is not an executable file',
+
+  // -- engine supervisor and RPC -------------------------------------------
+  'supervisor.starting': 'Starting the aria2 engine',
+  'supervisor.mkdirFailed': 'Could not create a required directory: {message}',
+  'supervisor.spawnFailed': 'Could not start aria2: {message}',
+  'supervisor.processError': 'aria2 process error: {message}',
+  'supervisor.rpcUnreachable': 'The aria2 engine started but its RPC never answered; check the log.',
+  'supervisor.exitedUnexpectedly': 'aria2 exited unexpectedly (code {code}).',
+  'supervisor.unknownCode': 'unknown',
+  'supervisor.crashLoop':
+    'aria2 keeps crashing, so automatic restarts have stopped. Check the engine path in Settings, or the log.',
+  'supervisor.restartIn': 'Restarting automatically in {seconds}s (attempt {attempt})',
+  'supervisor.rpcTimeout': '{method} timed out ({ms}ms)',
+  'supervisor.rpcConnectFailed': '{method} could not connect: {message}',
+
+  // -- post-download actions ------------------------------------------------
+  'post.openFileFailed': 'Could not open the file: {message}',
+  'post.openFolderFailed': 'Could not open the folder: {message}',
+  'post.emptyCommand': 'The custom command is empty.',
+  'post.commandFailed': 'The custom command failed: {message}',
+  'post.downloadComplete': 'Download complete',
+  'post.action.openFile': 'Open the file',
+  'post.action.openFolder': 'Open the folder',
+  'post.action.notify': 'System notification',
+  'post.action.command': 'Run command ({command})',
+  'post.action.separator': ', ',
+  'post.action.none': 'Do nothing',
+
+  // -- handoff API ----------------------------------------------------------
+  'handoff.portInUse': 'Port {port} is already in use; choose another port in Settings.',
+  // -- main process: tray, toasts, commands and dialog filters -------------
+  'main.add.added': 'Download added',
+  'main.add.failed': 'Could not add the download',
+  'main.tray.backgroundTitle': 'AriaDM is still running in the background',
+  'main.tray.backgroundBody': 'Downloads keep running.',
+  'main.tray.unlimited': 'No limit',
+  'main.tray.openFolder': 'Open the download folder',
+  'main.tray.globalLimit': 'Global speed limit',
+  'main.tray.tooltipActive': 'AriaDM — ↓ {speed} · {active} active · {waiting} queued',
+  'main.tray.tooltipIdle': 'AriaDM — idle ({total} items)',
+  'main.limit.updated': 'Global speed limit updated',
+  'main.limit.cleared': 'Speed limit removed',
+  'main.limit.set': 'Download limit {speed}',
+  'main.power.cancel': 'Cancel shutdown',
+  'main.power.cancelTitle': 'Cancelled',
+  'main.power.cancelBody': 'The scheduled power action was cancelled.',
+  'main.power.countdownBody': 'You can cancel it from the tray menu.',
+  'main.postAction.failedTitle': 'Post-download action failed',
+  'main.profile.notFound': 'That speed profile was not found.',
+  'main.profile.applied': 'Speed profile applied',
+  'main.download.noUris': 'There is nothing to download.',
+  'main.retry.noSources': '{name} has no source link left to retry.',
+  'main.retry.failed': 'The retry failed: {reason}',
+  'main.dir.createFailed': 'Could not create the download folder {dir}: {reason}',
+  'main.space.low': 'Only {mb} MB is free on {dir}, which may not be enough.',
+  'main.item.optionsUnsupported': 'These options cannot be changed on a yt-dlp download.',
+  'main.item.noFile': 'No file path was found.',
+  'main.item.noUri': 'No source link was found.',
+  'main.item.notFound': 'That download was not found.',
+  'main.open.httpOnly': 'Only http(s) links can be opened.',
+  'main.open.pathMissing': 'No path was given to open.',
+  'main.open.pathNotExist': 'That path does not exist.',
+  'main.dialog.images': 'Images',
+  'speedGraph.idle': 'Waiting for data',
+  'speedGraph.peak': 'Peak {speed}',
+  'main.update.installerOnly': 'Only the update installer can be opened here.',
+  'main.update.installerGone': 'The installer is gone; download the update again.'
 } satisfies Dictionary

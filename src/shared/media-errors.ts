@@ -9,7 +9,12 @@
  *
  * The classifier is shared: the main process uses it to throw a readable message,
  * and the renderer uses the `action` to offer the right button.
+ *
+ * Only `kind` here is data. The wording lives in the dictionaries, resolved by
+ * `t()` against the locale `setLocale` last selected, so an English interface
+ * does not show Chinese sentences in its download dialog.
  */
+import { t } from './i18n'
 
 export type MediaErrorKind =
   | 'unavailable'
@@ -110,16 +115,16 @@ const RULES: Rule[] = [
   {
     kind: 'bot-check',
     patterns: [/confirm you'?re not a bot/i, /sign in to confirm/i, /please sign in/i, /bot check/i],
-    message: '網站要求登入驗證。請在設定中啟用「使用瀏覽器 Cookie」，AriaDM 就會沿用你已登入的瀏覽器工作階段。',
+    message: t('media.err.botCheck'),
     action: 'enable-cookies',
-    actionLabel: '啟用瀏覽器 Cookie'
+    actionLabel: t('media.err.action.cookies')
   },
   {
     kind: 'age',
     patterns: [/age[- ]restricted/i, /confirm your age/i, /inappropriate for some users/i],
-    message: '這段影片有年齡限制，需要登入才能下載。請啟用「使用瀏覽器 Cookie」。',
+    message: t('media.err.age'),
     action: 'enable-cookies',
-    actionLabel: '啟用瀏覽器 Cookie'
+    actionLabel: t('media.err.action.cookies')
   },
   {
     /**
@@ -132,9 +137,9 @@ const RULES: Rule[] = [
     kind: 'cookies-locked',
     patterns: [/could not copy .*cookie/i, /permissionerror/i, /issues\/7271/i],
     message:
-      '瀏覽器正在執行，Cookie 資料庫被鎖住而讀不到。請完全結束該瀏覽器（含背景常駐、系統匣）後再試一次。',
+      t('media.err.cookiesLocked'),
     action: 'retry',
-    actionLabel: '重試'
+    actionLabel: t('common.retry')
   },
   {
     /**
@@ -146,9 +151,9 @@ const RULES: Rule[] = [
     kind: 'cookies-undecryptable',
     patterns: [/failed to decrypt/i, /issues\/10927/i, /app[- ]bound/i, /possibly the key is wrong/i],
     message:
-      '這個瀏覽器的 Cookie 使用應用程式綁定加密（Chromium 127 以上），yt-dlp 無法解密。請改用 Chrome、Edge 或 Firefox，或從擴充功能傳送連結，讓 AriaDM 直接取得登入狀態。',
+      t('media.err.cookiesUndecryptable'),
     action: 'enable-cookies',
-    actionLabel: '改用其他瀏覽器'
+    actionLabel: t('media.err.action.otherBrowser')
   },
   {
     kind: 'cookies-missing',
@@ -159,9 +164,9 @@ const RULES: Rule[] = [
       /could not find local state/i
     ],
     message:
-      '偵測不到這個瀏覽器的 Cookie 資料庫。請確認該瀏覽器已安裝，或在「設定 → 整合與工具 → 影音下載」手動指定要用哪一個。',
+      t('media.err.cookiesMissing'),
     action: 'enable-cookies',
-    actionLabel: '更換瀏覽器'
+    actionLabel: t('media.err.action.switchBrowser')
   },
   {
     /**
@@ -174,9 +179,9 @@ const RULES: Rule[] = [
     kind: 'session',
     patterns: [/page needs to be reloaded/i, /precondition check failed/i, /tv_downgraded/i],
     message:
-      '網站不接受目前的登入狀態，回傳了無法播放的頁面（YouTube 對已登入的 Cookie 常見此狀況）。已改用未登入身分重試仍失敗，請更新 yt-dlp 或在設定中改用其他瀏覽器的 Cookie。',
+      t('media.err.session'),
     action: 'update-ytdlp',
-    actionLabel: '更新 yt-dlp'
+    actionLabel: t('media.err.action.updateYtdlp')
   },
   {
     /**
@@ -192,9 +197,9 @@ const RULES: Rule[] = [
     kind: 'empty-response',
     patterns: [/failed to parse json/i, /jsondecodeerror/i],
     message:
-      '網站對這次要求沒有回傳內容（常見於帶著登入狀態連 Instagram）。請稍後再試；若持續失敗請更新 yt-dlp。',
+      t('media.err.emptyResponse'),
     action: 'retry',
-    actionLabel: '重試'
+    actionLabel: t('common.retry')
   },
   {
     /**
@@ -217,7 +222,7 @@ const RULES: Rule[] = [
       /access is denied/i
     ],
     message:
-      '無法寫入儲存資料夾（權限不足或磁碟已滿）。請在設定中更換儲存位置，或確認該資料夾可以寫入。'
+      t('media.err.fs')
   },
   {
     /**
@@ -237,9 +242,9 @@ const RULES: Rule[] = [
       /tombstone/i
     ],
     message:
-      '這則貼文對未登入的訪客是隱藏的（可能被標記為敏感內容），因此看不到影片。請啟用「使用瀏覽器 Cookie」，或從瀏覽器擴充功能送出這個連結。',
+      t('media.err.tweetHidden'),
     action: 'enable-cookies',
-    actionLabel: '啟用瀏覽器 Cookie'
+    actionLabel: t('media.err.action.cookies')
   },
   {
     kind: 'auth',
@@ -257,9 +262,9 @@ const RULES: Rule[] = [
       /locked behind the login page/i,
       /redirected to the login page/i
     ],
-    message: '這個內容需要登入才能取得。請啟用「使用瀏覽器 Cookie」，或確認你在瀏覽器中已登入。',
+    message: t('media.err.authRequired'),
     action: 'enable-cookies',
-    actionLabel: '啟用瀏覽器 Cookie'
+    actionLabel: t('media.err.action.cookies')
   },
   {
     /**
@@ -269,14 +274,14 @@ const RULES: Rule[] = [
      */
     kind: 'rate-limit',
     patterns: [/rate[- ]limit/i, /too many requests/i, /http error 429/i],
-    message: '網站暫時限制了要求（次數過於頻繁）。請等幾分鐘再試，或啟用「使用瀏覽器 Cookie」以登入身分下載。',
+    message: t('media.err.rateLimit'),
     action: 'retry',
-    actionLabel: '重試'
+    actionLabel: t('common.retry')
   },
   {
     kind: 'geo',
     patterns: [/not available in your country/i, /geo[- ]?restrict/i, /blocked in your/i],
-    message: '這段影片在你所在的地區被封鎖。'
+    message: t('media.err.geo')
   },
   {
     kind: 'unavailable',
@@ -290,7 +295,7 @@ const RULES: Rule[] = [
       /account has been suspended/i,
       /is not available any ?more/i
     ],
-    message: '這段影片已被刪除、設為私人，或作者關閉了存取。'
+    message: t('media.err.unavailable')
   },
   {
     /**
@@ -305,14 +310,14 @@ const RULES: Rule[] = [
       /there is no video/i,
       /does not contain a video/i
     ],
-    message: '這則貼文裡沒有影片（可能是圖片或輪播），所以沒有可下載的影音。'
+    message: t('media.err.noVideoInPost')
   },
   {
     kind: 'format',
     patterns: [/requested format is not available/i, /requested format not available/i],
-    message: '這個畫質格式已不存在，請重新偵測可用格式。',
+    message: t('media.err.formatGone'),
     action: 'retry',
-    actionLabel: '重新偵測'
+    actionLabel: t('media.err.action.reprobe')
   },
   {
     /**
@@ -323,10 +328,13 @@ const RULES: Rule[] = [
      * talking about muxing a video, which is a different operation.
      */
     kind: 'ffmpeg',
-    patterns: [/嵌入字幕/, /轉換音訊格式/, /需要 ffmpeg/],
-    message: '這個動作需要 ffmpeg（合併影音、嵌入字幕或轉換音訊格式）。請先安裝 ffmpeg 媒體包。',
+    // The Chinese entries match the messages this app throws itself; the English
+    // one covers the same messages once the interface is English, which is the
+    // whole point of moving them into the dictionaries.
+    patterns: [/嵌入字幕/, /轉換音訊格式/, /需要 ffmpeg/, /needs ffmpeg/i],
+    message: t('media.err.ffmpegNeeded'),
     action: 'install-ffmpeg',
-    actionLabel: '安裝 ffmpeg'
+    actionLabel: t('media.err.action.installFfmpeg')
   },
   {
     kind: 'ffmpeg',
@@ -335,11 +343,12 @@ const RULES: Rule[] = [
       /you have requested merging/i,
       /ffprobe/i,
       // Our own message for the same situation, thrown before yt-dlp ever runs.
-      /需要合併音訊與視訊/
+      /需要合併音訊與視訊/,
+      /needs its audio and video muxed/i
     ],
-    message: '這個格式需要合併音訊與視訊，請先安裝 ffmpeg 媒體包，或改選「單檔」畫質。',
+    message: t('media.err.ffmpegMerge'),
     action: 'install-ffmpeg',
-    actionLabel: '安裝 ffmpeg'
+    actionLabel: t('media.err.action.installFfmpeg')
   },
   {
     kind: 'extractor',
@@ -351,21 +360,21 @@ const RULES: Rule[] = [
       /unable to (find|parse)/i,
       /extractor .* (is )?(broken|outdated)/i
     ],
-    message: 'yt-dlp 目前無法解析這個網站（網站改版了）。更新 yt-dlp 後再試一次通常就能解決。',
+    message: t('media.err.extractor'),
     action: 'update-ytdlp',
-    actionLabel: '更新 yt-dlp'
+    actionLabel: t('media.err.action.updateYtdlp')
   },
   {
     kind: 'unsupported',
     patterns: [/unsupported url/i, /not a valid url/i, /no video found/i],
-    message: '這個網址沒有 AriaDM 能下載的影片。若是直接連結，請改用一般下載。'
+    message: t('media.err.noVideoHere')
   },
   {
     kind: 'timeout',
     patterns: [/timed out/i, /timeout/i, /讀取影片資訊逾時/],
-    message: '連線逾時，請檢查網路後再試一次。',
+    message: t('media.err.timeout'),
     action: 'retry',
-    actionLabel: '重試'
+    actionLabel: t('common.retry')
   },
   {
     kind: 'network',
@@ -379,9 +388,9 @@ const RULES: Rule[] = [
       /temporary failure in name resolution/i,
       /http error 5\d\d/i
     ],
-    message: '連線到網站時失敗，請檢查網路或代理伺服器設定。',
+    message: t('media.err.network'),
     action: 'retry',
-    actionLabel: '重試'
+    actionLabel: t('common.retry')
   }
 ]
 
@@ -415,12 +424,16 @@ export function classifyMediaError(rawMessage: string, options: { ytdlpVersion?:
   // Removing a notice from the front can expose the `ERROR:` that the wrapper
   // stripping would otherwise have taken, so the cleanup runs around it.
   const message = cleanIpcError(stripToolNotices(cleanIpcError(rawMessage)))
-  if (!message) return { kind: 'unknown', message: '影音下載失敗。', action: 'retry', actionLabel: '重試' }
+  if (!message) {
+    return { kind: 'unknown', message: t('media.err.generic'), action: 'retry', actionLabel: t('common.retry') }
+  }
 
   for (const rule of RULES) {
     if (rule.patterns.some((pattern) => pattern.test(message))) {
       const suffix =
-        rule.kind === 'extractor' && options.ytdlpVersion ? `（目前版本 ${options.ytdlpVersion}）` : ''
+        rule.kind === 'extractor' && options.ytdlpVersion
+          ? t('media.err.versionSuffix', { version: options.ytdlpVersion })
+          : ''
       return {
         kind: rule.kind,
         message: `${rule.message}${suffix}`,
@@ -437,5 +450,10 @@ export function classifyMediaError(rawMessage: string, options: { ytdlpVersion?:
     .replace(/\s*; please report this issue on.*$/i, '')
     .replace(/\s*Copying full debug output.*$/i, '')
     .trim()
-  return { kind: 'unknown', message: condensed || '影音下載失敗。', action: 'retry', actionLabel: '重試' }
+  return {
+    kind: 'unknown',
+    message: condensed || t('media.err.generic'),
+    action: 'retry',
+    actionLabel: t('common.retry')
+  }
 }

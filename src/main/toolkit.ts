@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises'
 
 import manifest from '../../scripts/aria2-manifest.json'
 import type { ToolInfo, ToolkitStatus } from '@shared/download'
+import { t } from '@shared/i18n'
 
 import { locateAria2, locateFfmpeg, locateYtDlp, type LocatedBinary } from './aria2/locate'
 
@@ -80,7 +81,7 @@ function extractZip(zipPath: string, destination: string): void {
     if (result.status === 0) return
     failures.push(`${command}: ${String(result.stderr ?? '').trim().split('\n')[0]}`)
   }
-  throw new Error(`找不到可用的解壓縮工具\n${failures.join('\n')}`)
+  throw new Error(t('toolkit.noExtractor', { detail: failures.join('\n') }))
 }
 
 async function findFile(root: string, name: string): Promise<string | null> {
@@ -161,10 +162,10 @@ export class ToolkitManager {
               ? manifest.ytdlp.sha256
               : null
         if (expected && digest !== expected) {
-          integrityError = '檔案雜湊與釘選值不符，建議重新下載。'
+          integrityError = t('toolkit.hashMismatch')
         }
       } catch (error) {
-        integrityError = `無法驗證檔案：${(error as Error).message}`
+        integrityError = t('toolkit.verifyFailed', { message: (error as Error).message })
       }
     }
 
@@ -183,8 +184,11 @@ export class ToolkitManager {
     const located = this.locate()
     const [aria2, ytdlp, ffmpeg] = await Promise.all([
       this.toInfo(located.aria2, manifest.aria2.version),
-      this.toInfo(located.ytdlp, manifest.ytdlp.version === 'latest' ? '最新版' : manifest.ytdlp.version),
-      this.toInfo(located.ffmpeg, '最新版')
+      this.toInfo(
+        located.ytdlp,
+        manifest.ytdlp.version === 'latest' ? t('toolkit.latestVersion') : manifest.ytdlp.version
+      ),
+      this.toInfo(located.ffmpeg, t('toolkit.latestVersion'))
     ])
     return { aria2, ytdlp, ffmpeg }
   }
@@ -199,7 +203,7 @@ export class ToolkitManager {
   }
 
   async download(kind: ToolKind): Promise<ToolkitStatus> {
-    if (this.busy) throw new Error(`已有工具正在下載中（${this.busy}）。`)
+    if (this.busy) throw new Error(t('toolkit.busy', { kind: this.busy }))
     this.busy = kind
     try {
       if (kind === 'aria2') await this.fetchAria2()
@@ -214,7 +218,9 @@ export class ToolkitManager {
   private async fetchAria2(): Promise<void> {
     const asset = assetForCurrentPlatform()
     if (!asset) {
-      throw new Error(`沒有為 ${process.platform}-${process.arch} 提供預建的 aria2，請改用系統安裝的 aria2c。`)
+      throw new Error(
+        t('toolkit.noAria2Build', { platform: process.platform, arch: process.arch })
+      )
     }
 
     const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'ariadm-tool-'))
@@ -224,7 +230,7 @@ export class ToolkitManager {
 
       const digest = await sha256File(zipPath)
       if (asset.sha256 && digest !== asset.sha256) {
-        throw new Error(`aria2 壓縮檔雜湊不符，已中止。\n預期 ${asset.sha256}\n實際 ${digest}`)
+        throw new Error(t('toolkit.aria2HashMismatch', { expected: asset.sha256, actual: digest }))
       }
 
       const staging = path.join(temp, 'extract')
@@ -232,7 +238,7 @@ export class ToolkitManager {
       extractZip(zipPath, staging)
 
       const binary = await findFile(staging, manifest.aria2.binary)
-      if (!binary) throw new Error(`${manifest.aria2.binary} 不在壓縮檔內。`)
+      if (!binary) throw new Error(t('toolkit.binaryMissing', { binary: manifest.aria2.binary }))
 
       await fsp.mkdir(this.paths.userDataBinDir, { recursive: true })
       const target = path.join(this.paths.userDataBinDir, manifest.aria2.binary)
@@ -253,7 +259,7 @@ export class ToolkitManager {
       const digest = await sha256File(staged)
       const published = await fetchPublishedDigest(manifest.ytdlp.sumsUrl, manifest.ytdlp.binary)
       if (published && published !== digest) {
-        throw new Error(`yt-dlp 雜湊與上游 SHA2-256SUMS 不符，已中止。\n上游 ${published}\n實際 ${digest}`)
+        throw new Error(t('toolkit.ytdlpHashMismatch', { published, actual: digest }))
       }
       if (!published) this.log('上游雜湊清單不可用，改以本次下載的內容為準')
 
@@ -276,7 +282,7 @@ export class ToolkitManager {
    */
   private async fetchFfmpeg(): Promise<void> {
     if (process.platform !== 'win32') {
-      throw new Error('請使用系統套件管理器安裝 ffmpeg，AriaDM 會自動偵測。')
+      throw new Error(t('toolkit.ffmpegManual'))
     }
 
     const temp = await fsp.mkdtemp(path.join(os.tmpdir(), 'ariadm-ffmpeg-'))

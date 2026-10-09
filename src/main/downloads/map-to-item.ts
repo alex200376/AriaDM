@@ -6,6 +6,7 @@ import type {
   PeerInfo,
   ServerInfo
 } from '@shared/download'
+import { t } from '@shared/i18n'
 import type { Settings } from '@shared/settings'
 import { fileNameFromPath, fileNameFromUri, kindFromUri } from '@shared/uri'
 
@@ -62,7 +63,7 @@ function resolveName(raw: Aria2RawStatus, files: DownloadFileEntry[], meta: Hist
   const firstUri = files[0]?.uris?.[0]?.uri ?? meta?.uris[0]
   if (firstUri) return fileNameFromUri(firstUri)
 
-  return '等待中繼資料'
+  return t('main.item.metadataPending')
 }
 
 function inferKind(raw: Aria2RawStatus, files: DownloadFileEntry[], meta: HistoryRecord | undefined): DownloadKind {

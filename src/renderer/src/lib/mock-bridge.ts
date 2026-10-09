@@ -241,6 +241,10 @@ function tick(): TickPayload {
 
   return {
     items,
+    // The mock has no previous tick to diff against, so every payload it sends
+    // is the whole list — which is what `full` means.
+    removedGids: [],
+    full: true,
     global,
     engine: {
       state: 'ready',

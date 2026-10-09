@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import type { EngineState, EngineStatus } from '@shared/download'
+import { t } from '@shared/i18n'
 import type { Settings } from '@shared/settings'
 
 import { resolveDisableIpv6 } from './ipv6'
@@ -177,7 +178,7 @@ export class Aria2Supervisor extends EventEmitter {
   }
 
   private async launch(): Promise<void> {
-    this.setState('starting', '正在啟動 aria2 引擎')
+    this.setState('starting', t('supervisor.starting'))
 
     try {
       // Drop any session file an older build left behind: AriaDM never replays it,
@@ -187,7 +188,7 @@ export class Aria2Supervisor extends EventEmitter {
       await fsp.mkdir(this.paths.downloadDir, { recursive: true })
       await fsp.mkdir(path.dirname(this.paths.logFile), { recursive: true })
     } catch (error) {
-      this.lastError = `無法建立必要目錄：${(error as Error).message}`
+      this.lastError = t('supervisor.mkdirFailed', { message: (error as Error).message })
       this.setState('failed', this.lastError)
       return
     }
@@ -217,7 +218,7 @@ export class Aria2Supervisor extends EventEmitter {
         stdio: ['ignore', 'pipe', 'pipe']
       })
     } catch (error) {
-      this.lastError = `無法啟動 aria2：${(error as Error).message}`
+      this.lastError = t('supervisor.spawnFailed', { message: (error as Error).message })
       this.setState('failed', this.lastError)
       return
     }
@@ -227,7 +228,7 @@ export class Aria2Supervisor extends EventEmitter {
     child.stdout?.on('data', (chunk: Buffer) => this.pushLog(chunk.toString('utf8')))
     child.stderr?.on('data', (chunk: Buffer) => this.pushLog(chunk.toString('utf8')))
     child.on('error', (error) => {
-      this.lastError = `aria2 程序錯誤：${error.message}`
+      this.lastError = t('supervisor.processError', { message: error.message })
       this.pushLog(this.lastError)
     })
     child.on('exit', (code, signal) => this.handleExit(code, signal))
@@ -240,7 +241,7 @@ export class Aria2Supervisor extends EventEmitter {
 
     const healthy = await this.waitForHealthy()
     if (!healthy) {
-      this.lastError = 'aria2 引擎啟動後無法連線 RPC，請查看日誌。'
+      this.lastError = t('supervisor.rpcUnreachable')
       this.setState('failed', this.lastError)
       await this.forceKillChild()
       return
@@ -315,7 +316,7 @@ export class Aria2Supervisor extends EventEmitter {
       return
     }
 
-    this.lastError = `aria2 意外結束（代碼 ${code ?? '未知'}）。`
+    this.lastError = t('supervisor.exitedUnexpectedly', { code: code ?? t('supervisor.unknownCode') })
     void this.scheduleRestart()
   }
 
@@ -325,14 +326,14 @@ export class Aria2Supervisor extends EventEmitter {
     this.restartTimes.push(now)
 
     if (this.restartTimes.length > MAX_RESTARTS_PER_WINDOW) {
-      this.setState('failed', 'aria2 反覆崩潰，已停止自動重啟。請至設定頁檢查引擎路徑或查看日誌。')
+      this.setState('failed', t('supervisor.crashLoop'))
       return
     }
 
     const attempt = this.restartTimes.length
     const delay = Math.min(500 * 2 ** (attempt - 1), 8000)
     this.restarts += 1
-    this.setState('restarting', `${Math.round(delay / 1000)} 秒後自動重啟（第 ${attempt} 次）`)
+    this.setState('restarting', t('supervisor.restartIn', { seconds: Math.round(delay / 1000), attempt }))
     this.emitStatus()
 
     this.restartTimer = setTimeout(() => {

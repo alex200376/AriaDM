@@ -15,11 +15,11 @@ import {
   type MenuItemConstructorOptions
 } from 'electron'
 
-import type { DownloadItem, ToastPayload } from '@shared/download'
+import type { DownloadItem, TickPayload, ToastPayload } from '@shared/download'
 import { HANDOFF_DISCOVERY_PORTS, IPC, type NavigationPayload, type SystemPowerAction } from '@shared/ipc'
 import type { DeepPartial, Settings } from '@shared/settings'
 import { formatSpeed } from '@shared/format'
-import { localeFromSetting } from '@shared/i18n'
+import { localeFromSetting, setLocale, t } from '@shared/i18n'
 
 import { createAppLog } from './app-log'
 import { locateAria2 } from './aria2/locate'
@@ -44,7 +44,7 @@ import { matchMediaSite, needsPageSniff, resolveHandoffEngine } from '@shared/me
 import { runPostAction, type PostActionDeps } from './integrations/post-actions'
 import { Scheduler } from './integrations/scheduler'
 import { CookieVault, hostOf } from './media/cookie-vault'
-import { isMediaGid, MediaJobs, mergeMediaItems } from './media/jobs'
+import { isMediaGid, MediaJobs } from './media/jobs'
 import { MediaSniffer } from './media/page-sniff'
 import { defaultDownloadDir, resolvePaths } from './paths'
 import { SettingsStore } from './settings/store'
@@ -306,7 +306,7 @@ async function processIncoming(): Promise<void> {
         await manager.add({ ...baseInput([], 'file'), metalinkBase64: body.toString('base64') })
       }
     } catch (error) {
-      toast({ title: '無法加入下載', body: (error as Error).message, tone: 'error' })
+      toast({ title: t('main.add.failed'), body: (error as Error).message, tone: 'error' })
     }
   }
 }
@@ -369,7 +369,8 @@ function createWindow(): BrowserWindow {
       // is meant to keep working in the background should do.
       if (!quitting && current.closeToTray && current.useSystemTray) {
         window.hide()
-        if (!current.startMinimised) toast({ title: 'AriaDM 仍在背景執行', body: '下載會繼續進行。', tone: 'info' })
+        if (!current.startMinimised)
+      toast({ title: t('main.tray.backgroundTitle'), body: t('main.tray.backgroundBody'), tone: 'info' })
         return false
       }
       return true
@@ -412,7 +413,7 @@ function trayIconImage(): Electron.NativeImage {
 function buildTrayMenu(): Menu {
   const settings = settingsStore.get()
   const limitOptions: { label: string; value: number }[] = [
-    { label: '無限速', value: 0 },
+    { label: t('main.tray.unlimited'), value: 0 },
     { label: '10 MB/s', value: 10 * 1024 * 1024 },
     { label: '5 MB/s', value: 5 * 1024 * 1024 },
     { label: '1 MB/s', value: 1024 * 1024 },
@@ -420,12 +421,12 @@ function buildTrayMenu(): Menu {
   ]
 
   const template: MenuItemConstructorOptions[] = [
-    { label: '顯示主視窗', click: () => showWindow() },
+    { label: t('main.tray.show'), click: () => showWindow() },
     { type: 'separator' },
-    { label: '全部開始', click: () => void manager.resumeAll() },
-    { label: '全部暫停', click: () => void manager.pauseAll() },
+    { label: t('main.tray.resumeAll'), click: () => void manager.resumeAll() },
+    { label: t('main.tray.pauseAll'), click: () => void manager.pauseAll() },
     {
-      label: '全域限速',
+      label: t('main.tray.globalLimit'),
       submenu: limitOptions.map((option) => ({
         label: option.label,
         type: 'radio' as const,
@@ -437,13 +438,13 @@ function buildTrayMenu(): Menu {
     },
     { type: 'separator' },
     {
-      label: '開啟下載資料夾',
+      label: t('main.tray.openFolder'),
       click: () => {
         void shell.openPath(manager.getItems()[0]?.dir ?? settingsStore.get().downloadDir)
       }
     },
     {
-      label: '設定',
+      label: t('main.tray.settings'),
       click: () => {
         showWindow()
         const payload: NavigationPayload = { view: 'settings' }
@@ -453,10 +454,10 @@ function buildTrayMenu(): Menu {
   ]
 
   if (pendingPowerAction) {
-    template.push({ type: 'separator' }, { label: '取消關機', click: () => void requestSystemPower('cancel') })
+    template.push({ type: 'separator' }, { label: t('main.power.cancel'), click: () => void requestSystemPower('cancel') })
   }
 
-  template.push({ type: 'separator' }, { label: '結束 AriaDM', click: () => void shutdownAndQuit() })
+  template.push({ type: 'separator' }, { label: t('main.tray.quit'), click: () => void shutdownAndQuit() })
 
   return Menu.buildFromTemplate(template)
 }
@@ -465,10 +466,26 @@ async function applyGlobalDownloadLimit(value: number): Promise<void> {
   const next = await updateSettings({ globalDownloadLimit: value })
   await supervisor.applyLiveSettings(next)
   toast({
-    title: '已更新全域限速',
-    body: value === 0 ? '已取消限速' : `下載限速 ${formatSpeed(value)}`,
+    title: t('main.limit.updated'),
+    body: value === 0 ? t('main.limit.cleared') : t('main.limit.set', { speed: formatSpeed(value) }),
     tone: 'info'
   })
+}
+
+/**
+ * The taskbar progress: indeterminate while a queue is being worked through, a
+ * flat bar when a single download is all that is left.
+ */
+function updateTaskbarProgress(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const global = manager.getGlobalStat()
+  if (global.numActive > 0 && global.numWaiting > 0) {
+    mainWindow.setProgressBar(-1)
+  } else if (global.numActive > 0) {
+    mainWindow.setProgressBar(0.5)
+  } else {
+    mainWindow.setProgressBar(-1)
+  }
 }
 
 function refreshTray(): void {
@@ -481,12 +498,29 @@ function refreshTray(): void {
   const total = items.length
   tray.setToolTip(
     active > 0 || global.numWaiting > 0
-      ? `AriaDM — ↓ ${formatSpeed(global.downloadSpeed)} · ${active} 進行中 · ${global.numWaiting} 排隊`
-      : `AriaDM — 閒置（${total} 項）`
+      ? t('main.tray.tooltipActive', {
+          speed: formatSpeed(global.downloadSpeed),
+          active,
+          waiting: global.numWaiting
+        })
+      : t('main.tray.tooltipIdle', { total })
   )
 }
 
 // ---- settings side effects -------------------------------------------------
+
+/**
+ * Point the main process's dictionary at the configured language.
+ *
+ * Everything the main process says to the user — the tray menu, the completion
+ * notifications, and the messages it throws back over IPC — is rendered through
+ * `t()`, which reads a module-level locale. Only this call sets it, and without
+ * it an English interface still showed Chinese toasts and Chinese error text
+ * inside its dialogs.
+ */
+function syncLocale(settings: Settings): void {
+  setLocale(localeFromSetting(settings.language, app.getLocale()))
+}
 
 async function updateSettings(patch: DeepPartial<Settings>): Promise<Settings> {
   const previous = settingsStore.get()
@@ -496,6 +530,13 @@ async function updateSettings(patch: DeepPartial<Settings>): Promise<Settings> {
 }
 
 async function applySettingsSideEffects(previous: Settings, next: Settings): Promise<void> {
+  if (previous.language !== next.language) {
+    syncLocale(next)
+    // The tray menu and its tooltip are built from these strings, so they only
+    // follow the setting if they are rebuilt.
+    refreshTray()
+  }
+
   if (previous.clipboardWatch !== next.clipboardWatch) {
     if (next.clipboardWatch) {
       ensureClipboardWatcher().start()
@@ -550,8 +591,8 @@ function ensureClipboardWatcher(): ClipboardWatcher {
       if (autoAdd) {
         void engineRouter
           .add(baseInput(detected.urls, 'clipboard'))
-          .then(() => toast({ title: '已加入下載', body: detected.urls[0] ?? '', tone: 'success' }))
-          .catch((error: Error) => toast({ title: '無法加入下載', body: error.message, tone: 'error' }))
+          .then(() => toast({ title: t('main.add.added'), body: detected.urls[0] ?? '', tone: 'success' }))
+          .catch((error: Error) => toast({ title: t('main.add.failed'), body: error.message, tone: 'error' }))
         return
       }
 
@@ -623,7 +664,7 @@ async function restartHandoff(): Promise<void> {
     cookieRequest: () => cookieVault.nextNeed(),
     onProbe: async ({ url, cookies }) => {
       const settings = settingsStore.get()
-      if (!settings.ytdlpEnabled) throw new Error('影音下載功能已停用。')
+      if (!settings.ytdlpEnabled) throw new Error(t('main.media.disabled'))
       // The session the browser is looking at the page with, so the qualities
       // offered are the ones this visitor can actually get.
       const hasFfmpeg = mediaJobs.hasFfmpeg
@@ -833,7 +874,7 @@ async function requestSystemPower(action: SystemPowerAction): Promise<void> {
     }
     pendingPowerAction = null
     refreshTray()
-    toast({ title: '已取消', body: '排定的電源動作已取消。', tone: 'info' })
+    toast({ title: t('main.power.cancelTitle'), body: t('main.power.cancelBody'), tone: 'info' })
     return
   }
 
@@ -846,10 +887,15 @@ async function requestSystemPower(action: SystemPowerAction): Promise<void> {
   pendingPowerAction = action
   refreshTray()
 
-  const label = action === 'shutdown' ? '關機' : action === 'sleep' ? '睡眠' : '休眠'
+  const label =
+    action === 'shutdown'
+      ? t('main.power.shutdown')
+      : action === 'sleep'
+        ? t('main.power.sleep')
+        : t('main.power.hibernate')
   toast({
-    title: `${POWER_COUNTDOWN_SECONDS} 秒後${label}`,
-    body: '可從系統匣選單取消。',
+    title: t('main.power.countdown', { seconds: POWER_COUNTDOWN_SECONDS, mode: label }),
+    body: t('main.power.countdownBody'),
     tone: 'warn'
   })
 
@@ -922,7 +968,7 @@ async function runPostActionFor(item: DownloadItem): Promise<void> {
 
   if (outcome.error) {
     log(`post action for ${item.name}: ${outcome.error}`)
-    toast({ title: '下載完成後動作失敗', body: outcome.error, tone: 'warn' })
+    toast({ title: t('main.postAction.failedTitle'), body: outcome.error, tone: 'warn' })
   }
 }
 
@@ -947,12 +993,12 @@ function queueCompletionNotice(name: string): void {
 
     // Only claim "all finished" when the queue really is empty; a burst that
     // finished while more downloads are still running is just a completion.
-    const title = drained ? '全部下載完成' : '下載完成'
+    const title = drained ? t('main.notify.allComplete') : t('main.notify.completeTitle')
     if (batch.length === 1) {
       notify(title, batch[0]!)
       return
     }
-    notify(title, `共 ${batch.length} 個項目已完成。`)
+    notify(title, t('main.notify.allCompleteBody', { count: batch.length }))
   }, COMPLETION_BATCH_MS)
   completionTimer.unref?.()
 }
@@ -980,7 +1026,10 @@ async function handleCompleted(item: DownloadItem): Promise<void> {
 function handleFailed(item: DownloadItem): void {
   const settings = settingsStore.get()
   if (!settings.notifyOnError) return
-  notify('下載失敗', `${item.name}${item.errorMessage ? ` — ${item.errorMessage}` : ''}`)
+  notify(
+    t('main.notify.failedTitle'),
+    item.errorMessage ? t('main.notify.failedBody', { name: item.name, reason: item.errorMessage }) : item.name
+  )
 }
 
 // ---- lifecycle -------------------------------------------------------------
@@ -1067,6 +1116,9 @@ async function bootstrap(): Promise<void> {
 
   settingsStore = new SettingsStore(paths)
   await settingsStore.load()
+  // Before anything can speak: notifications and IPC errors are rendered through
+  // the module-level locale, which starts out as Chinese.
+  syncLocale(settingsStore.get())
 
   history = new HistoryStore(paths.history)
   await history.load()
@@ -1220,7 +1272,7 @@ async function bootstrap(): Promise<void> {
         override: settingsStore.get().aria2Path
       })
       if (engine.source === 'missing') {
-        return { ok: false, unavailable: true, error: '找不到 aria2 執行檔。' }
+        return { ok: false, unavailable: true, error: t('main.aria2.notFound') }
       }
       return downloadWithAria2({ ...options, aria2Path: engine.path, log: updateLog })
     },
@@ -1248,23 +1300,39 @@ async function bootstrap(): Promise<void> {
     log
   })
 
-  // Forward ticks with media jobs merged in, so the UI sees one unified list.
-  manager.on('tick', (payload: { items: DownloadItem[]; global: unknown; engine: unknown; at: number; speedSeries: unknown }) => {
-    const merged = { ...payload, items: mergeMediaItems(payload.items, mediaJobs.items()) }
-    send(IPC.eventTick, merged)
+  /**
+   * The media items the renderer already holds, keyed by gid.
+   *
+   * Media jobs live in their own manager, so their items have to join the same
+   * delta stream the download manager now produces: whatever changed since the
+   * previous tick, plus the gids that are gone. The serialised form is the
+   * comparison because every field is plain data and there are only ever a
+   * handful of media downloads.
+   */
+  let sentMedia = new Map<string, string>()
 
-    const global = manager.getGlobalStat()
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (global.numActive > 0 && global.numWaiting > 0) {
-        mainWindow.setProgressBar(-1)
-      } else if (global.numActive > 0) {
-        mainWindow.setProgressBar(0.5)
-      } else {
-        mainWindow.setProgressBar(-1)
-      }
+  manager.on('tick', (payload: TickPayload) => {
+    const mediaItems: DownloadItem[] = []
+    const nextMedia = new Map<string, string>()
+    for (const item of mediaJobs.items()) {
+      const signature = JSON.stringify(item)
+      nextMedia.set(item.gid, signature)
+      if (payload.full || sentMedia.get(item.gid) !== signature) mediaItems.push(item)
     }
+    const removedGids = [
+      ...payload.removedGids,
+      ...[...sentMedia.keys()].filter((gid) => !nextMedia.has(gid))
+    ]
+    sentMedia = nextMedia
 
     refreshTray()
+    updateTaskbarProgress()
+
+    // A tick with nothing new is still a live queue: the tray and the taskbar
+    // followed it above, and the renderer has nothing to redraw.
+    if (!payload.full && payload.items.length === 0 && mediaItems.length === 0 && removedGids.length === 0) return
+
+    send(IPC.eventTick, { ...payload, items: [...payload.items, ...mediaItems], removedGids })
   })
 
   supervisor.on('status', (status: unknown) => send(IPC.eventEngineStatus, status))
@@ -1329,7 +1397,7 @@ async function bootstrap(): Promise<void> {
 async function applyProfile(id: string): Promise<Settings> {
   const settings = settingsStore.get()
   const profile = settings.profiles.find((entry) => entry.id === id)
-  if (!profile) throw new Error('找不到指定的速度設定檔。')
+  if (!profile) throw new Error(t('main.profile.notFound'))
 
   const next = await updateSettings({
     activeProfileId: id,
@@ -1343,7 +1411,7 @@ async function applyProfile(id: string): Promise<Settings> {
   })
 
   await supervisor.applyLiveSettings(next)
-  toast({ title: '已套用速度設定檔', body: profile.name, tone: 'info' })
+  toast({ title: t('main.profile.applied'), body: profile.name, tone: 'info' })
   return next
 }
 

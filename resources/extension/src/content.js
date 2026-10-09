@@ -633,7 +633,31 @@
       // Nothing has armed the observer yet on this host, so a player that appears
       // after load is only visible to a fresh sweep.
       refreshCandidates()
-      const looksLikeMedia = findMediaElement().element !== null || pageDeclaresMedia()
+      const anchor = findMediaElement().element
+
+      /*
+       * A player whose file can be named locally needs no opinion from the app.
+       *
+       * `playableAddress` answers that in three ways, all exact: the address the
+       * browser resolved (`<video><source src="…clip.mp4">`), the media file the
+       * page's own download button points at, and — for a `blob:` player, which
+       * names nothing at all in the DOM — the stream the page actually requested,
+       * read from its own resource timings.
+       *
+       * On a host that answers every non-browser request with 403 (rule34, and
+       * every other Cloudflare-fronted site) these are the *only* answers that
+       * exist: asking the app made it fetch a page it cannot read, answer
+       * "unknown", and leave the panel off a page the user was demonstrably
+       * watching a video on. That question also costs the app a real page fetch,
+       * so this is both more reliable and cheaper.
+       */
+      if (anchor && self.AriaDmUrls.playableAddress(anchor, location) !== '') {
+        window.clearInterval(timer)
+        activate()
+        return
+      }
+
+      const looksLikeMedia = anchor !== null || pageDeclaresMedia()
       if (!looksLikeMedia) {
         if (polls >= DETECT_MAX_POLLS) window.clearInterval(timer)
         return

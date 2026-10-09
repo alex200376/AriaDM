@@ -1,4 +1,5 @@
 import type { DownloadItem } from '@shared/download'
+import { t } from '@shared/i18n'
 import type { PostAction } from '@shared/settings'
 
 /**
@@ -115,10 +116,10 @@ export async function runPostAction(
   if (action.openFile && target) {
     try {
       const error = await deps.openPath(target)
-      if (error) return { ran, error: `無法開啟檔案：${error}` }
+      if (error) return { ran, error: t('post.openFileFailed', { message: error }) }
       ran.push('openFile')
     } catch (error) {
-      return { ran, error: `無法開啟檔案：${(error as Error).message}` }
+      return { ran, error: t('post.openFileFailed', { message: (error as Error).message }) }
     }
   }
 
@@ -127,7 +128,7 @@ export async function runPostAction(
       deps.showItemInFolder(target)
       ran.push('showInFolder')
     } catch (error) {
-      return { ran, error: `無法開啟資料夾：${(error as Error).message}` }
+      return { ran, error: t('post.openFolderFailed', { message: (error as Error).message }) }
     }
   }
 
@@ -135,7 +136,7 @@ export async function runPostAction(
     const tokens = splitCommandLine(action.command)
     const [file, ...args] = tokens
     if (!file) {
-      return { ran, error: '自訂指令為空。' }
+      return { ran, error: t('post.emptyCommand') }
     }
     const expanded = expandCommandTemplate(args, { file: target, dir: item.dir, name: item.name })
     try {
@@ -143,13 +144,13 @@ export async function runPostAction(
       deps.execCommand(file, expanded)
       ran.push('command')
     } catch (error) {
-      return { ran, error: `自訂指令失敗：${(error as Error).message}` }
+      return { ran, error: t('post.commandFailed', { message: (error as Error).message }) }
     }
   }
 
   if (action.notify) {
     try {
-      deps.notify({ title: '下載完成', body: item.name })
+      deps.notify({ title: t('post.downloadComplete'), body: item.name })
       ran.push('notify')
     } catch (error) {
       deps.log(`notification failed: ${(error as Error).message}`)
@@ -162,9 +163,9 @@ export async function runPostAction(
 /** Text describing what a configured action will do, for the settings UI. */
 export function describePostAction(action: PostAction): string {
   const parts: string[] = []
-  if (action.openFile) parts.push('開啟檔案')
-  if (action.showInFolder) parts.push('開啟資料夾')
-  if (action.notify) parts.push('系統通知')
-  if (action.command.trim()) parts.push(`執行指令（${action.command.trim()}）`)
-  return parts.length > 0 ? parts.join('、') : '不執行任何動作'
+  if (action.openFile) parts.push(t('post.action.openFile'))
+  if (action.showInFolder) parts.push(t('post.action.openFolder'))
+  if (action.notify) parts.push(t('post.action.notify'))
+  if (action.command.trim()) parts.push(t('post.action.command', { command: action.command.trim() }))
+  return parts.length > 0 ? parts.join(t('post.action.separator')) : t('post.action.none')
 }

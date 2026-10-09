@@ -13,6 +13,7 @@ import type {
 import type {
   DownloadFileEntry,
   DownloadItem,
+  EngineStatus,
   GlobalStat,
   PeerInfo,
   PieceMap,
@@ -20,6 +21,7 @@ import type {
   TickPayload
 } from '@shared/download'
 import { decodeBitfield } from '@shared/download'
+import { t } from '@shared/i18n'
 import { detectKindFromList, fileNameFromUri, sanitizeFileName } from '@shared/uri'
 
 import {
@@ -66,6 +68,44 @@ function emptyGlobalStat(): GlobalStat {
   return { downloadSpeed: 0, uploadSpeed: 0, numActive: 0, numWaiting: 0, numStopped: 0, numStoppedTotal: 0 }
 }
 
+/** The engine counters that decide whether the stopped set itself moved. */
+function stoppedSignatureOf(global: Aria2RawGlobalStat | null): string {
+  if (!global) return 'unknown'
+  return `${toNumber(global.numStopped)}:${toNumber(global.numStoppedTotal)}`
+}
+
+/** Whether two aggregate readings say the same thing. */
+function sameGlobalStat(a: GlobalStat, b: GlobalStat): boolean {
+  return (
+    a.downloadSpeed === b.downloadSpeed &&
+    a.uploadSpeed === b.uploadSpeed &&
+    a.numActive === b.numActive &&
+    a.numWaiting === b.numWaiting &&
+    a.numStopped === b.numStopped &&
+    a.numStoppedTotal === b.numStoppedTotal
+  )
+}
+
+/**
+ * Whether two engine readings say the same thing.
+ *
+ * Every field is compared, `logTail` included: the failure banner in Settings
+ * prints it, and a tick that skipped a grown log would leave that stale.
+ */
+function sameEngineStatus(a: EngineStatus, b: EngineStatus): boolean {
+  return (
+    a.state === b.state &&
+    a.pid === b.pid &&
+    a.port === b.port &&
+    a.version === b.version &&
+    a.message === b.message &&
+    a.restarts === b.restarts &&
+    a.lastError === b.lastError &&
+    a.logTail === b.logTail &&
+    a.startedAt === b.startedAt
+  )
+}
+
 function mapGlobalStat(raw: Aria2RawGlobalStat | null | undefined): GlobalStat {
   if (!raw) return emptyGlobalStat()
   return {
@@ -102,6 +142,31 @@ export class DownloadManager extends EventEmitter {
   private inFlight = false
   private wasBusy = false
 
+  /**
+   * What the renderer was last given, so a tick can carry only what moved.
+   *
+   * Held by identity: an item that was not rebuilt this tick is the very same
+   * object the renderer already has, so it is not sent again.
+   */
+  private sentItems = new Map<string, DownloadItem>()
+  /** Set when the next payload has to be the whole list rather than a delta. */
+  private sendFull = true
+  /** The last global stat and engine status that went out, for the same reason. */
+  private lastEmitted: { global: GlobalStat; engine: EngineStatus } | null = null
+
+  /**
+   * Stopped downloads, reused between ticks.
+   *
+   * They are terminal, so the parsed items cannot go out of date on their own —
+   * and rebuilding a thousand of them every second is exactly the cost this
+   * avoids. `stoppedSignature` is what tells the two kinds of change apart: the
+   * engine's own counters moving (a download really did stop, or was purged) from
+   * nothing happening at all.
+   */
+  private stoppedItems = new Map<string, DownloadItem>()
+  /** Null until the first read, so the very first tick always fetches. */
+  private stoppedSignature: string | null = null
+
   constructor(options: DownloadManagerOptions) {
     super()
     this.supervisor = options.supervisor
@@ -125,6 +190,8 @@ export class DownloadManager extends EventEmitter {
 
     this.timer = setInterval(() => void this.tick(), this.pollIntervalMs)
     this.timer.unref?.()
+    // Nothing has been sent yet, so the first payload is the whole list.
+    this.sendFull = true
     await this.tick()
   }
 
@@ -169,15 +236,66 @@ export class DownloadManager extends EventEmitter {
     })
   }
 
+  /**
+   * Hand the renderer what changed, and nothing else.
+   *
+   * Sending the whole queue every second meant cloning and re-rendering every
+   * stopped download for as long as the app was open, which is the one part of
+   * the list that cannot change. Only items rebuilt this tick are upserted, gids
+   * that vanished are named, and a tick where neither happened is not sent at
+   * all.
+   */
   private emitTick(): void {
-    const payload: TickPayload = {
-      items: this.ordered(),
+    const engine = this.supervisor.getStatus()
+
+    if (this.sendFull) {
+      this.sendFull = false
+      this.sentItems = new Map(this.items)
+      this.lastEmitted = { global: this.global, engine }
+      this.emit('tick', {
+        items: this.ordered(),
+        removedGids: [],
+        full: true,
+        global: this.global,
+        engine,
+        at: Date.now(),
+        speedSeries: this.meter.series()
+      } satisfies TickPayload)
+      return
+    }
+
+    const items: DownloadItem[] = []
+    for (const item of this.items.values()) {
+      if (this.sentItems.get(item.gid) !== item) items.push(item)
+    }
+
+    const removedGids: string[] = []
+    for (const gid of this.sentItems.keys()) {
+      if (!this.items.has(gid)) removedGids.push(gid)
+    }
+
+    // Nothing moved: no item was rebuilt, no download appeared or disappeared,
+    // and neither the totals nor the engine state differ. A payload would carry
+    // the same numbers the renderer already has.
+    const quiet =
+      items.length === 0 &&
+      removedGids.length === 0 &&
+      this.lastEmitted !== null &&
+      sameGlobalStat(this.lastEmitted.global, this.global) &&
+      sameEngineStatus(this.lastEmitted.engine, engine)
+    if (quiet) return
+
+    this.sentItems = new Map(this.items)
+    this.lastEmitted = { global: this.global, engine }
+    this.emit('tick', {
+      items,
+      removedGids,
+      full: false,
       global: this.global,
-      engine: this.supervisor.getStatus(),
+      engine,
       at: Date.now(),
       speedSeries: this.meter.series()
-    }
-    this.emit('tick', payload)
+    } satisfies TickPayload)
   }
 
   // ---- polling -------------------------------------------------------------
@@ -190,6 +308,23 @@ export class DownloadManager extends EventEmitter {
     })
   }
 
+  /**
+   * Whether the stopped list has to be read again.
+   *
+   * `numStopped` is what aria2 is holding and `numStoppedTotal` is every stop of
+   * the session, so a purge (the first drops, the second does not) and a rotation
+   * past aria2's own retained cap both read as a change here. `invalidateStopped`
+   * covers the remaining case: the user edited something on a stopped item.
+   */
+  private stoppedNeedsRefresh(global: Aria2RawGlobalStat | null): boolean {
+    return this.stoppedSignature !== stoppedSignatureOf(global)
+  }
+
+  /** Force the next tick to re-read the stopped list. */
+  private invalidateStopped(): void {
+    this.stoppedSignature = null
+  }
+
   async tick(): Promise<void> {
     if (this.inFlight) return
     if (!this.supervisor.isRunning) {
@@ -200,24 +335,34 @@ export class DownloadManager extends EventEmitter {
     this.inFlight = true
     try {
       const settings = this.settingsStore.get()
+      // The stopped list is deliberately not part of the poll: it is the only one
+      // of the three that cannot move on its own, and it is usually the largest.
       const results = await this.supervisor.rpc.multicall([
         { method: 'aria2.tellActive', params: [POLL_KEYS] },
         { method: 'aria2.tellWaiting', params: [0, 1000, POLL_KEYS] },
-        { method: 'aria2.tellStopped', params: [0, 1000, POLL_KEYS] },
         { method: 'aria2.getGlobalStat' }
       ])
 
       const active = (results[0] ?? []) as Aria2RawStatus[]
       const waiting = (results[1] ?? []) as Aria2RawStatus[]
-      const stopped = (results[2] ?? []) as Aria2RawStatus[]
-      const globalRaw = results[3] as Aria2RawGlobalStat | null
+      const globalRaw = results[2] as Aria2RawGlobalStat | null
+
+      if (this.stoppedNeedsRefresh(globalRaw)) {
+        const raw = await this.supervisor.rpc.call<Aria2RawStatus[]>('aria2.tellStopped', 0, 1000, POLL_KEYS)
+        const rebuilt = new Map<string, DownloadItem>()
+        for (const entry of raw ?? []) rebuilt.set(entry.gid, this.buildItem(entry, -1, settings))
+        this.stoppedItems = rebuilt
+        this.stoppedSignature = stoppedSignatureOf(globalRaw)
+      }
 
       const previous = this.items
       const next = new Map<string, DownloadItem>()
 
       for (const raw of active) next.set(raw.gid, this.buildItem(raw, -1, settings))
       waiting.forEach((raw, index) => next.set(raw.gid, this.buildItem(raw, index, settings)))
-      for (const raw of stopped) next.set(raw.gid, this.buildItem(raw, -1, settings))
+      // Same objects as last tick: an unchanged stopped download stays identical
+      // by reference, which is what keeps it out of the payloads below.
+      for (const [gid, item] of this.stoppedItems) next.set(gid, item)
 
       for (const item of next.values()) {
         this.reconcile(item, previous.get(item.gid))
@@ -279,7 +424,7 @@ export class DownloadManager extends EventEmitter {
 
     const uris = input.uris.map((uri) => uri.trim()).filter((uri) => uri.length > 0)
     if (uris.length === 0 && !input.torrentBase64 && !input.metalinkBase64) {
-      throw new Error('沒有可下載的連結。')
+      throw new Error(t('main.download.noUris'))
     }
 
     const kind: 'http' | 'ftp' | 'bittorrent' | 'metalink' = input.torrentBase64
@@ -558,6 +703,10 @@ export class DownloadManager extends EventEmitter {
     if (patch.dir !== undefined) recordPatch.dir = patch.dir
     if (Object.keys(recordPatch).length > 0) this.history.patchDeferred(gid, recordPatch)
 
+    // A stopped item is cached by reference, so an edit to one has to be visible
+    // on the next tick rather than whenever that item happens to be rebuilt.
+    if (item && item.status !== 'active' && item.status !== 'waiting') this.invalidateStopped()
+
     await this.tick()
   }
 
@@ -570,7 +719,7 @@ export class DownloadManager extends EventEmitter {
       const record = this.history.get(gid)
       if (!record) continue
       if (record.uris.length === 0) {
-        combined.warnings.push(`${record.name || gid} 沒有可重試的來源連結。`)
+        combined.warnings.push(t('main.retry.noSources', { name: record.name || gid }))
         continue
       }
       try {
@@ -605,7 +754,7 @@ export class DownloadManager extends EventEmitter {
         combined.duplicates.push(...result.duplicates)
         combined.warnings.push(...result.warnings)
       } catch (error) {
-        combined.warnings.push(`重試失敗：${(error as Error).message}`)
+        combined.warnings.push(t('main.retry.failed', { reason: (error as Error).message }))
       }
     }
 
@@ -741,7 +890,7 @@ export class DownloadManager extends EventEmitter {
     try {
       await fsp.mkdir(dir, { recursive: true })
     } catch (error) {
-      throw new Error(`無法建立下載目錄 ${dir}：${(error as Error).message}`)
+      throw new Error(t('main.dir.createFailed', { dir, reason: (error as Error).message }))
     }
   }
 
@@ -756,7 +905,7 @@ export class DownloadManager extends EventEmitter {
       const available = Number(stats.bavail) * Number(stats.bsize)
       if (available > 0 && available < LOW_SPACE_WARNING_BYTES) {
         return {
-          warning: `${dir} 可用空間僅剩 ${Math.round(available / 1024 / 1024)} MB，可能不足以完成下載。`,
+          warning: t('main.space.low', { dir, mb: Math.round(available / 1024 / 1024) }),
           available
         }
       }

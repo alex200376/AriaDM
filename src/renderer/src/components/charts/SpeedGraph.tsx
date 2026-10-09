@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 
 import type { SpeedSample } from '@shared/download'
 import { formatSpeed } from '@shared/format'
+import { t } from '@shared/i18n'
 
 import { cn } from '../../lib/cn'
 
@@ -57,7 +58,10 @@ export function SpeedGraph({
   const idle = series.length < 2
 
   return (
-    <div className={cn('relative', className)} title={idle ? '等待數據' : `峰值 ${formatSpeed(peak)}`}>
+    <div
+      className={cn('relative', className)}
+      title={idle ? t('speedGraph.idle') : t('speedGraph.peak', { speed: formatSpeed(peak) })}
+    >
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         preserveAspectRatio="none"

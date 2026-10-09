@@ -165,32 +165,46 @@
    * either. Anything not recognised comes back empty, which leaves the caller on
    * the behaviour it had before.
    */
+  /**
+   * Containers the markup may declare when the address itself does not name one.
+   *
+   * A script-built player often serves the file from an extensionless path —
+   * `/stream/18992745` — and puts the container in the element instead:
+   * `<source src="…/stream/18992745" type="video/mp4">`. Reading `type` is the
+   * only way such an address is ever recognised, and the cost of trusting it is
+   * one download that fails and is reported, not a page that breaks.
+   */
+  const MEDIA_MIME_TYPE = /^(?:video|audio)\/[a-z0-9.+-]+$/i
+
   function playedAddress(video) {
     if (!video) return ''
 
+    /** Every address worth trying, with the container the markup claims for it. */
     const candidates = []
-    if (typeof video.currentSrc === 'string') candidates.push(video.currentSrc)
-    if (typeof video.src === 'string') candidates.push(video.src)
+    if (typeof video.currentSrc === 'string') candidates.push({ url: video.currentSrc, type: '' })
+    if (typeof video.src === 'string') candidates.push({ url: video.src, type: '' })
     if (typeof video.querySelectorAll === 'function') {
       for (const source of video.querySelectorAll('source[src]')) {
-        if (source && typeof source.src === 'string') candidates.push(source.src)
+        if (!source || typeof source.src !== 'string') continue
+        const declared = source.getAttribute ? source.getAttribute('type') : null
+        candidates.push({ url: source.src, type: declared || '' })
       }
     }
 
     for (const candidate of candidates) {
-      if (!candidate) continue
+      if (!candidate.url) continue
       let parsed
       try {
-        parsed = new URL(candidate)
+        parsed = new URL(candidate.url)
       } catch {
         continue
       }
+      // Checked before either answer is accepted: a Media Source Extension plays
+      // from a `blob:` and a live stream from `mediastream:`, and a `type`
+      // attribute must never be able to promote one of those into a download.
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
-
-      const last = parsed.pathname.split('/').filter(Boolean).pop() || ''
-      const dot = last.lastIndexOf('.')
-      if (dot <= 0) continue
-      if (MEDIA_FILE_EXTENSIONS.has(last.slice(dot + 1).toLowerCase())) return candidate
+      if (mediaFileAddress(candidate.url)) return candidate.url
+      if (MEDIA_MIME_TYPE.test(candidate.type)) return candidate.url
     }
 
     return ''
@@ -224,21 +238,141 @@
     return links
   }
 
-  /** True when a URL names a media file at a plain address. */
-  function mediaFileAddress(href) {
-    if (!href) return false
+  /** The lowercased extension of a URL's last path segment, or '' when it has none. */
+  function extensionOf(href) {
     let parsed
     try {
       parsed = new URL(href)
     } catch {
-      return false
+      return ''
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
-
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
     const last = parsed.pathname.split('/').filter(Boolean).pop() || ''
     const dot = last.lastIndexOf('.')
-    if (dot <= 0) return false
-    return MEDIA_FILE_EXTENSIONS.has(last.slice(dot + 1).toLowerCase())
+    if (dot <= 0) return ''
+    return last.slice(dot + 1).toLowerCase()
+  }
+
+  /** True when a URL names a media file at a plain address. */
+  function mediaFileAddress(href) {
+    if (!href) return false
+    return MEDIA_FILE_EXTENSIONS.has(extensionOf(href))
+  }
+
+  /** Extensions that are a playlist of segments rather than one file. */
+  const MANIFEST_EXTENSIONS = new Set(['m3u8', 'mpd'])
+
+  /** True when a URL names an HLS or DASH manifest. */
+  function isManifestAddress(href) {
+    return MANIFEST_EXTENSIONS.has(extensionOf(href))
+  }
+
+  /**
+   * True when a player is fed by a Media Source Extension rather than a file.
+   *
+   * `blob:` and `mediastream:` are the two spellings: the first is MSE appending
+   * segments from a script, the second is a camera or a screen share. Neither is
+   * a download, which is exactly why they need their own answer — see
+   * `observedStreamAddress`.
+   */
+  function isStreamedAddress(video) {
+    if (!video) return false
+    for (const value of [video.currentSrc, video.src]) {
+      if (typeof value === 'string' && /^(?:blob|mediastream):/i.test(value)) return true
+    }
+    return false
+  }
+
+  /**
+   * The site a hostname belongs to, as the last two labels.
+   *
+   * A player's CDN almost always lives on a sibling subdomain (`cdn.example` next
+   * to `www.example`), and a strict hostname comparison would call that a third
+   * party and prefer an advert. Deliberately not a public-suffix list: this only
+   * decides which of two candidate streams to prefer, and the cost of being wrong
+   * is the second-best address rather than a wrong download.
+   */
+  function siteOf(hostname) {
+    const host = String(hostname || '').toLowerCase()
+    if (host === '') return ''
+    const labels = host.split('.')
+    return labels.length <= 2 ? host : labels.slice(-2).join('.')
+  }
+
+  /**
+   * The stream a Media Source Extension player is being fed.
+   *
+   * A `blob:` player names nothing: the segments are appended by the page's own
+   * script, so there is no element, attribute or link that holds the address —
+   * which is why such a page used to look undownloadable. The page's own resource
+   * timings do hold it, though: every manifest and every segment it fetched is
+   * recorded there, by the browser, and a content script can read that list.
+   *
+   * Deliberately narrow, because the list also holds adverts and analytics:
+   *
+   *  - only HLS/DASH manifests and files with a media extension count, so a
+   *    tracker beacon or a thumbnail can never be offered as the video;
+   *  - a candidate on the page's own host wins over one on somebody else's, and
+   *    the most recently requested one wins within that — it is the ladder step
+   *    being played right now, which is the thing the button promises;
+   *  - a manifest beats a file, because one request can carry the whole video
+   *    where a single segment is a few seconds of it.
+   *
+   * `options.entries` exists so this can be tested without a browser.
+   */
+  function observedStreamAddress(location, options) {
+    const entries =
+      (options && options.entries) ||
+      (typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function'
+        ? performance.getEntriesByType('resource')
+        : [])
+    if (!entries || entries.length === 0) return ''
+
+    const pageHost = String((location && location.hostname) || '').toLowerCase()
+    const manifests = []
+    const files = []
+
+    for (const entry of entries) {
+      const name = entry && (entry.name || entry.url)
+      if (typeof name !== 'string' || name === '') continue
+      let parsed
+      try {
+        parsed = new URL(name)
+      } catch {
+        continue
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
+      const sameHost = siteOf(parsed.hostname) !== '' && siteOf(parsed.hostname) === siteOf(pageHost)
+
+      if (isManifestAddress(name)) manifests.push({ url: name, sameHost })
+      else if (mediaFileAddress(name)) files.push({ url: name, sameHost })
+    }
+
+    const latest = (candidates) => {
+      if (candidates.length === 0) return ''
+      const own = candidates.filter((candidate) => candidate.sameHost)
+      const preferred = own.length > 0 ? own : candidates
+      return preferred[preferred.length - 1].url
+    }
+
+    return latest(manifests) || latest(files)
+  }
+
+  /**
+   * The address of what a player is playing, when that is knowable locally.
+   *
+   * Three answers, best first: what the browser resolved, the media file the
+   * page's own download button points at, and — for the `blob:` players that
+   * have neither — the stream the page actually requested. All three are exact
+   * where the page URL is a guess, and none of them needs the app to read a page
+   * it may not be allowed to read.
+   */
+  function playableAddress(video, location, options) {
+    return (
+      playedAddress(video) ||
+      linkedMediaAddress(video, location, options) ||
+      observedStreamAddress(location, options)
+    )
   }
 
   /**
@@ -317,12 +451,11 @@
     if (isItemUrl(location.hostname, pageUrl)) return pageUrl
     if (!patternFor(location.hostname)) {
       /*
-       * Three answers, best first. What the browser is playing is exact and needs
-       * nothing read. Then the media file the page's own button points at, which is
-       * the one address left on a page the app is not allowed to fetch. Only then
+       * The exact answers first — what the browser resolved, the page's own
+       * download button, and the stream a `blob:` player was fed — and only then
        * the page itself, which is what this always did.
        */
-      return playedAddress(video) || linkedMediaAddress(video, location, options) || pageUrl
+      return playableAddress(video, location, options) || pageUrl
     }
     if (!video) return ''
 
@@ -364,6 +497,10 @@
     playedAddress,
     mediaFileAddress,
     linkedMediaAddress,
+    isManifestAddress,
+    isStreamedAddress,
+    observedStreamAddress,
+    playableAddress,
     MAX_CARD_DEPTH,
     MAX_CARD_SCALE
   }

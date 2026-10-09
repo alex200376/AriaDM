@@ -2,6 +2,8 @@ import { X } from 'lucide-react'
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react'
 import { forwardRef, useEffect, useState } from 'react'
 
+import { t } from '@shared/i18n'
+
 import { cn } from '../../lib/cn'
 import type { Tone } from '../../lib/labels'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select'
@@ -408,7 +410,7 @@ export function Modal({
             <h2 className="text-[15px] font-semibold text-fg">{title}</h2>
             {subtitle && <p className="mt-0.5 text-[12px] text-muted">{subtitle}</p>}
           </div>
-          <IconButton label="關閉" icon={<X size={16} />} onClick={onClose} />
+          <IconButton label={t('common.close')} icon={<X size={16} />} onClick={onClose} />
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>

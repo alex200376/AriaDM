@@ -199,7 +199,20 @@ export interface SpeedSample {
 }
 
 export interface TickPayload {
+  /**
+   * Items to upsert, matched by `gid`.
+   *
+   * A queue of a thousand stopped downloads is static: resending all of it every
+   * second cost a structured clone of every item plus a full renderer render for
+   * no new information. So a tick carries only what moved since the previous one
+   * — except when `full` is set, where this is the whole list and the renderer
+   * replaces what it holds rather than merging.
+   */
   items: DownloadItem[]
+  /** Gids of items that no longer exist, and must be dropped from the list. */
+  removedGids: string[]
+  /** True when `items` is the complete list rather than a delta. */
+  full: boolean
   global: GlobalStat
   engine: EngineStatus
   at: number

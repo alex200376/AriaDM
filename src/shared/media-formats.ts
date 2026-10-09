@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import type { MediaFormatInfo } from './settings'
 
 /**
@@ -59,38 +60,38 @@ export function provisionalFormatOption(
   if (audioOnly) {
     return {
       formatId: 'bestaudio/best',
-      label: '純音訊（最佳）',
+      label: t('main.format.audioOnlyBest'),
       ext: 'm4a',
       resolution: 'audio',
       filesize: null,
       vcodec: 'none',
       acodec: 'auto',
-      note: '直接抓取既有音軌，不需重新編碼',
+      note: t('main.format.audioOnlyNote'),
       needsFfmpeg: false
     }
   }
   if (hasFfmpeg) {
     return {
       formatId: 'bestvideo+bestaudio/best',
-      label: '最佳畫質（自動合併音訊）',
+      label: t('main.format.best'),
       ext: 'mp4',
-      resolution: '最佳',
+      resolution: t('main.format.bestResolution'),
       filesize: null,
       vcodec: 'auto',
       acodec: 'auto',
-      note: '建議',
+      note: t('main.format.recommended'),
       needsFfmpeg: true
     }
   }
   return {
     formatId: 'best',
-    label: '最佳（單檔）',
+    label: t('main.format.singleFile'),
     ext: 'mp4',
-    resolution: '最佳',
+    resolution: t('main.format.bestResolution'),
     filesize: null,
     vcodec: 'auto',
     acodec: 'auto',
-    note: '不需 ffmpeg 即可下載',
+    note: t('main.format.noFfmpegNote'),
     needsFfmpeg: false
   }
 }

@@ -1,5 +1,7 @@
 import { WebSocket } from 'ws'
 
+import { t } from '@shared/i18n'
+
 import type { Aria2Notification } from './types'
 
 /**
@@ -106,9 +108,9 @@ export class Aria2RpcClient {
       })
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new Aria2RpcError(-1, `${method} 逾時（${this.timeoutMs}ms）`, method)
+        throw new Aria2RpcError(-1, t('supervisor.rpcTimeout', { method, ms: this.timeoutMs }), method)
       }
-      throw new Aria2RpcError(-1, `${method} 連線失敗：${(error as Error).message}`, method)
+      throw new Aria2RpcError(-1, t('supervisor.rpcConnectFailed', { method, message: (error as Error).message }), method)
     } finally {
       clearTimeout(timer)
     }

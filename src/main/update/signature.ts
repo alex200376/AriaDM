@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process'
 
+import { t } from '@shared/i18n'
+
 /**
  * Checking who signed an update before running it.
  *
@@ -98,13 +100,13 @@ export async function verifyInstallerSignature(options: VerifyOptions): Promise<
   }
 
   const installer = await read(options.installerPath).catch(() => null)
-  if (!installer) return { ok: false, reason: '無法讀取更新檔的簽章' }
+  if (!installer) return { ok: false, reason: t('update.signatureUnreadable') }
 
   const status = installer.status.toLowerCase()
-  if (UNSIGNED.has(status)) return { ok: false, reason: '更新檔未經簽章' }
-  if (status !== 'valid') return { ok: false, reason: `簽章狀態為 ${installer.status}` }
+  if (UNSIGNED.has(status)) return { ok: false, reason: t('update.signatureMissing') }
+  if (status !== 'valid') return { ok: false, reason: t('update.signatureStatus', { status: installer.status }) }
   if (!samePublisher(app.subject, installer.subject)) {
-    return { ok: false, reason: '更新檔的簽章者與目前版本不同' }
+    return { ok: false, reason: t('update.signaturePublisherMismatch') }
   }
 
   return { ok: true }

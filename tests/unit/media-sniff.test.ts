@@ -141,6 +141,24 @@ describe('findDirectMediaUrls', () => {
     expect(findDirectMediaUrls(html, BASE)).toEqual(['https://page.example/media/clip-a.mp4'])
   })
 
+  it('finds the file in a reported player, and does not mistake its poster for one', () => {
+    // The markup that was reported as not being recognised: the address is in a
+    // `<source>` child, on a second host, with a query string and a doubled
+    // slash in the path — and the only other URL on the element is a thumbnail,
+    // which must never be offered as the video.
+    const html = [
+      '<video loop="" id="gelcomVideoPlayer" style="width: 100%; height: 100%; cursor: none;"',
+      ' poster="https://wimg.rule34.xxx//images/5737/a990552160fe9b18ce6553cbe80b9e53.jpg?18992745"',
+      ' playsinline="" webkit-playsinline="" preload="auto">',
+      '<source src="https://ahrimp4.rule34.xxx//images/5737/a990552160fe9b18ce6553cbe80b9e53.mp4?18992745" type="video/mp4">',
+      '</video>'
+    ].join('\n')
+
+    expect(findDirectMediaUrls(html, BASE)).toEqual([
+      'https://ahrimp4.rule34.xxx//images/5737/a990552160fe9b18ce6553cbe80b9e53.mp4?18992745'
+    ])
+  })
+
   it('finds a file the page only links to', () => {
     // The whole point: a page with no player in it still names a video file.
     const html = '<a href="downloads/movie.mkv">Download the movie</a>'

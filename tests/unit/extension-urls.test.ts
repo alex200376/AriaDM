@@ -18,6 +18,9 @@ interface Urls {
   mediaFileAddress(href: unknown): boolean
   linkedMediaAddress(video: unknown, location: unknown, options?: unknown): string
   itemUrlNear(video: unknown, location: unknown, options?: unknown): string
+  isStreamedAddress(video: unknown): boolean
+  observedStreamAddress(location: unknown, options?: unknown): string
+  playableAddress(video: unknown, location: unknown, options?: unknown): string
 }
 
 function loadUrls(): Urls {
@@ -137,6 +140,66 @@ describe('isItemUrl', () => {
  * unreadable, while the browser has already resolved the video. The address it
  * resolved is not a guess and needs no sniff — it is the file itself.
  */
+describe('observedStreamAddress', () => {
+  const location = { href: 'https://play.777tv.ai/watch/42', hostname: 'play.777tv.ai' }
+
+  it('finds the stream a blob player was fed, and skips the adverts around it', () => {
+    // The last same-site manifest is the ladder step being played right now,
+    // which is what the button promises; an advert's own playlist and every
+    // tracker beacon in the list are ignored.
+    expect(urls.observedStreamAddress(location, { entries: PLAYER_ENTRIES })).toBe(
+      'https://cdn.777tv.ai/live/720/index.m3u8?token=1'
+    )
+  })
+
+  it('prefers the site\u2019s own CDN over a third party', () => {
+    expect(
+      urls.observedStreamAddress(location, {
+        entries: [
+          { name: 'https://cdn.777tv.ai/live/720/index.m3u8' },
+          { name: 'https://video.ads-elsewhere.net/spot/index.m3u8' }
+        ]
+      })
+    ).toBe('https://cdn.777tv.ai/live/720/index.m3u8')
+  })
+
+  it('falls back to a plain media file when there is no manifest', () => {
+    expect(
+      urls.observedStreamAddress(location, {
+        entries: [
+          { name: 'https://play.777tv.ai/posters/frame.webp' },
+          { name: 'https://play.777tv.ai/media/clip-a.mp4' },
+          { name: 'https://play.777tv.ai/media/clip-b.mp4' }
+        ]
+      })
+    ).toBe('https://play.777tv.ai/media/clip-b.mp4')
+  })
+
+  it('answers nothing when the page has fetched nothing worth offering', () => {
+    expect(urls.observedStreamAddress(location, { entries: [] })).toBe('')
+    expect(urls.observedStreamAddress(location, { entries: null })).toBe('')
+    expect(
+      urls.observedStreamAddress(location, { entries: [{ name: 'https://play.777tv.ai/app.js' }] })
+    ).toBe('')
+    // With no page to compare against there is nothing to prefer, so it is the
+    // most recently requested stream. Only reachable if the caller forgets the
+    // location — a content script always has one — but it is the behaviour, so it
+    // is pinned rather than left to chance.
+    expect(urls.observedStreamAddress(null, { entries: PLAYER_ENTRIES })).toBe(
+      'https://ads.example/vanity.m3u8'
+    )
+  })
+})
+
+describe('isStreamedAddress', () => {
+  it('recognises the two ways a player is fed rather than pointed at a file', () => {
+    expect(urls.isStreamedAddress(BLOB_PLAYER)).toBe(true)
+    expect(urls.isStreamedAddress({ src: 'mediastream:1234' })).toBe(true)
+    expect(urls.isStreamedAddress({ src: 'https://cdn.example/clip.mp4' })).toBe(false)
+    expect(urls.isStreamedAddress(null)).toBe(false)
+  })
+})
+
 describe('playedAddress', () => {
   it('answers the file the browser is already playing', () => {
     expect(urls.playedAddress({ currentSrc: 'https://cdn.example/v/clip.mp4?t=1' })).toBe(
@@ -160,6 +223,35 @@ describe('playedAddress', () => {
         src: 'https://cdn.example/360.mp4'
       })
     ).toBe('https://cdn.example/1080.mp4')
+  })
+
+  it('recognises a source element that declares the container instead of naming it', () => {
+    // A script-built player serves the file from an extensionless path and puts
+    // the container in the markup, which is the only place it exists.
+    const player = node({
+      sources: ['https://cdn.example/stream/18992745'],
+      sourceTypes: ['video/mp4']
+    })
+    expect(urls.playedAddress(player)).toBe('https://cdn.example/stream/18992745')
+  })
+
+  it('still refuses a declared container on an address that is not one', () => {
+    // The `type` attribute must not be able to promote a Media Source Extension
+    // or a live stream into a download: the protocol gate comes first.
+    expect(
+      urls.playedAddress({
+        querySelectorAll: () => [
+          { src: 'blob:https://cdn.example/1234', getAttribute: () => 'video/mp4' }
+        ]
+      })
+    ).toBe('')
+    expect(
+      urls.playedAddress({
+        querySelectorAll: () => [
+          { src: 'data:video/mp4;base64,AAAA', getAttribute: () => 'video/mp4' }
+        ]
+      })
+    ).toBe('')
   })
 
   it('refuses anything that is not a media file at a plain address', () => {
@@ -197,6 +289,41 @@ interface FakeNode {
 }
 
 /**
+ * The other reported player: a Media Source Extension one.
+ *
+ * Nothing in the DOM names the file — the page's own script appends segments to a
+ * `blob:` — so the only record of it is the page's resource timings.
+ */
+const BLOB_PLAYER = {
+  currentSrc: 'blob:https://play.777tv.ai/5f2b02ab-8d3e-4e38-a640-d6cbf85a5b05',
+  src: 'blob:https://play.777tv.ai/5f2b02ab-8d3e-4e38-a640-d6cbf85a5b05',
+  getBoundingClientRect: () => ({ width: 960, height: 540 }),
+  querySelectorAll: () => []
+}
+
+/** Roughly what such a page fetches: an advert, then its own ladder, then more ads. */
+const PLAYER_ENTRIES = [
+  { name: 'https://ads.example/banner.jpg' },
+  { name: 'https://cdn.777tv.ai/live/master.m3u8?token=1' },
+  { name: 'https://play.777tv.ai/analytics.gif' },
+  { name: 'https://cdn.777tv.ai/live/720/index.m3u8?token=1' },
+  { name: 'https://ads.example/vanity.m3u8' }
+]
+
+/** The reported player: a `<video>` whose file lives in a `<source>` child. */
+const RULE34_VIDEO = {
+  currentSrc: '',
+  src: '',
+  getBoundingClientRect: () => ({ width: 640, height: 360 }),
+  querySelectorAll: () => [
+    {
+      src: 'https://ahrimp4.rule34.xxx//images/5737/a990552160fe9b18ce6553cbe80b9e53.mp4?18992745',
+      getAttribute: () => 'video/mp4'
+    }
+  ]
+}
+
+/**
  * Every anchor a real querySelectorAll('a[href]') would find *under* this node.
  *
  * The node's own href is not included — the DOM does not return the element from
@@ -227,6 +354,8 @@ function node(
     src?: string
     currentSrc?: string
     sources?: string[]
+    /** Parallel to `sources`: the `type` each one declares, when it declares one. */
+    sourceTypes?: string[]
   } = {},
   children: FakeNode[] = []
 ): FakeNode {
@@ -244,7 +373,10 @@ function node(
     // would be — and the anchors, which are the other thing this is asked for.
     querySelectorAll: () => [
       ...collectLinks(target),
-      ...(options.sources ?? []).map((src) => ({ src }))
+      ...(options.sources ?? []).map((src, index) => ({
+        src,
+        getAttribute: () => options.sourceTypes?.[index] ?? null
+      }))
     ],
     getBoundingClientRect: () => ({ width: target.side, height: target.side })
   })
@@ -346,6 +478,46 @@ describe('itemUrlNear', () => {
     const body = node({ side: 2000 }, [feed])
 
     expect(urls.itemUrlNear(video, page('https://x.com/home', body, body))).toBe('')
+  })
+
+  it('reads the file out of the player on a site with no rule', () => {
+    // The reported rule34 page: `<video><source src="…mp4">` on a host nobody
+    // has written a rule for. The app cannot read that page at all — the site
+    // answers every non-browser request with 403 — so the element the browser is
+    // playing is the only witness, and it is an exact one.
+    const body = node({ side: 2000 })
+
+    expect(
+      urls.itemUrlNear(
+        RULE34_VIDEO,
+        page('https://rule34.xxx/index.php?page=post&s=view&id=18961415', body, body)
+      )
+    ).toBe('https://ahrimp4.rule34.xxx//images/5737/a990552160fe9b18ce6553cbe80b9e53.mp4?18992745')
+  })
+
+  it('reads the stream out of a blob player on a site with no rule', () => {
+    // The second reported page: a `blob:` player, which names nothing in the DOM.
+    // The page's own resource timings say which stream it is playing, and only
+    // then the page URL — which yt-dlp cannot resolve for a site like this one.
+    const body = node({ side: 2000 })
+
+    expect(
+      urls.itemUrlNear(
+        BLOB_PLAYER,
+        page('https://play.777tv.ai/watch/42', body, body),
+        { entries: PLAYER_ENTRIES }
+      )
+    ).toBe('https://cdn.777tv.ai/live/720/index.m3u8?token=1')
+  })
+
+  it('still falls back to the page when a blob player fetched nothing usable', () => {
+    const body = node({ side: 2000 })
+
+    expect(
+      urls.itemUrlNear(BLOB_PLAYER, page('https://play.777tv.ai/watch/42', body, body), {
+        entries: [{ name: 'https://play.777tv.ai/app.js' }]
+      })
+    ).toBe('https://play.777tv.ai/watch/42')
   })
 
   it('never reads a link out of the document itself', () => {

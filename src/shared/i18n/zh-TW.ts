@@ -930,7 +930,186 @@ export const zhTW = {
   // -- language setting ----------------------------------------------------
   'settings.language.en': 'English',
   'settings.language.zhTW': '繁體中文',
-  'settings.language.hint': '介面文字使用的語言；「跟隨系統」依照作業系統設定決定。'
+  'settings.language.hint': '介面文字使用的語言；「跟隨系統」依照作業系統設定決定。',
+
+  // -- video-path strings (migrated from the hard-coded Chinese) ---------
+  // -- engine router -------------------------------------------------------
+  'main.router.streamNeedsYtdlp':
+    '這個連結是串流影音清單（HLS/DASH），需要 yt-dlp 才能下載成影片，請先安裝 yt-dlp。',
+  'main.router.pageBlocked':
+    '這個網頁拒絕了讀取（伺服器回應錯誤，可能有 Cloudflare 等防護），已改用一般下載；若仍失敗，請改用瀏覽器或擴充功能按鈕下載。',
+
+  // -- yt-dlp runner -------------------------------------------------------
+  'main.media.fetchFailed': '無法取得影片：{reason}',
+  'main.media.playlistTimeout': '讀取播放清單逾時。',
+  'main.media.exitCodeUnknown': '未知',
+  'main.media.playlistSuffix': '（播放清單）',
+  'main.media.ffmpegSubtitles': '嵌入字幕需要 ffmpeg，請先安裝 ffmpeg 媒體包，或改為另存字幕檔。',
+  'main.media.ffmpegAudioConvert':
+    '轉換音訊格式需要 ffmpeg，請先安裝 ffmpeg 媒體包，或改選「原始音訊」。',
+
+  // -- quality menu labels -------------------------------------------------
+  'main.format.best': '最佳畫質（自動合併音訊）',
+  'main.format.bestResolution': '最佳',
+  'main.format.recommended': '建議',
+  'main.format.needsFfmpeg': '需要 ffmpeg 才能合併',
+  'main.format.video': '影片',
+  'main.format.audioOnly': '純音訊',
+  'main.format.audioOnlyBest': '純音訊（最佳）',
+  'main.format.audioOnlyNote': '直接抓取既有音軌，不需重新編碼',
+  'main.format.singleFile': '最佳（單檔）',
+  'main.format.noFfmpegNote': '不需 ffmpeg 即可下載',
+
+  // -- download naming -----------------------------------------------------
+  'main.item.metadataPending': '等待中繼資料',
+
+  // -- yt-dlp failure messages (classifyMediaError) ------------------------
+  'media.err.botCheck':
+    '網站要求登入驗證。請在設定中啟用「使用瀏覽器 Cookie」，AriaDM 就會沿用你已登入的瀏覽器工作階段。',
+  'media.err.age': '這段影片有年齡限制，需要登入才能下載。請啟用「使用瀏覽器 Cookie」。',
+  'media.err.cookiesLocked':
+    '瀏覽器正在執行，Cookie 資料庫被鎖住而讀不到。請完全結束該瀏覽器（含背景常駐、系統匣）後再試一次。',
+  'media.err.cookiesUndecryptable':
+    '這個瀏覽器的 Cookie 使用應用程式綁定加密（Chromium 127 以上），yt-dlp 無法解密。請改用 Chrome、Edge 或 Firefox，或從擴充功能傳送連結，讓 AriaDM 直接取得登入狀態。',
+  'media.err.cookiesMissing':
+    '偵測不到這個瀏覽器的 Cookie 資料庫。請確認該瀏覽器已安裝，或在「設定 → 整合與工具 → 影音下載」手動指定要用哪一個。',
+  'media.err.session':
+    '網站不接受目前的登入狀態，回傳了無法播放的頁面（YouTube 對已登入的 Cookie 常見此狀況）。已改用未登入身分重試仍失敗，請更新 yt-dlp 或在設定中改用其他瀏覽器的 Cookie。',
+  'media.err.emptyResponse':
+    '網站對這次要求沒有回傳內容（常見於帶著登入狀態連 Instagram）。請稍後再試；若持續失敗請更新 yt-dlp。',
+  'media.err.fs':
+    '無法寫入儲存資料夾（權限不足或磁碟已滿）。請在設定中更換儲存位置，或確認該資料夾可以寫入。',
+  'media.err.tweetHidden':
+    '這則貼文對未登入的訪客是隱藏的（可能被標記為敏感內容），因此看不到影片。請啟用「使用瀏覽器 Cookie」，或從瀏覽器擴充功能送出這個連結。',
+  'media.err.authRequired':
+    '這個內容需要登入才能取得。請啟用「使用瀏覽器 Cookie」，或確認你在瀏覽器中已登入。',
+  'media.err.rateLimit':
+    '網站暫時限制了要求（次數過於頻繁）。請等幾分鐘再試，或啟用「使用瀏覽器 Cookie」以登入身分下載。',
+  'media.err.geo': '這段影片在你所在的地區被封鎖。',
+  'media.err.unavailable': '這段影片已被刪除、設為私人，或作者關閉了存取。',
+  'media.err.noVideoInPost': '這則貼文裡沒有影片（可能是圖片或輪播），所以沒有可下載的影音。',
+  'media.err.formatGone': '這個畫質格式已不存在，請重新偵測可用格式。',
+  'media.err.ffmpegNeeded':
+    '這個動作需要 ffmpeg（合併影音、嵌入字幕或轉換音訊格式）。請先安裝 ffmpeg 媒體包。',
+  'media.err.ffmpegMerge': '這個格式需要合併音訊與視訊，請先安裝 ffmpeg 媒體包，或改選「單檔」畫質。',
+  'media.err.extractor': 'yt-dlp 目前無法解析這個網站（網站改版了）。更新 yt-dlp 後再試一次通常就能解決。',
+  'media.err.noVideoHere': '這個網址沒有 AriaDM 能下載的影片。若是直接連結，請改用一般下載。',
+  'media.err.timeout': '連線逾時，請檢查網路後再試一次。',
+  'media.err.network': '連線到網站時失敗，請檢查網路或代理伺服器設定。',
+  'media.err.generic': '影音下載失敗。',
+  'media.err.versionSuffix': '（目前版本 {version}）',
+
+  // -- action button labels ------------------------------------------------
+  'media.err.action.cookies': '啟用瀏覽器 Cookie',
+  'media.err.action.otherBrowser': '改用其他瀏覽器',
+  'media.err.action.switchBrowser': '更換瀏覽器',
+  'media.err.action.updateYtdlp': '更新 yt-dlp',
+  'media.err.action.reprobe': '重新偵測',
+  'media.err.action.installFfmpeg': '安裝 ffmpeg',
+
+  // -- app-shell strings (migrated from the hard-coded Chinese) ---------
+  // -- toolkit (runtime download of aria2 / yt-dlp / ffmpeg) -----------------
+  'toolkit.noExtractor': '找不到可用的解壓縮工具\n{detail}',
+  'toolkit.hashMismatch': '檔案雜湊與釘選值不符，建議重新下載。',
+  'toolkit.verifyFailed': '無法驗證檔案：{message}',
+  'toolkit.latestVersion': '最新版',
+  'toolkit.busy': '已有工具正在下載中（{kind}）。',
+  'toolkit.noAria2Build': '沒有為 {platform}-{arch} 提供預建的 aria2，請改用系統安裝的 aria2c。',
+  'toolkit.aria2HashMismatch': 'aria2 壓縮檔雜湊不符，已中止。\n預期 {expected}\n實際 {actual}',
+  'toolkit.binaryMissing': '{binary} 不在壓縮檔內。',
+  'toolkit.ytdlpHashMismatch': 'yt-dlp 雜湊與上游 SHA2-256SUMS 不符，已中止。\n上游 {published}\n實際 {actual}',
+  'toolkit.ffmpegManual': '請使用系統套件管理器安裝 ffmpeg，AriaDM 會自動偵測。',
+
+  // -- updater --------------------------------------------------------------
+  'update.cancelled': '已取消下載',
+  'update.aria2ExitCode': 'aria2 結束碼 {code}',
+  'update.signatureUnreadable': '無法讀取更新檔的簽章',
+  'update.signatureMissing': '更新檔未經簽章',
+  'update.signatureStatus': '簽章狀態為 {status}',
+  'update.signaturePublisherMismatch': '更新檔的簽章者與目前版本不同',
+  'update.noDownloadUrl': '沒有可下載的更新檔。',
+  'update.incomplete': '更新檔不完整（{received}/{total} bytes）',
+  'update.checksumMismatch': '更新檔內容與發佈的檢查碼不符（可能已損毀），請再試一次。',
+  'update.notDownloaded': '更新尚未下載完成。',
+  'update.installUnsupported': '此版本不支援自動安裝，請手動下載。',
+  'update.installerWontStart': '無法啟動安裝程式。',
+  'update.installUnsupportedPlatform': '此平台不支援自動安裝。',
+  'update.signatureCheckFailed': '簽章檢查失敗',
+  'update.signatureUnverified': '簽章無法驗證',
+  'update.installStopped': '{reason}，已停止安裝。請重新下載更新檔。',
+  'update.installerDamaged': '安裝程式回報檔案已損毀，已刪除更新檔；再試一次會重新下載。',
+  'update.manualFallback': '{message}若持續失敗，可到發佈頁面手動下載。',
+  'update.notStartedElevation': '安裝程式沒有啟動，通常是 Windows 的權限提示被取消。',
+  'update.notStartedImmediately': '安裝程式啟動後立即結束。',
+  'update.manualInstallerHint': '{reason}你可以改用「開啟安裝程式」手動完成更新。',
+  'update.openedManually': '{message}（已改為手動開啟安裝程式）',
+  'update.notExecutable': '下載的更新檔不是可執行檔',
+
+  // -- engine supervisor and RPC -------------------------------------------
+  'supervisor.starting': '正在啟動 aria2 引擎',
+  'supervisor.mkdirFailed': '無法建立必要目錄：{message}',
+  'supervisor.spawnFailed': '無法啟動 aria2：{message}',
+  'supervisor.processError': 'aria2 程序錯誤：{message}',
+  'supervisor.rpcUnreachable': 'aria2 引擎啟動後無法連線 RPC，請查看日誌。',
+  'supervisor.exitedUnexpectedly': 'aria2 意外結束（代碼 {code}）。',
+  'supervisor.unknownCode': '未知',
+  'supervisor.crashLoop': 'aria2 反覆崩潰，已停止自動重啟。請至設定頁檢查引擎路徑或查看日誌。',
+  'supervisor.restartIn': '{seconds} 秒後自動重啟（第 {attempt} 次）',
+  'supervisor.rpcTimeout': '{method} 逾時（{ms}ms）',
+  'supervisor.rpcConnectFailed': '{method} 連線失敗：{message}',
+
+  // -- post-download actions ------------------------------------------------
+  'post.openFileFailed': '無法開啟檔案：{message}',
+  'post.openFolderFailed': '無法開啟資料夾：{message}',
+  'post.emptyCommand': '自訂指令為空。',
+  'post.commandFailed': '自訂指令失敗：{message}',
+  'post.downloadComplete': '下載完成',
+  'post.action.openFile': '開啟檔案',
+  'post.action.openFolder': '開啟資料夾',
+  'post.action.notify': '系統通知',
+  'post.action.command': '執行指令（{command}）',
+  'post.action.separator': '、',
+  'post.action.none': '不執行任何動作',
+
+  // -- handoff API ----------------------------------------------------------
+  'handoff.portInUse': '連接埠 {port} 已被占用，請在設定中改用其他連接埠。',
+  // -- main process: tray, toasts, commands and dialog filters -------------
+  'main.add.added': '已加入下載',
+  'main.add.failed': '無法加入下載',
+  'main.tray.backgroundTitle': 'AriaDM 仍在背景執行',
+  'main.tray.backgroundBody': '下載會繼續進行。',
+  'main.tray.unlimited': '無限速',
+  'main.tray.openFolder': '開啟下載資料夾',
+  'main.tray.globalLimit': '全域限速',
+  'main.tray.tooltipActive': 'AriaDM — ↓ {speed} · {active} 進行中 · {waiting} 排隊',
+  'main.tray.tooltipIdle': 'AriaDM — 閒置（{total} 項）',
+  'main.limit.updated': '已更新全域限速',
+  'main.limit.cleared': '已取消限速',
+  'main.limit.set': '下載限速 {speed}',
+  'main.power.cancel': '取消關機',
+  'main.power.cancelTitle': '已取消',
+  'main.power.cancelBody': '排定的電源動作已取消。',
+  'main.power.countdownBody': '可從系統匣選單取消。',
+  'main.postAction.failedTitle': '下載完成後動作失敗',
+  'main.profile.notFound': '找不到指定的速度設定檔。',
+  'main.profile.applied': '已套用速度設定檔',
+  'main.download.noUris': '沒有可下載的連結。',
+  'main.retry.noSources': '{name} 沒有可重試的來源連結。',
+  'main.retry.failed': '重試失敗：{reason}',
+  'main.dir.createFailed': '無法建立下載目錄 {dir}：{reason}',
+  'main.space.low': '{dir} 可用空間僅剩 {mb} MB，可能不足以完成下載。',
+  'main.item.optionsUnsupported': 'yt-dlp 下載不支援修改這些選項。',
+  'main.item.noFile': '找不到檔案路徑。',
+  'main.item.noUri': '找不到來源連結。',
+  'main.item.notFound': '找不到下載項目。',
+  'main.open.httpOnly': '僅允許開啟 http(s) 連結。',
+  'main.open.pathMissing': '缺少要開啟的路徑。',
+  'main.open.pathNotExist': '路徑不存在。',
+  'main.dialog.images': '圖片',
+  'speedGraph.idle': '等待數據',
+  'speedGraph.peak': '峰值 {speed}',
+  'main.update.installerOnly': '僅允許開啟更新安裝程式。',
+  'main.update.installerGone': '安裝程式已不存在，請重新下載。'
 } as const
 
 export type TranslationKey = keyof typeof zhTW
