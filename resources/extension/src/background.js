@@ -8,9 +8,11 @@
  * cannot drive a download on the user's behalf.
  */
 
-// Chrome runs this as a service worker; Firefox lists request.js and pairing.js
-// first in the manifest's background.scripts instead.
-if (typeof importScripts === 'function') importScripts('strings.js', 'request.js', 'pairing.js')
+// Chrome runs this as a service worker; Firefox lists these first in the
+// manifest's background.scripts instead.
+if (typeof importScripts === 'function') {
+  importScripts('strings.js', 'request.js', 'pairing.js', 'intercept.js')
+}
 
 /** The shared string table; loaded by `importScripts` above in Chrome. */
 const tr = (key, substitutions) => self.AriaDmStrings.t(key, substitutions)
@@ -59,9 +61,27 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 })
 
-// Warm the cache as soon as the worker wakes, so the first intercepted download
-// is not a special case.
-void refreshConfig()
+/*
+ * Warm the cache as soon as the worker wakes, and remember when it is warm.
+ *
+ * A freshly evaluated worker holds the defaults above, where `autoIntercept` is
+ * false, and Chrome can dispatch a download event before `chrome.storage.local`
+ * answers. Deciding from the cache in that window is what let the first
+ * download after the worker went idle slip past untouched, so the download
+ * listener waits on `hydration` instead (see intercept.js).
+ *
+ * On failure the worker is marked hydrated anyway: the stored config is then
+ * unreachable for good, and everything the browser can still tell us — the
+ * `storage.onChanged` listener right above — keeps working from the cache.
+ */
+let hydrated = false
+const hydration = refreshConfig()
+  .then(() => {
+    hydrated = true
+  })
+  .catch(() => {
+    hydrated = true
+  })
 
 function endpoint(config, path) {
   return `http://127.0.0.1:${config.port}${path}`
@@ -554,31 +574,103 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
  * does, and it is why this is opt-in: cancelling a download the browser was
  * already handling is a visible side effect.
  */
-chrome.downloads.onCreated.addListener((item) => {
-  // Nothing is awaited before the cancel: see the note on `cachedConfig`.
-  if (!cachedConfig.autoIntercept) return
-  if (!item.url || item.url.startsWith('blob:') || item.url.startsWith('data:')) return
+/**
+ * Cancel the browser's copy and delete whatever it already wrote.
+ *
+ * `erase` on its own only removes the download *entry* and leaves the file on
+ * disk, which is the other half of the duplicate: the browser's copy stayed
+ * behind even when the handoff succeeded. `cancel` fails on a download that
+ * already finished and `removeFile` fails on one still in progress, so both are
+ * best-effort — between them every state is covered.
+ */
+async function cleanupBrowserCopy(item) {
+  try {
+    await chrome.downloads.cancel(item.id)
+  } catch {
+    // Already finished: `removeFile` below is what cleans that case up.
+  }
+  await chrome.downloads.removeFile(item.id).catch(() => {})
+  await chrome.downloads.erase({ id: item.id }).catch(() => {})
+}
 
-  /*
-   * Cancel first, then delete whatever the browser already wrote, then forget
-   * the record. `erase` on its own only removes the download *entry* and leaves
-   * the file on disk, which is the other half of the duplicate: the browser's
-   * copy stayed behind even when the handoff succeeded.
-   *
-   * `cancel` fails on a download that already finished and `removeFile` fails on
-   * one still in progress, so both are best-effort — between them every state is
-   * covered.
-   */
-  void chrome.downloads
-    .cancel(item.id)
-    .catch(() => {})
-    .then(() => chrome.downloads.removeFile(item.id).catch(() => {}))
-    .then(() => chrome.downloads.erase({ id: item.id }).catch(() => {}))
-    .then(async () => {
-      const payload = await payloadFor(item.url, undefined, false)
-      if (item.filename) payload.filename = item.filename.split(/[/\\]/).pop()
-      await handoff(payload)
+/**
+ * Downloads the safety net put back, by the ids the browser gave them.
+ *
+ * Re-creating a download through `chrome.downloads.download` fires
+ * `onCreated` again; without this the extension would cancel the copy it had
+ * just restored, forever. Ids rather than URLs, because the user is allowed to
+ * download the same address twice on purpose.
+ */
+const restoredIds = new Set()
+
+/**
+ * Give the download back to the browser.
+ *
+ * Used when the app cannot take it, so a download the extension decided to
+ * intercept is never simply lost. Only the file name is kept — the browser
+ * refuses an absolute `filename`, and `uniquify` means a leftover copy is never
+ * overwritten.
+ */
+async function restoreDownload(item) {
+  const name = item.filename ? item.filename.split(/[/\\]/).pop() : ''
+  try {
+    const id = await chrome.downloads.download({
+      url: item.url,
+      ...(name ? { filename: name } : {}),
+      conflictAction: 'uniquify'
     })
+    if (typeof id === 'number') restoredIds.add(id)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The interception policy, in intercept.js.
+ *
+ * Everything it needs from this file is handed to it, so the part that decides
+ * can be tested without a browser — and so the decision is made from a config
+ * that has actually been read rather than from the defaults a freshly woken
+ * worker starts with.
+ */
+function interceptDeps() {
+  return {
+    isIgnored: (item) => restoredIds.delete(item.id),
+    isHydrated: () => hydrated,
+    hydration,
+    isEnabled: () => cachedConfig.autoIntercept === true,
+    cleanup: (item) => cleanupBrowserCopy(item),
+    payloadFor,
+    handoff: (payload) => handoff(payload),
+    restore: (item) => restoreDownload(item),
+    unknownError: () => tr('error.unknown'),
+    basename: (file) => file.split(/[/\\]/).pop(),
+    notify: (reason, restored) =>
+      notify(
+        tr('notify.interceptTitle'),
+        tr(restored ? 'notify.interceptRestored' : 'notify.interceptLost', { reason })
+      )
+  }
+}
+
+chrome.downloads.onCreated.addListener((item) => {
+  /*
+   * The common case: a warm worker whose config says to intercept. Nothing is
+   * awaited before the cancel, so a small file cannot finish in the gap — see
+   * the note on `cachedConfig`.
+   */
+  if (cachedConfig.autoIntercept) {
+    void self.AriaDmIntercept.handleCreated(item, interceptDeps())
+    return
+  }
+  // A cold worker has not read the stored config yet, and its in-memory defaults
+  // say "off". Waiting for the answer is what stops that first download from
+  // being missed.
+  if (hydrated) return
+  void hydration.then(() => {
+    if (cachedConfig.autoIntercept) void self.AriaDmIntercept.handleCreated(item, interceptDeps())
+  })
 })
 
 /**

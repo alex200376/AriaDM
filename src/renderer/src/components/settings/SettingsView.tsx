@@ -1547,7 +1547,8 @@ const SECONDARY_PATH_KEYS: (keyof AppPaths)[] = [
   'history',
   'session',
   'aria2Log',
-  'extensions'
+  'extensions',
+  'wallpapers'
 ]
 
 /** Human labels for the paths, instead of the raw keys the object is keyed by. */
@@ -1562,7 +1563,8 @@ const PATH_LABEL_KEYS: Record<keyof AppPaths, TranslationKey> = {
   history: 'settings.paths.history',
   session: 'settings.paths.session',
   aria2Log: 'settings.paths.aria2Log',
-  extensions: 'settings.paths.extensions'
+  extensions: 'settings.paths.extensions',
+  wallpapers: 'settings.paths.wallpapers'
 }
 
 /**

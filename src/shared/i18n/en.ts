@@ -784,6 +784,7 @@ export const en = {
   'settings.paths.session': 'Session file',
   'settings.paths.aria2Log': 'aria2 log',
   'settings.paths.extensions': 'Browser extensions',
+  'settings.paths.wallpapers': 'Wallpaper copies',
 
   // -- about tab: update card ---------------------------------------------
   'settings.update.troubleshooting': 'Troubleshooting',

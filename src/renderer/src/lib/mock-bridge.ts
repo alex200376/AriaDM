@@ -492,10 +492,14 @@ export function createMockApi(): AriaDmApi {
         history: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\history.json',
         settings: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\settings.json',
         extensions: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\extensions',
+        wallpapers: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\wallpapers',
         updateLog: 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\update.log'
       }),
       chooseDirectory: async () => 'C:\\Users\\WOW\\Downloads\\Chosen',
-      chooseImage: async () => 'C:\\Users\\WOW\\Pictures\\wallpaper.svg',
+      // The main process copies the picture it is given into this folder and
+      // returns the copy, so what the settings window shows is the app's own
+      // file rather than wherever the user picked it from.
+      chooseImage: async () => 'C:\\Users\\WOW\\AppData\\Roaming\\ariadm\\wallpapers\\wallpaper.png',
       readImage: async () => MOCK_WALLPAPER
     },
 

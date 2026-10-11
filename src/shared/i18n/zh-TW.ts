@@ -769,6 +769,7 @@ export const zhTW = {
   'settings.paths.session': '工作階段檔',
   'settings.paths.aria2Log': 'aria2 記錄',
   'settings.paths.extensions': '瀏覽器擴充功能',
+  'settings.paths.wallpapers': '背景圖片副本',
 
   // -- about tab: update card ---------------------------------------------
   'settings.update.troubleshooting': '疑難排解',

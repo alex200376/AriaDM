@@ -23,6 +23,7 @@ const SHARED_FILES = [
   'background.js',
   'pairing.js',
   'request.js',
+  'intercept.js',
   'urls.js',
   'formats.js',
   'popup.html',
@@ -107,7 +108,7 @@ function buildManifests() {
     // Firefox implements MV3 with an event page; it does not run a service
     // worker. Scripts share one global scope and load in order, so strings.js,
     // request.js and pairing.js define their globals before background.js runs.
-    background: { scripts: ['strings.js', 'request.js', 'pairing.js', 'background.js'] },
+    background: { scripts: ['strings.js', 'request.js', 'pairing.js', 'intercept.js', 'background.js'] },
     action: { default_popup: 'popup.html', default_title: 'AriaDM' },
     content_scripts: contentScripts,
     commands,

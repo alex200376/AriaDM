@@ -35,7 +35,7 @@ import type { ClipboardWatcher } from '../integrations/clipboard-watch'
 import { isMediaGid, type MediaJobs } from '../media/jobs'
 import type { MediaSniffer } from '../media/page-sniff'
 import { extensionFolderFor } from '../integrations/extension-folder'
-import { IMAGE_EXTENSIONS, readImageDataUrl } from '../settings/background-image'
+import { IMAGE_EXTENSIONS, importImage, isUsableImage, readImageDataUrl } from '../settings/background-image'
 import type { SettingsStore } from '../settings/store'
 import type { ToolkitManager } from '../toolkit'
 import type { UpdateManager } from '../update/update-manager'
@@ -377,7 +377,21 @@ export function registerIpcHandlers(context: HandlerContext): void {
     }
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]!
+
+    const picked = result.filePaths[0]!
+    /*
+     * Copy the picture before the setting points at it.
+     *
+     * A path into the user's own folders is a loan: move that file, rename it or
+     * delete it and the wallpaper goes with it. The copy lives under the app's
+     * user-data directory, which the user has no reason to touch.
+     *
+     * When the copy cannot be made, the picked path is returned as before — the
+     * reader is then what refuses it, which is what shows the failure to the
+     * user instead of the click doing nothing.
+     */
+    const managed = isUsableImage(picked) ? importImage(picked, context.paths.wallpapers) : null
+    return managed ?? picked
   })
 
   // Reading is on demand rather than pushed with every settings patch: the image

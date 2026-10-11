@@ -17,7 +17,9 @@ npm run build:extension
 `scripts/build-extension.mjs` 同時負責三件事：把 `src/` 複製成 `chrome/` 與
 `firefox/`、依平台組出 manifest，以及把 `commands`（鍵盤快速鍵）寫進兩個 manifest。
 `strings.js` 必須排在 `content_scripts` 與 Firefox `background.scripts` 的**最前面**，
-因為 `urls.js`、`formats.js`、`content.js`、`request.js` 與 `pairing.js` 都會讀它。
+因為 `urls.js`、`formats.js`、`content.js`、`request.js`、`intercept.js` 與 `pairing.js`
+都會讀它；`intercept.js` 定義 `AriaDmIntercept`，因此必須排在 `background.js` 之前
+（Chrome 由 `background.js` 開頭的 `importScripts` 載入，Firefox 依 manifest 的順序列出）。
 
 ## 安裝（未封裝）
 
@@ -54,7 +56,7 @@ npm run build:extension
 | 右鍵下載連結 | 對連結、圖片、影音按右鍵 → 「用 AriaDM 下載」 |
 | 傳送目前頁面 | 把目前分頁網址送進佇列 |
 | 傳送所有連結 | 收集頁面上所有 `http`/`ftp` 連結，一次送出（最多 200 個） |
-| 攔截瀏覽器下載 | 開啟後，瀏覽器開始的下載會被取消，改由 AriaDM 接手 |
+| 攔截瀏覽器下載 | 開啟後，瀏覽器開始的下載會被取消，改由 AriaDM 接手；判斷一定等到設定讀回之後才做（service worker 剛被喚醒時記憶體裡還是預設值），而 AriaDM 接不了時（未開啟、正在啟動、拒收）會把下載交還瀏覽器繼續，不會兩邊都沒有 |
 | 傳送登入狀態 | 把目前分頁當下的 Cookie 送給 AriaDM，用於需要登入的影音下載；按鈕位在彈出視窗的「進階」區，因為一般情況會自動處理 |
 | 純音訊下載 | 面板停在 `<audio>` 播放器上時，按鈕變成「下載此音訊」，只保留音軌（送出的下載帶 `audioOnly`） |
 | 自訂播放器 | 頁面已由 AriaDM 判定有影音、但沒有可量的 `<video>`／`<audio>`（canvas、腳本產生的元件、封閉的 shadow DOM）時，面板改為**釘在視窗角落**，而不是整個頁面看起來無法下載 |

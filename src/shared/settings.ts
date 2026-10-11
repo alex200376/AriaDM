@@ -471,6 +471,8 @@ export interface AppPaths {
   history: string
   settings: string
   extensions: string
+  /** The app's own copies of the wallpapers the user has chosen. */
+  wallpapers: string
   /** Where the updater records what it did, next to the settings file. */
   updateLog: string
   /**

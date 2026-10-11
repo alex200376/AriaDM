@@ -47,6 +47,7 @@ import { CookieVault, hostOf } from './media/cookie-vault'
 import { isMediaGid, MediaJobs } from './media/jobs'
 import { MediaSniffer } from './media/page-sniff'
 import { defaultDownloadDir, resolvePaths } from './paths'
+import { importImage, isManagedImage, removeManagedImage } from './settings/background-image'
 import { SettingsStore } from './settings/store'
 import { ToolkitManager } from './toolkit'
 import { downloadWithAria2 } from './update/aria2-download'
@@ -529,7 +530,37 @@ async function updateSettings(patch: DeepPartial<Settings>): Promise<Settings> {
   return next
 }
 
+/**
+ * Take over a wallpaper that lives outside the app's own folder.
+ *
+ * Runs once per start, and only for a setting that points elsewhere — which is
+ * every wallpaper chosen before the app started keeping its own copy. Without
+ * this, those users would have to pick their picture again after upgrading.
+ */
+async function adoptBackgroundImage(): Promise<void> {
+  const current = settingsStore.get().backgroundImage
+  if (!current || isManagedImage(current, paths.wallpapers)) return
+
+  const managed = importImage(current, paths.wallpapers)
+  if (!managed) {
+    // Gone, too large, or not a picture any more: the reader already answers
+    // "no wallpaper" for it, so there is nothing to repair.
+    log(`wallpaper at ${current} could not be copied; the setting is left alone`)
+    return
+  }
+
+  await updateSettings({ backgroundImage: managed })
+  log(`wallpaper copied to ${managed}`)
+}
+
 async function applySettingsSideEffects(previous: Settings, next: Settings): Promise<void> {
+  if (previous.backgroundImage !== next.backgroundImage) {
+    // Clearing or replacing a wallpaper gives up the app's copy of the old one,
+    // so an unused multi-megabyte picture is not kept forever. Harmless when the
+    // replacement already pruned it.
+    removeManagedImage(previous.backgroundImage, paths.wallpapers)
+  }
+
   if (previous.language !== next.language) {
     syncLocale(next)
     // The tray menu and its tooltip are built from these strings, so they only
@@ -1119,6 +1150,11 @@ async function bootstrap(): Promise<void> {
   // Before anything can speak: notifications and IPC errors are rendered through
   // the module-level locale, which starts out as Chinese.
   syncLocale(settingsStore.get())
+
+  // Before the window paints: a wallpaper chosen before the app kept its own
+  // copy still points at the user's file, and this is where it stops. Waiting
+  // here means the first paint already uses the copy.
+  await adoptBackgroundImage().catch((error) => log(`wallpaper adoption failed: ${(error as Error).message}`))
 
   history = new HistoryStore(paths.history)
   await history.load()

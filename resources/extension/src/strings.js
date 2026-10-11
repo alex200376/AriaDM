@@ -82,6 +82,10 @@
     'notify.noResponse': 'AriaDM 沒有回應',
     'notify.loginTitle': 'AriaDM 已取得登入狀態',
     'notify.loginBody': '已把 {host} 的 Cookie 傳給 AriaDM。',
+    'notify.interceptTitle': 'AriaDM 沒有接下這個下載',
+    'notify.interceptRestored': '已改回由瀏覽器繼續下載（{reason}）。',
+    'notify.interceptLost':
+      'AriaDM 接不了，也無法交還給瀏覽器（{reason}）。請改用「傳送所有連結」，或把網址貼到 AriaDM。',
 
     // -- badge tooltip -------------------------------------------------------
     'badge.connected': 'AriaDM：已連線',
@@ -167,6 +171,10 @@
     'notify.noResponse': 'AriaDM did not respond',
     'notify.loginTitle': 'AriaDM received the login state',
     'notify.loginBody': 'Sent the {host} cookies to AriaDM.',
+    'notify.interceptTitle': 'AriaDM did not take this download',
+    'notify.interceptRestored': 'The browser is downloading it instead ({reason}).',
+    'notify.interceptLost':
+      'AriaDM could not take it, and the browser could not continue it ({reason}). Send the link to AriaDM instead.',
 
     'badge.connected': 'AriaDM: connected',
     'badge.connectedPort': 'AriaDM: connected (auto-paired on :{port})',

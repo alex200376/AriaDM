@@ -20,6 +20,9 @@ export function resolvePaths(userDataDir: string, downloadsDir: string): AppPath
     history: path.join(userDataDir, 'history.json'),
     settings: path.join(userDataDir, 'settings.json'),
     extensions: path.join(userDataDir, 'extensions'),
+    // Copies of the pictures the user chose as a wallpaper, so the wallpaper is
+    // not tied to a file they may move or delete.
+    wallpapers: path.join(userDataDir, 'wallpapers'),
     // Written by the updater next to the settings file, so a failed update
     // leaves a trace a packaged build would otherwise not have.
     updateLog: path.join(userDataDir, 'update.log')
