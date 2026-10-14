@@ -12,6 +12,7 @@ import { extensionOf } from '@shared/uri'
 import type { HistoryRecord, HistoryStore } from '../downloads/history-store'
 
 import { removeCookieFile, writeCookieFile } from './cookie-file'
+import { removeFile, removePartialFiles } from './partial-files'
 import {
   probeFormats,
   probePlaylist,
@@ -46,6 +47,29 @@ export function isMediaGid(gid: string): boolean {
  * only the notification is paced.
  */
 const PROGRESS_NOTIFY_MS = 150
+
+/**
+ * How long a killed media run is given to let go of the files it was writing.
+ *
+ * Long enough for a taskkill tree to land on a process that is mid-write, short
+ * enough that a process which refuses to die cannot make a cancel feel stuck.
+ */
+const SETTLE_TIMEOUT_MS = 2_000
+
+/** Resolve when the run is over — or when waiting any longer stops being useful. */
+function waitForExit(runner: YtDlpRunner): Promise<void> {
+  if (!runner.exited) return Promise.resolve()
+  return new Promise((resolve) => {
+    // Not left holding the event loop open: a cancel that has given up on a
+    // process is not a reason for the app to stay alive.
+    const timeout = setTimeout(resolve, SETTLE_TIMEOUT_MS)
+    timeout.unref?.()
+    void runner.exited.then(() => {
+      clearTimeout(timeout)
+      resolve()
+    })
+  })
+}
 
 /** One stream of a download, as yt-dlp last reported it. */
 interface StreamProgress {
@@ -1079,27 +1103,63 @@ export class MediaJobs extends EventEmitter {
     const job = this.jobs.get(gid)
     if (!job) return
 
-    job.runner?.kill()
-    this.cancelProgressNotify()
-
-    if (deleteFiles) {
-      for (const target of job.outputPaths) {
-        // yt-dlp writes a .part file while in flight; both it and the finished
-        // file are ours to delete when the user asked for the files to go.
-        for (const candidate of [target, `${target}.part`]) {
-          try {
-            await fsp.rm(candidate, { force: true })
-          } catch (error) {
-            this.options.log(`failed to delete ${candidate}: ${(error as Error).message}`)
-          }
-        }
-      }
-    }
+    await this.settle(job)
+    await this.removeFiles(job, deleteFiles)
 
     this.discardCookieFile(job)
     this.jobs.delete(gid)
     this.history.remove([gid])
     this.emit('change')
+  }
+
+  /**
+   * Stop the run and wait for its process to be gone.
+   *
+   * The wait is the point. Killing is a signal, not an outcome: on Windows the
+   * child is terminated through taskkill, and until its exit arrives it still
+   * holds `.part` open — and a file another process has open cannot be removed
+   * at all there, so an immediate delete fails and the debris the user asked to
+   * be rid of stays. Bounded, because a process that will not die must not hold
+   * up the UI: the deletes retry for a moment afterwards anyway.
+   */
+  private async settle(job: MediaJob): Promise<void> {
+    const runner = job.runner
+    job.runner = null
+    this.cancelProgressNotify()
+    if (!runner) return
+
+    runner.kill()
+    await waitForExit(runner)
+  }
+
+  /**
+   * Take a job's files with it.
+   *
+   * `deleteFiles` is the user asking for the finished download to go as well.
+   * The partial files are not gated on it: nothing can open a `.part` — every
+   * viewer sees a corrupt file, or nothing at all — and once the row is gone
+   * there is nothing left to resume it from either, since `-c` only continues a
+   * download the app still knows about. A cancelled download's working files can
+   * therefore never be anything but junk, which is the pile of `.part` and
+   * `.part-FragN` files a cancel used to leave behind.
+   */
+  private async removeFiles(job: MediaJob, deleteFiles: boolean): Promise<void> {
+    /*
+     * Every name this job has had, from both records.
+     *
+     * `outputPaths` holds only what yt-dlp moved into place, and a stream is not
+     * moved until it is complete — so for a run cancelled mid-flight, the case
+     * that leaves the most behind, it is still empty and the old code had no name
+     * to delete by. The streams are keyed by the name yt-dlp was writing to while
+     * it ran, which is what makes a download that never finished removable at all.
+     */
+    const bases = new Set<string>([...job.outputPaths, ...job.streams.keys()])
+    const log = (message: string): void => this.options.log(message)
+
+    if (deleteFiles) {
+      for (const base of bases) await removeFile(base, log)
+    }
+    await removePartialFiles(bases, log)
   }
 
   items(): DownloadItem[] {

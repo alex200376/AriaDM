@@ -851,9 +851,22 @@ export class YtDlpRunner extends EventEmitter {
    * reported as a failure. See kill.
    */
   private stopped = false
+  /**
+   * Resolves once the process is gone, however it ended.
+   *
+   * Anything that wants to touch the files a run was writing has to wait for
+   * this. Windows refuses to delete a file a live process still holds open, and
+   * a killed process is not a dead one until its exit arrives — the kill signal
+   * is sent, not awaited. See MediaJobs.remove.
+   */
+  readonly exited: Promise<void>
+  private markExited!: () => void
 
   constructor(private readonly options: YtDlpRunOptions) {
     super()
+    this.exited = new Promise((resolve) => {
+      this.markExited = resolve
+    })
   }
 
   get running(): boolean {
@@ -895,6 +908,9 @@ export class YtDlpRunner extends EventEmitter {
     })
 
     child.on('error', (error) => {
+      // A process that never started holds no file, so nothing is waiting on a
+      // file handle here — but a caller waiting for this run to be over is.
+      this.markExited()
       if (this.settled || this.stopped) return
       this.settled = true
       this.emit('failed', t('main.media.spawnFailed', { reason: error.message }))
@@ -911,6 +927,10 @@ export class YtDlpRunner extends EventEmitter {
         this.emit('failed', detail || t('main.media.exitCode', { code: code ?? t('main.media.exitCodeUnknown') }))
       }
     })
+
+    // After 'exit', not instead of it: close is what says the process's handles
+    // are released, which is the part a delete has to wait for.
+    child.on('close', () => this.markExited())
   }
 
   private handleStdoutLine(line: string): void {
