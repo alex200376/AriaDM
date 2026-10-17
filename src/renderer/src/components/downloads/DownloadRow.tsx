@@ -22,6 +22,14 @@ import { StatusBadge } from './StatusBadge'
 export interface DownloadRowProps {
   item: DownloadItem
   selected: boolean
+  /** Position in the rendered list; drives roving focus and the ARIA row index. */
+  index: number
+  /** One row is tabbable at a time; the rest are reached with the arrow keys. */
+  tabIndex: number
+  /** Whether this row owns the roving focus; its controls follow the row. */
+  active: boolean
+  onFocusRow(index: number): void
+  onNavigate(kind: 'up' | 'down' | 'home' | 'end'): void
   /** Only the checkbox toggles the selection; clicking the row itself does not. */
   onToggleSelected(gid: string): void
   onOpenDetail(gid: string): void
@@ -38,7 +46,18 @@ function hostOf(item: DownloadItem): string {
   }
 }
 
-function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAction }: DownloadRowProps): JSX.Element {
+function DownloadRowImpl({
+  item,
+  selected,
+  index,
+  tabIndex,
+  active,
+  onFocusRow,
+  onNavigate,
+  onToggleSelected,
+  onOpenDetail,
+  onAction
+}: DownloadRowProps): JSX.Element {
   const [hovered, setHovered] = useState(false)
   const { t } = useTranslation()
 
@@ -64,13 +83,33 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
   return (
     <div
       role="row"
-      aria-selected={selected}
-      tabIndex={0}
+      // The header is row 1, so the first item is row 2.
+      aria-rowindex={index + 2}
+      data-row-index={index}
+      tabIndex={tabIndex}
+      onFocus={() => onFocusRow(index)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onDoubleClick={() => onOpenDetail(item.gid)}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') onOpenDetail(item.gid)
+        // Only when the row itself has focus: Enter on one of its buttons must
+        // press that button, not open the details panel behind it.
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter') {
+          onOpenDetail(item.gid)
+        } else if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          onNavigate('down')
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          onNavigate('up')
+        } else if (event.key === 'Home') {
+          event.preventDefault()
+          onNavigate('home')
+        } else if (event.key === 'End') {
+          event.preventDefault()
+          onNavigate('end')
+        }
       }}
       className={cn(
         'row-hover queue-grid grid items-center gap-3 border-b border-line/60 px-3 text-[12.5px]',
@@ -81,10 +120,13 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
       style={{ height: 'var(--row-height)' }}
     >
       {/* Selection */}
-      <div className="flex items-center justify-center">
+      <div role="cell" className="flex items-center justify-center">
         <button
           type="button"
+          role="checkbox"
+          aria-checked={selected}
           aria-label={selected ? t('table.deselect') : t('table.select')}
+          tabIndex={active ? 0 : -1}
           onClick={() => onToggleSelected(item.gid)}
           // `dblclick` is a separate event from `click`, so without this a
           // double-click on the checkbox bubbles up to the row and opens the
@@ -104,7 +146,7 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
       </div>
 
       {/* Name */}
-      <div className="min-w-0">
+      <div role="cell" className="min-w-0">
         <div className="flex items-center gap-2">
           <span
             className={cn(
@@ -115,23 +157,23 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
                   ? 'bg-warn/15 text-warn'
                   : 'bg-info/15 text-info'
             )}
-            title={kindLabel(item.kind)}
+            data-tip={kindLabel(item.kind)}
           >
             {kindGlyph(item.kind)}
           </span>
-          <span className="truncate font-medium text-fg" title={item.name}>
+          <span className="truncate font-medium text-fg" data-tip={item.name}>
             {item.name}
           </span>
           {item.numFiles > 1 && (
             <span
               className="chip bg-line/70 text-faint"
-              title={t('table.fileCount', { count: item.numFiles })}
+              data-tip={t('table.fileCount', { count: item.numFiles })}
             >
               {t('table.filesShort', { count: item.numFiles })}
             </span>
           )}
         </div>
-        <div className="mt-0.5 truncate pl-7 text-[11px] text-faint" title={hostOf(item)}>
+        <div className="mt-0.5 truncate pl-7 text-[11px] text-faint" data-tip={hostOf(item)}>
           {hostOf(item)}
           {item.kind === 'bittorrent' &&
             item.numSeeders > 0 &&
@@ -140,18 +182,18 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
       </div>
 
       {/* Size */}
-      <div className="text-tabular truncate text-right text-muted" title={sizeText}>
+      <div role="cell" className="text-tabular truncate text-right text-muted" data-tip={sizeText}>
         {item.totalLength > 0 ? formatBytes(item.totalLength) : '—'}
       </div>
 
       {/* Progress */}
-      <div className="min-w-0">
+      <div role="cell" className="min-w-0">
         <ProgressBar
           fraction={fraction}
           status={item.status}
           indeterminate={item.metadataPending || (isActive && item.totalLength === 0)}
         />
-        <div className="mt-1 flex items-center justify-between text-[11px]">
+        <div className="queue-progress-meta mt-1 flex items-center justify-between gap-2 text-[11px]">
           <span className="text-tabular text-muted">
             {item.metadataPending
               ? t('table.metadataPending')
@@ -159,14 +201,22 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
                 ? formatPercent(fraction)
                 : '—'}
           </span>
-          <span className="text-tabular text-faint">
+          <span className="queue-bytes text-tabular text-faint">
             {item.totalLength > 0 ? formatBytes(item.completedLength) : formatBytes(item.completedLength)}
           </span>
+          {/* The 5-column layout has no speed track, so the number moves here
+              instead of disappearing. `.queue-progress-meta:has(...)` in
+              globals.css hides the byte count only when this is rendered. */}
+          {isActive && (
+            <span className="queue-inline-speed text-tabular text-fg">
+              {item.verifyIntegrityPending ? t('table.verifying') : formatSpeed(easedSpeed)}
+            </span>
+          )}
         </div>
       </div>
 
       {/* Speed */}
-      <div className="text-tabular text-right">
+      <div role="cell" className="text-tabular text-right">
         {isActive && easedSpeed > 0 ? (
           <span className="text-fg">{formatSpeed(easedSpeed)}</span>
         ) : isActive && item.verifyIntegrityPending ? (
@@ -180,25 +230,31 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
       </div>
 
       {/* ETA */}
-      <div className="text-tabular text-right text-muted">
+      <div role="cell" className="text-tabular text-right text-muted">
         {isActive ? formatEta(eta) : isComplete ? '—' : item.status === 'waiting' ? `#${item.queuePosition + 1}` : '—'}
       </div>
 
       {/* Connections */}
-      <div className="text-tabular text-right text-muted" title={t('table.connectionsHint')}>
+      <div role="cell" className="text-tabular text-right text-muted" data-tip={t('table.connectionsHint')}>
         {item.connections > 0 ? item.connections : '—'}
       </div>
 
       {/* Status. `overflow-hidden` is a backstop: the column is sized for the
           longest label, and if a translation ever outgrows it the badge clips
           instead of painting over the action buttons beside it. */}
-      <div className="flex min-w-0 justify-start overflow-hidden">
+      <div role="cell" className="flex min-w-0 justify-start overflow-hidden">
         <StatusBadge item={item} />
       </div>
 
       {/* Actions */}
+      {/* Focus-within matters as much as hover: the buttons are tabbable, and
+          an invisible 28px target is one a keyboard user cannot see they are on. */}
       <div
-        className={cn('flex items-center justify-end gap-0.5', hovered || selected ? 'opacity-100' : 'opacity-0')}
+        role="cell"
+        className={cn(
+          'flex items-center justify-end gap-0.5 focus-within:opacity-100',
+          hovered || selected ? 'opacity-100' : 'opacity-0'
+        )}
         // Double-clicking a button is two presses of that button, not a request
         // to open the details panel behind it.
         onDoubleClick={(event) => event.stopPropagation()}
@@ -207,6 +263,7 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
           <IconButton
             label={primaryAction.label}
             icon={primaryAction.icon}
+            tabIndex={active ? 0 : -1}
             onClick={() => onAction(primaryAction.key, item.gid)}
           />
         )}
@@ -214,6 +271,7 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
           <IconButton
             label={t('table.viewMore')}
             icon={<MoreHorizontal size={14} />}
+            tabIndex={active ? 0 : -1}
             onClick={() => onOpenDetail(item.gid)}
           />
         )}
@@ -226,17 +284,24 @@ function DownloadRowImpl({ item, selected, onToggleSelected, onOpenDetail, onAct
               <IconButton
                 label={t('table.openFile')}
                 icon={<ExternalLink size={14} />}
+                tabIndex={active ? 0 : -1}
                 onClick={() => onAction('open', item.gid)}
               />
             )}
             <IconButton
               label={t('table.openFolder')}
               icon={<FolderOpen size={14} />}
+              tabIndex={active ? 0 : -1}
               onClick={() => onAction('folder', item.gid)}
             />
           </>
         )}
-        <IconButton label={t('common.remove')} icon={<Trash2 size={14} />} onClick={() => onAction('remove', item.gid)} />
+        <IconButton
+          label={t('common.remove')}
+          icon={<Trash2 size={14} />}
+          tabIndex={active ? 0 : -1}
+          onClick={() => onAction('remove', item.gid)}
+        />
       </div>
     </div>
   )

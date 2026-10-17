@@ -2,6 +2,7 @@ import { AlertTriangle, ArrowDownToLine, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { t } from '@shared/i18n'
+import { queueEmptyReason } from '@shared/queue-empty'
 
 import { filterItems, sortItems, useApp } from './store/app-store'
 import { useFocusResync, useLiveData } from './lib/useLiveData'
@@ -20,6 +21,7 @@ import { StatusBar } from './components/layout/StatusBar'
 import { TitleBar } from './components/layout/TitleBar'
 import { Toolbar } from './components/layout/Toolbar'
 import { Toasts } from './components/Toasts'
+import { TooltipLayer } from './components/ui/Tooltip'
 import { Button, Spinner } from './components/ui/primitives'
 
 /** Read a dropped file as base64 so a torrent can go straight to the engine. */
@@ -61,7 +63,7 @@ function EngineBanner(): JSX.Element | null {
 export default function App(): JSX.Element {
   useLiveData()
   useFocusResync()
-  useLocale()
+  const locale = useLocale()
 
   const ready = useApp((state) => state.ready)
   const bootstrapError = useApp((state) => state.bootstrapError)
@@ -80,6 +82,55 @@ export default function App(): JSX.Element {
     const filtered = filterItems({ items, view, category, search })
     return sortItems(filtered, sortField, sortDirection)
   }, [items, view, category, search, sortField, sortDirection])
+
+  // "Nothing here yet" is only the right answer for an actually empty queue. A
+  // search or a filter that hides everything gets copy naming that filter and a
+  // one-click way out of it, instead of telling the user to add a download.
+  const empty = useMemo(() => {
+    if (visible.length > 0) return undefined
+    const reason = queueEmptyReason({
+      hasSearch: search.trim().length > 0,
+      hasCategory: category !== 'all',
+      hasStatus: view !== 'all',
+      itemCount: items.length
+    })
+    if (!reason) return undefined
+
+    if (reason === 'search') {
+      return {
+        title: t('table.empty.searchTitle'),
+        body: t('table.empty.searchBody', { query: search.trim() }),
+        action: (
+          <Button variant="secondary" size="sm" onClick={() => useApp.getState().setSearch('')}>
+            {t('table.empty.clearSearch')}
+          </Button>
+        )
+      }
+    }
+
+    if (reason === 'category') {
+      return {
+        title: t('table.empty.categoryTitle'),
+        body: t('table.empty.categoryBody'),
+        action: (
+          <Button variant="secondary" size="sm" onClick={() => useApp.getState().setCategory('all')}>
+            {t('table.empty.showAllCategories')}
+          </Button>
+        )
+      }
+    }
+
+    return {
+      title: t('table.empty.statusTitle'),
+      body: t('table.empty.statusBody'),
+      action: (
+        <Button variant="secondary" size="sm" onClick={() => useApp.getState().setView('all')}>
+          {t('table.empty.showAll')}
+        </Button>
+      )
+    }
+    // `locale` re-creates the strings when the language changes.
+  }, [visible.length, search, category, view, items.length, locale])
 
   const addDownload = useApp((state) => state.addDownload)
   const pushToast = useApp((state) => state.pushToast)
@@ -169,13 +220,25 @@ export default function App(): JSX.Element {
         return
       }
 
+      // `data-search`, not the translated placeholder: the old lookup broke the
+      // moment the language changed or the copy was edited.
+      const focusSearch = (): void => {
+        document.querySelector<HTMLInputElement>('input[data-search]')?.focus()
+      }
+
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault()
-        document.querySelector<HTMLInputElement>(`input[placeholder="${t('toolbar.search')}"]`)?.focus()
+        focusSearch()
         return
       }
 
       if (inField) return
+
+      if (event.key === '/' && !event.altKey) {
+        event.preventDefault()
+        focusSearch()
+        return
+      }
 
       if (event.key === ' ' && selection.length > 0) {
         event.preventDefault()
@@ -271,13 +334,13 @@ export default function App(): JSX.Element {
       <EngineBanner />
 
       {/* `relative` anchors the detail drawer, which floats over the list instead
-          of shrinking it when the window is narrow. The `data-detail` flag lets
-          the stylesheet drop queue columns while that panel is docked. */}
-      <div className="relative flex min-h-0 flex-1" data-detail={detailGid !== null ? 'open' : 'closed'}>
+          of shrinking it when the window is narrow. When it does dock, the table
+          sees a narrower container and drops columns on its own. */}
+      <div className="relative flex min-h-0 flex-1">
         <Sidebar />
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {queueView && <DownloadTable items={visible} emptyAction={emptyAction} />}
+          {queueView && <DownloadTable items={visible} emptyAction={emptyAction} empty={empty} />}
 
           {view === 'history' && <HistoryView />}
           {view === 'settings' && <SettingsView />}
@@ -291,6 +354,7 @@ export default function App(): JSX.Element {
       <AddUrlDialog />
       <ExtensionDialog />
       <CommandPalette />
+      <TooltipLayer />
       <Toasts />
 
       {dropping && (

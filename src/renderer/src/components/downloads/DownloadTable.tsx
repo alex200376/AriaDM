@@ -1,6 +1,6 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Check, Inbox, Minus } from 'lucide-react'
-import { useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { DownloadItem } from '@shared/download'
 import { t } from '@shared/i18n'
@@ -54,12 +54,17 @@ const COLUMN_LABELS: Record<string, () => string> = {
 
 export function DownloadTable({
   items,
-  emptyAction
+  emptyAction,
+  empty
 }: {
   items: DownloadItem[]
   emptyAction?: ReactNode
+  /** Contextual copy when a search or filter hides everything; see `App`. */
+  empty?: { title: string; body: string; action?: ReactNode }
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [focusIndex, setFocusIndex] = useState(0)
+  const focusRef = useRef(0)
 
   const density = useApp((state) => state.settings?.density ?? 'comfortable')
   const sortField = useApp((state) => state.sortField)
@@ -94,6 +99,44 @@ export function DownloadTable({
     overscan: 8
   })
 
+  // Roving focus: one row is in the tab order, and the arrow keys move between
+  // rows. Without this, a queue of a thousand downloads is a thousand tab stops —
+  // and the checkboxes and action buttons of every row were stops as well, even
+  // though the rows themselves render only a handful at a time.
+  useEffect(() => {
+    const clamped = Math.max(0, Math.min(focusRef.current, items.length - 1))
+    focusRef.current = clamped
+    setFocusIndex(clamped)
+  }, [items.length])
+
+  const focusRow = (index: number): void => {
+    focusRef.current = index
+    setFocusIndex(index)
+  }
+
+  const moveFocus = (kind: 'up' | 'down' | 'home' | 'end'): void => {
+    if (items.length === 0) return
+    const last = items.length - 1
+    const current = focusRef.current
+    const next =
+      kind === 'up'
+        ? Math.max(0, current - 1)
+        : kind === 'down'
+          ? Math.min(last, current + 1)
+          : kind === 'home'
+            ? 0
+            : last
+    focusRow(next)
+    virtualizer.scrollToIndex(next, { align: 'auto' })
+    // The row may not be in the DOM until the virtualizer has rendered it.
+    window.setTimeout(() => {
+      scrollRef.current?.querySelector<HTMLElement>(`[data-row-index="${next}"]`)?.focus()
+    }, 0)
+  }
+
+  const sortState = (key: SortField | null): 'ascending' | 'descending' | 'none' | undefined =>
+    key ? (sortField === key ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none') : undefined
+
   const handleAction = (
     action: 'pause' | 'resume' | 'retry' | 'remove' | 'open' | 'folder',
     gid: string
@@ -121,9 +164,15 @@ export function DownloadTable({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      role="table"
+      aria-label={t('table.label')}
+      aria-rowcount={items.length + 1}
+      className="queue-table flex min-h-0 flex-1 flex-col"
+    >
       <div
         role="row"
+        aria-rowindex={1}
         className="queue-grid grid shrink-0 items-center gap-3 border-b border-line bg-surface/60 px-3 py-2 text-[11px] font-medium text-faint"
       >
         {COLUMNS.map((column, index) => {
@@ -131,13 +180,13 @@ export function DownloadTable({
           // The first column holds the select-all control instead of a heading.
           if (index === 0) {
             return (
-              <div key="select-all" className={cn('flex items-center gap-1', column.className)}>
+              <div key="select-all" role="columnheader" className={cn('flex items-center gap-1', column.className)}>
                 <button
                   type="button"
                   role="checkbox"
                   aria-checked={allSelected ? true : someSelected ? 'mixed' : false}
                   aria-label={headerLabel}
-                  title={headerLabel}
+                  data-tip={headerLabel}
                   disabled={items.length === 0}
                   onClick={() => selectAll(nextSelectionAfterSelectAll(selection, items.map((item) => item.gid)))}
                   className={cn(
@@ -160,7 +209,12 @@ export function DownloadTable({
             )
           }
           return (
-            <div key={`${column.label}-${index}`} className={cn('flex items-center gap-1', column.className)}>
+            <div
+              key={`${column.label}-${index}`}
+              role="columnheader"
+              aria-sort={sortState(column.key)}
+              className={cn('flex items-center gap-1', column.className)}
+            >
               {column.key ? (
                 <button
                   type="button"
@@ -187,9 +241,9 @@ export function DownloadTable({
         {items.length === 0 ? (
           <EmptyState
             icon={<Inbox size={22} />}
-            title={t('table.empty.title')}
-            body={t('table.empty.body')}
-            action={emptyAction}
+            title={empty?.title ?? t('table.empty.title')}
+            body={empty?.body ?? t('table.empty.body')}
+            action={empty?.action ?? emptyAction}
           />
         ) : (
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -209,6 +263,11 @@ export function DownloadTable({
                   <DownloadRow
                     item={item}
                     selected={selectedSet.has(item.gid)}
+                    index={virtualRow.index}
+                    active={virtualRow.index === focusIndex}
+                    tabIndex={virtualRow.index === focusIndex ? 0 : -1}
+                    onFocusRow={focusRow}
+                    onNavigate={moveFocus}
                     onToggleSelected={toggleSelected}
                     onOpenDetail={openDetail}
                     onAction={handleAction}

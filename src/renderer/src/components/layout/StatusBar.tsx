@@ -37,7 +37,7 @@ export function StatusBar(): JSX.Element {
         <SpeedGraph series={series} />
       </div>
 
-      <span className="flex items-center gap-1.5" title={t('statusBar.peak')}>
+      <span className="flex items-center gap-1.5" data-tip={t('statusBar.peak')}>
         <Zap size={12} className="text-warn" />
         <span className="text-tabular">{formatSpeed(peak)}</span>
       </span>
@@ -53,7 +53,7 @@ export function StatusBar(): JSX.Element {
       <span
         role="status"
         aria-label={engineLabel(engine.state)}
-        title={engine.lastError || engine.message || engineLabel(engine.state)}
+        data-tip={engine.lastError || engine.message || engineLabel(engine.state)}
         className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[tone]}`}
       />
     </footer>

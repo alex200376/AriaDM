@@ -189,7 +189,7 @@ function OverviewTab({ item }: { item: DownloadItem }): JSX.Element {
           <div className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-line bg-elevated/40 p-2.5">
             {item.bittorrent.announceList.flatMap((tier, tierIndex) =>
               tier.map((url) => (
-                <p key={`${tierIndex}-${url}`} className="truncate font-mono text-[10.5px] text-muted" title={url}>
+                <p key={`${tierIndex}-${url}`} className="truncate font-mono text-[10.5px] text-muted" data-tip={url}>
                   {url}
                 </p>
               ))
@@ -221,7 +221,7 @@ function FilesTab({ item }: { item: DownloadItem }): JSX.Element {
         return (
           <div key={`${file.index}-${file.path}`} className="rounded-lg border border-line bg-elevated/40 p-2.5">
             <div className="flex items-center justify-between gap-3">
-              <span className="truncate text-[12px] text-fg" title={file.path} data-selectable>
+              <span className="truncate text-[12px] text-fg" data-tip={file.path} data-selectable>
                 {file.name || file.path}
               </span>
               <span className="text-tabular shrink-0 text-[11px] text-muted">{formatBytes(file.length)}</span>
@@ -406,7 +406,7 @@ function PiecesTab({ item }: { item: DownloadItem }): JSX.Element {
                 'h-2.5 rounded-[2px]',
                 group.complete === group.total ? 'bg-ok' : group.complete > 0 ? 'bg-brand' : 'bg-line'
               )}
-              title={t('detail.pieces.cellTitle', {
+              data-tip={t('detail.pieces.cellTitle', {
                 from: index * perCell + 1,
                 to: index * perCell + group.total,
                 done: group.complete,
@@ -466,7 +466,7 @@ function ServersTab({ item }: { item: DownloadItem }): JSX.Element {
           <div className="space-y-1.5">
             {servers.map((server) => (
               <div key={server.index} className="rounded-lg border border-line bg-elevated/40 p-2.5">
-                <p className="truncate font-mono text-[11px] text-fg" title={server.currentUri} data-selectable>
+                <p className="truncate font-mono text-[11px] text-fg" data-tip={server.currentUri} data-selectable>
                   {server.currentUri}
                 </p>
                 <p className="text-tabular mt-1 text-[11px] text-muted">↓ {formatSpeed(server.downloadSpeed)}</p>
@@ -490,9 +490,9 @@ function ServersTab({ item }: { item: DownloadItem }): JSX.Element {
               >
                 <span
                   className={cn('h-1.5 w-1.5 shrink-0 rounded-full', uri.status === 'used' ? 'bg-ok' : 'bg-faint')}
-                  title={uri.status === 'used' ? t('detail.servers.used') : t('detail.servers.idle')}
+                  data-tip={uri.status === 'used' ? t('detail.servers.used') : t('detail.servers.idle')}
                 />
-                <span className="truncate font-mono text-[10.5px] text-muted" title={uri.uri} data-selectable>
+                <span className="truncate font-mono text-[10.5px] text-muted" data-tip={uri.uri} data-selectable>
                   {uri.uri}
                 </span>
               </div>
@@ -587,7 +587,7 @@ function OptionsTab({ item }: { item: DownloadItem }): JSX.Element {
               .map(([key, value]) => (
                 <div key={key} className="flex items-start justify-between gap-3 text-[10.5px]">
                   <span className="font-mono text-faint">{key}</span>
-                  <span className="truncate font-mono text-muted" title={value} data-selectable>
+                  <span className="truncate font-mono text-muted" data-tip={value} data-selectable>
                     {value || t('detail.options.blank')}
                   </span>
                 </div>
@@ -654,7 +654,7 @@ export function DetailDrawer(): JSX.Element | null {
       />
       <aside className={DRAWER_CLASS}>
       <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
-        <span className="truncate text-[13px] font-medium text-fg" title={item.name}>
+        <span className="truncate text-[13px] font-medium text-fg" data-tip={item.name}>
           {item.name}
         </span>
         <IconButton label={t('common.close')} icon={<X size={15} />} onClick={close} />
@@ -718,7 +718,7 @@ export function DetailDrawer(): JSX.Element | null {
       {uri && (
         <div className="flex shrink-0 items-center gap-2 border-b border-line bg-elevated/30 px-3 py-1.5">
           <Link2 size={12} className="shrink-0 text-faint" />
-          <span className="truncate font-mono text-[10.5px] text-faint" title={uri} data-selectable>
+          <span className="truncate font-mono text-[10.5px] text-faint" data-tip={uri} data-selectable>
             {uri}
           </span>
         </div>

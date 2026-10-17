@@ -44,7 +44,7 @@ export function CatchPopup({ initial }: { initial: CatcherInfo | null }): JSX.El
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[12.5px] font-medium text-fg">{t('catcher.title')}</p>
-          <p className="mt-0.5 truncate text-[12px] text-fg" title={info.title}>
+          <p className="mt-0.5 truncate text-[12px] text-fg" data-tip={info.title}>
             {info.title}
           </p>
           <p className="truncate text-[11px] text-faint">

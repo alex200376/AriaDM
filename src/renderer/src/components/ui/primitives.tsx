@@ -80,12 +80,15 @@ export const IconButton = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & { label: string; icon: ReactNode }
 >(function IconButton({ label, icon, className, ...rest }, ref) {
+  // `data-tip` instead of `title`: the layer in `Tooltip.tsx` draws it, because a
+  // native tooltip is positioned by the OS and ran off the window for the actions
+  // at the right edge.
   return (
     <button
       ref={ref}
       type="button"
       aria-label={label}
-      title={label}
+      data-tip={label}
       className={cn(
         'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors',
         'hover:bg-line/60 hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent',

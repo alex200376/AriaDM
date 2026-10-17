@@ -1410,7 +1410,7 @@ function ToolsTab(): JSX.Element {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[12.5px] font-medium text-fg">{row.label}</p>
-                  <p className="truncate text-[11px] text-faint" title={info?.path ?? ''}>
+                  <p className="truncate text-[11px] text-faint" data-tip={info?.path ?? ''}>
                     {present
                       ? t('settings.tools.installed', {
                           version: info?.version || t('settings.tools.installedToast'),
@@ -1981,7 +1981,7 @@ function AboutTab(): JSX.Element {
           {pathEntries.map(({ key, value }) => (
             <div key={key} className="flex items-center gap-3 border-b border-line px-3 py-2 last:border-b-0">
               <span className="w-[104px] shrink-0 text-[11.5px] text-muted">{t(PATH_LABEL_KEYS[key])}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint" title={value} data-selectable>
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint" data-tip={value} data-selectable>
                 {value}
               </span>
               <IconButton

@@ -191,10 +191,20 @@
   /**
    * The queue table's column template.
    *
-   * It lives here rather than in a JS constant because a narrow window has to
-   * give columns up: 剩餘 and 連線 only matter while watching one transfer, and
-   * 大小 is the least useful of what remains. The app opens at 1024x664, so the
-   * breakpoints are tuned for that rather than for a maximised window.
+   * It lives here rather than in a JS constant because a narrow table has to
+   * give columns up: 剩餘 and 連線 only matter while watching one transfer, 大小
+   * is the least useful of what remains, and 速度 goes last — but not away: below
+   * the last breakpoint the number moves under the progress bar, where a running
+   * download still shows it.
+   *
+   * The breakpoints measure the table, not the window. The table only gets the
+   * window minus a fixed 180px sidebar — and, while the detail panel is docked,
+   * another 400px — so a window-width media query was answering a question the
+   * layout never asked: at the 720px minimum the widest rows (an errored row
+   * with four buttons) were pushed past the right edge and had to be scrolled
+   * to. `.queue-table` in the same layer is the query container instead, so the
+   * panel docking needs no rule of its own: it shrinks the container, and the
+   * container responds.
    *
    * Columns are dropped by position, which is safe because the header and every
    * row render the same list in the same order.
@@ -213,12 +223,24 @@
    *   1 select · 2 name · 3 size · 4 progress · 5 speed · 6 eta · 7 connections
    *   8 status · 9 actions
    */
+  .queue-table {
+    container: queue / inline-size;
+  }
+
   .queue-grid {
+    /* 34 + 170 + 88 + 170 + 92 + 72 + 54 + 128 + 120 tracks, 8×12px gaps and
+       2×12px padding = 1048px. */
     grid-template-columns: 34px minmax(170px, 1fr) 88px 170px 92px 72px 54px 128px 120px;
   }
 
-  /* eta and connections go first; both are single-transfer details. 7 visible. */
-  @media (max-width: 1280px) {
+  /* eta and connections go first; both are single-transfer details. 7 visible:
+     32 + 140 + 84 + 150 + 88 + 124 + 120 tracks, 6×12 gaps, 24 padding = 834.
+     The query limit sits 12px above each figure: the rows live inside a
+     scroll container whose vertical scrollbar is 10px of that width while the
+     header above it is not scrolled, so the rows are the narrower of the two and
+     an exact breakpoint would leave the header on one template and the rows on
+     the next. The spare 12px is what keeps both on the same one. */
+  @container queue (max-width: 1059px) {
     .queue-grid {
       grid-template-columns: 32px minmax(140px, 1fr) 84px 150px 88px 124px 120px;
     }
@@ -229,10 +251,9 @@
     }
   }
 
-  /* Then size, leaving select, name, progress, speed, status and actions. Tuned
-     so a window at the app's 720px minimum still fits without clipping; the name
-     column gets the rest and truncates with its tooltip intact. */
-  @media (max-width: 1000px) {
+  /* Then size, leaving select, name, progress, speed, status and actions. 6
+     visible: 30 + 110 + 130 + 84 + 120 + 120 tracks, 5×12 gaps, 24 padding = 678. */
+  @container queue (max-width: 845px) {
     .queue-grid {
       grid-template-columns: 30px minmax(110px, 1fr) 130px 84px 120px 120px;
     }
@@ -242,20 +263,34 @@
     }
   }
 
-  /**
-   * The detail panel is docked from 1360px up, where it takes 400px of the row.
-   * `data-detail` is set by App whenever that panel is open, so the table can
-   * give up the same two columns a narrower window would — and only until the
-   * window is wide enough for both. Below 1360px the panel floats instead, so the
-   * table keeps its full width.
-   */
-  @media (min-width: 1360px) and (max-width: 1600px) {
-    [data-detail='open'] .queue-grid {
-      grid-template-columns: 30px minmax(130px, 1fr) 84px 112px 88px 124px 120px;
+  /* Hidden while the speed column exists; shown by the narrow rule below. */
+  .queue-inline-speed {
+    display: none;
+  }
+
+  /* And speed last, for a table narrow enough to be the 720px window minus its
+     sidebar. The action track stays 118px wide — an errored row still has four
+     buttons — and the columns beside it are trimmed to pay for it: 28 + 96 + 112
+     + 100 + 118 tracks, 4×12 gaps, 24 padding = 526, inside the 540px the 720px
+     window leaves after the sidebar. */
+  @container queue (max-width: 689px) {
+    .queue-grid {
+      grid-template-columns: 28px minmax(96px, 1fr) 112px 100px 118px;
     }
 
-    [data-detail='open'] .queue-grid > :nth-child(6),
-    [data-detail='open'] .queue-grid > :nth-child(7) {
+    .queue-grid > :nth-child(5) {
+      display: none;
+    }
+
+    /* The speed track is gone, so the number moves under the progress bar
+       rather than disappearing. `:has` leaves the byte count alone on rows that
+       have no speed to show (paused, complete), where it is the only number
+       left beside the percentage. */
+    .queue-inline-speed {
+      display: inline;
+    }
+
+    .queue-progress-meta:has(.queue-inline-speed) .queue-bytes {
       display: none;
     }
   }

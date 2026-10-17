@@ -100,11 +100,11 @@ export function HistoryView(): JSX.Element {
                   <span className="grid h-5 w-5 shrink-0 place-items-center rounded bg-line/70 text-[11px] text-muted">
                     {kindGlyph(row.kind)}
                   </span>
-                  <span className="truncate font-medium text-fg" title={row.name}>
+                  <span className="truncate font-medium text-fg" data-tip={row.name}>
                     {row.name}
                   </span>
                 </div>
-                <div className="mt-0.5 truncate pl-7 text-[11px] text-faint" title={row.uris[0] ?? row.dir}>
+                <div className="mt-0.5 truncate pl-7 text-[11px] text-faint" data-tip={row.uris[0] ?? row.dir}>
                   {row.uris[0] ?? row.dir}
                 </div>
               </div>
@@ -122,12 +122,12 @@ export function HistoryView(): JSX.Element {
                 )}
               </div>
 
-              <div className="text-[11px] text-muted" title={formatDateTime(row.addedAt)}>
+              <div className="text-[11px] text-muted" data-tip={formatDateTime(row.addedAt)}>
                 {formatRelative(row.addedAt)}
                 <div className="text-[10.5px] text-faint">{sourceLabel(row.source)}</div>
               </div>
 
-              <div className="text-[11px] text-muted" title={row.completedAt ? formatDateTime(row.completedAt) : ''}>
+              <div className="text-[11px] text-muted" data-tip={row.completedAt ? formatDateTime(row.completedAt) : ''}>
                 {row.completedAt ? formatRelative(row.completedAt) : '—'}
                 {row.mediaFormat && <div className="truncate text-[10.5px] text-faint">{row.mediaFormat}</div>}
               </div>

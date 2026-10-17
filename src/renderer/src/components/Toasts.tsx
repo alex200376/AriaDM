@@ -70,7 +70,7 @@ function ClipboardOffer(): JSX.Element | null {
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[12.5px] font-medium text-fg">{t('toast.clipboard.title')}</p>
-          <p className="mt-0.5 truncate font-mono text-[11px] text-muted" title={offer.urls.join('\n')}>
+          <p className="mt-0.5 truncate font-mono text-[11px] text-muted" data-tip={offer.urls.join('\n')}>
             {offer.urls.length > 1
               ? t('toast.clipboard.linkCount', { count: offer.urls.length })
               : offer.urls[0]}

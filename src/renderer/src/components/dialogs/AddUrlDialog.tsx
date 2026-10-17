@@ -826,7 +826,7 @@ export function AddUrlDialog(): JSX.Element | null {
             </div>
             <ul className="mt-1.5 space-y-0.5">
               {pageMedia.slice(0, 5).map((url) => (
-                <li key={url} className="truncate font-mono text-[10.5px] text-muted" title={url}>
+                <li key={url} className="truncate font-mono text-[10.5px] text-muted" data-tip={url}>
                   {url}
                 </li>
               ))}

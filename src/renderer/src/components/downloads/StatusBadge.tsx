@@ -18,7 +18,7 @@ export function StatusBadge({ item }: { item: DownloadItem }): JSX.Element {
   // The label is also carried as a tooltip: the queue column can truncate a long
   // state ("Fetching metadata"), and the drawer is not always open to explain it.
   return (
-    <span title={label} className="flex min-w-0 overflow-hidden">
+    <span data-tip={label} className="flex min-w-0 overflow-hidden">
       <Badge
         tone={tone}
         dot

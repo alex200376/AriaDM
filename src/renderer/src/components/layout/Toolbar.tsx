@@ -230,6 +230,7 @@ export function Toolbar(): JSX.Element {
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
+          data-search
           placeholder={t('toolbar.search')}
           className="h-8 pl-8 pr-7 text-[12px]"
         />

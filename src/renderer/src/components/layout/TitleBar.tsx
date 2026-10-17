@@ -54,6 +54,9 @@ export function TitleBar({ children }: { children?: ReactNode }): JSX.Element {
           sentence about the engine belongs in the status bar. The tooltip still
           spells it out and the label is there for a screen reader. Nothing here
           is clickable, so it stays inside the drag region on purpose. */}
+      {/* Native `title` on purpose: the caption is a drag region, so pointer
+          events never reach this dot and the app's tooltip layer could not open.
+          It is nowhere near the window edge, so the OS bubble has room. */}
       <span
         role="status"
         aria-label={engineState}
@@ -66,7 +69,7 @@ export function TitleBar({ children }: { children?: ReactNode }): JSX.Element {
       </span>
 
       {engine.restarts > 0 && (
-        <span className="no-drag chip bg-warn/15 text-warn" title={t('engine.restartsHint')}>
+        <span className="no-drag chip bg-warn/15 text-warn" data-tip={t('engine.restartsHint')}>
           {t('engine.restarts', { count: engine.restarts })}
         </span>
       )}
@@ -114,7 +117,7 @@ function WindowButtons(): JSX.Element {
       <button
         type="button"
         aria-label={t('window.minimise')}
-        title={t('window.minimise')}
+        data-tip={t('window.minimise')}
         className={button}
         onClick={() => void window.api.window.minimise()}
       >
@@ -124,7 +127,7 @@ function WindowButtons(): JSX.Element {
       <button
         type="button"
         aria-label={maximised ? t('window.restore') : t('window.maximise')}
-        title={maximised ? t('window.restore') : t('window.maximise')}
+        data-tip={maximised ? t('window.restore') : t('window.maximise')}
         className={button}
         onClick={() => void window.api.window.toggleMaximise()}
       >
@@ -134,7 +137,7 @@ function WindowButtons(): JSX.Element {
       <button
         type="button"
         aria-label={t('common.close')}
-        title={t('common.close')}
+        data-tip={t('common.close')}
         className={cn(button, 'hover:bg-danger hover:text-white')}
         onClick={() => void window.api.window.close()}
       >

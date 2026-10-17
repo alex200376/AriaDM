@@ -60,7 +60,7 @@ export function SpeedGraph({
   return (
     <div
       className={cn('relative', className)}
-      title={idle ? t('speedGraph.idle') : t('speedGraph.peak', { speed: formatSpeed(peak) })}
+      data-tip={idle ? t('speedGraph.idle') : t('speedGraph.peak', { speed: formatSpeed(peak) })}
     >
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
