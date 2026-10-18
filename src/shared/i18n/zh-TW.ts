@@ -228,6 +228,7 @@ export const zhTW = {
   'add.saveAsTorrent': '種子下載由中繼資料決定檔名',
   'add.saveAsHint': '留空則沿用伺服器提供的檔名',
   'add.dir': '儲存位置',
+  'add.typeFolderHint': '依類型分類：這個下載會存到該資料夾中以分類命名的子資料夾。',
   'add.category': '分類',
   'add.categoryAuto': '自動判斷',
   'add.connections': '連線數預設',
@@ -485,6 +486,9 @@ export const zhTW = {
   'settings.tab.about': '關於',
   'settings.downloadDirSection': '下載位置',
   'settings.downloadDir': '預設資料夾',
+  'settings.sortByType': '依檔案類型分類',
+  'settings.sortByTypeHint':
+    '新下載會存入上方資料夾中的 {folders}。已指定專屬資料夾的分類不受影響，既有檔案也不會被移動。',
   'settings.appearance': '外觀',
   'settings.theme': '主題',
   'settings.theme.dark': '深色',

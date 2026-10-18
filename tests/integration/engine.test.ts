@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import type { TickPayload } from '@shared/download'
+import { DEFAULT_CATEGORIES } from '@shared/settings'
 
 import { DownloadManager } from '../../src/main/downloads/manager'
 import { HistoryStore } from '../../src/main/downloads/history-store'
@@ -145,6 +146,40 @@ suite('aria2 engine end to end', () => {
     expect(record?.status).toBe('complete')
     expect(record?.totalLength).toBe(server.payload.length)
     expect(record?.category).toBe('other')
+  })
+
+  it('writes a new download into its type folder when sorting is on', async () => {
+    // The switch is on by default, so this is the shape of an ordinary download:
+    // the file lands in a folder named after its category, not in the root.
+    await settingsStore.patch({ categories: DEFAULT_CATEGORIES, sortDownloadsByType: true })
+    try {
+      const { gids } = await manager.add(
+        makeInput({
+          uris: [`${server.origin}/payload.bin`],
+          out: 'holiday.mp4',
+          dir: '',
+          split: 4,
+          maxConnectionPerServer: 4,
+          minSplitSize: 1024 * 1024
+        })
+      )
+      const gid = gids[0]!
+      await waitFor(() => manager.getItem(gid)?.status === 'complete', {
+        label: 'the sorted download to finish'
+      })
+
+      const folder = path.join(root, 'downloads', '影片')
+      const written = await fsp.readFile(path.join(folder, 'holiday.mp4'))
+      expect(createHash('sha256').update(written).digest('hex')).toBe(server.payloadSha256)
+
+      // History has to record the real folder, or "show in folder" opens the
+      // wrong one and a retry would write beside the file.
+      expect(history.get(gid)?.dir).toBe(folder)
+      expect(history.get(gid)?.category).toBe('video')
+      await expect(fsp.stat(path.join(root, 'downloads', 'holiday.mp4'))).rejects.toThrow()
+    } finally {
+      await settingsStore.patch({ categories: [], sortDownloadsByType: false })
+    }
   })
 
   it('names a download after its URL instead of filing every URI as a torrent', async () => {

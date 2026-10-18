@@ -25,6 +25,7 @@ import type { AppPaths, CategoryRule, ScheduleRule, Settings, SpeedProfile } fro
 import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
 import { formatBytes, formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
+import { sanitizeFileName } from '@shared/uri'
 import { MAX_WALLPAPER_ZOOM, MIN_WALLPAPER_ZOOM } from '@shared/wallpaper'
 
 import { paintAccent, paintWallpaperPreview, type WallpaperAdjust } from '../../lib/appearance'
@@ -275,6 +276,18 @@ function GeneralTab({ onAdjust }: { onAdjust(): void }): JSX.Element {
     })
   }
 
+  /**
+   * The folders the switch creates, named the way the resolver names them.
+   *
+   * Only categories without a folder of their own are affected, so listing those
+   * is the honest answer to "what will this do?" — and a custom category shows
+   * up here without any extra wiring.
+   */
+  const typeFolders = settings.categories
+    .filter((rule) => rule.dir.length === 0)
+    .map((rule) => sanitizeFileName(rule.name, rule.id))
+    .join(getLocale() === 'en' ? ', ' : '、')
+
   return (
     <div className="space-y-6">
       <section>
@@ -293,6 +306,19 @@ function GeneralTab({ onAdjust }: { onAdjust(): void }): JSX.Element {
             />
           </div>
         </Field>
+
+        <div className="mt-3 rounded-lg border border-line bg-elevated/30 px-3">
+          <Row
+            label={t('settings.sortByType')}
+            hint={settings.sortDownloadsByType ? t('settings.sortByTypeHint', { folders: typeFolders }) : undefined}
+          >
+            <Toggle
+              checked={settings.sortDownloadsByType}
+              onChange={(next) => void patch({ sortDownloadsByType: next })}
+              label={t('settings.sortByType')}
+            />
+          </Row>
+        </div>
       </section>
 
       <section>
@@ -1025,6 +1051,20 @@ function CategoriesTab(): JSX.Element {
 
   if (!settings) return <></>
 
+  /**
+   * Where a category's downloads actually land.
+   *
+   * The list used to show only an explicitly configured folder, so with sorting
+   * on it read as if nothing was set while the files went somewhere else. The
+   * effective path is what the user needs to see.
+   */
+  const folderOf = (rule: CategoryRule): string => {
+    if (rule.dir) return rule.dir
+    if (!settings.sortDownloadsByType) return ''
+    const separator = settings.downloadDir.includes('\\') ? '\\' : '/'
+    return `${settings.downloadDir.replace(/[\\/]+$/, '')}${separator}${sanitizeFileName(rule.name, rule.id)}`
+  }
+
   const save = async (rule: CategoryRule): Promise<void> => {
     try {
       const next = await window.api.settings.saveCategory(rule)
@@ -1066,7 +1106,7 @@ function CategoriesTab(): JSX.Element {
               <p className="text-[12.5px] font-medium text-fg">{rule.name}</p>
               <p className="truncate text-[11px] text-faint">
                 {rule.extensions.length > 0 ? rule.extensions.join(', ') : t('settings.categories.noExtensions')}
-                {rule.dir && ` → ${rule.dir}`}
+                {folderOf(rule) && ` → ${folderOf(rule)}`}
               </p>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setDraft({ ...rule })}>

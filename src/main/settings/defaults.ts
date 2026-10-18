@@ -15,6 +15,11 @@ export function createDefaultSettings(paths: AppPaths): Settings {
   const preset = CONNECTION_PRESETS.standard
   return {
     downloadDir: paths.downloads,
+    // On by default: the whole point of a category folder is that it happens
+    // without being asked for. Existing files stay where history says they are,
+    // so this only decides where the next download lands, and a category with
+    // its own folder keeps it.
+    sortDownloadsByType: true,
     connectionsPreset: 'standard',
     split: preset.split,
     maxConnectionPerServer: preset.maxConnectionPerServer,

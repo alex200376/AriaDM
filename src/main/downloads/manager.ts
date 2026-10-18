@@ -39,7 +39,7 @@ import {
 } from '../aria2/types'
 import type { SettingsStore } from '../settings/store'
 
-import { categorize, categoryDirectory } from './categorizer'
+import { categorize, resolveDownloadDirectory } from './categorizer'
 import type { HistoryRecord, HistoryStore } from './history-store'
 import { mapPeer, mapServer, mapToItem, toNumber } from './map-to-item'
 import { SpeedMeter } from './speed-meter'
@@ -494,9 +494,22 @@ export class DownloadManager extends EventEmitter {
         ? input.category
         : categorize(suggestedName, settings.categories)
 
-    const dir = input.dir && input.dir.length > 0
-      ? input.dir
-      : categoryDirectory(settings.categories, category, settings.downloadDir)
+    /*
+     * The folder the file actually goes to.
+     *
+     * `input.dir` is not automatically a decision: the add dialog prefills it
+     * with the default folder, and the window's torrent drop passes that folder
+     * on purpose. Only a different folder counts as the user choosing one; the
+     * rest is resolved from the category, which is what applies the type
+     * folders.
+     */
+    const dir = resolveDownloadDirectory(
+      settings.categories,
+      category,
+      settings.downloadDir,
+      input.dir,
+      settings.sortDownloadsByType === true
+    )
 
     await this.ensureDirectory(dir)
 

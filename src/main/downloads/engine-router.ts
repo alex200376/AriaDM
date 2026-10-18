@@ -11,6 +11,7 @@ import {
 } from '@shared/media-sites'
 
 import { boundedValue } from '../bounded'
+import { resolveDownloadDirectory } from './categorizer'
 import type { DownloadManager } from './manager'
 import type { MediaJobs } from '../media/jobs'
 import type { MediaSniffer, PageScan } from '../media/page-sniff'
@@ -263,6 +264,23 @@ export class EngineRouter {
     // carry.
     const audioOnly = input.mediaAudioOnly === true
 
+    /*
+     * Where the media file lands.
+     *
+     * The category is known up front here — a media download is a video or an
+     * audio track by definition — so the type folder can be applied before
+     * yt-dlp runs instead of being guessed from the finished filename. An
+     * untouched folder field still carries the default download folder, so only
+     * a different one counts as the user's choice.
+     */
+    const mediaDir = resolveDownloadDirectory(
+      settings.categories ?? [],
+      audioOnly ? 'audio' : 'video',
+      settings.downloadDir,
+      input.dir,
+      settings.sortDownloadsByType === true
+    )
+
     const target = streamUrl || url
     this.options.log(
       streamUrl ? `engine router: ${url} -> manifest ${streamUrl}` : `engine router: ${url} -> yt-dlp`
@@ -328,6 +346,9 @@ export class EngineRouter {
           ...input,
           engine: 'aria2',
           uris: [resolved.directUrl],
+          // The route already knows this is a video or an audio track, which is
+          // more reliable than the URL's own extension.
+          dir: mediaDir,
           tags: withDirectMediaTag(input.tags),
           ...MEDIA_DIRECT_CONNECTIONS
         })
@@ -386,7 +407,7 @@ export class EngineRouter {
           // became `--paths ''` and the file went next to the app instead —
           // inside Program Files for an installed build, which is where the
           // "[Errno 13] Permission denied" on a .part file came from.
-          dir: input.dir || settings.downloadDir,
+          dir: mediaDir,
           audioOnly,
           playlist: false,
           maxConcurrent: 0

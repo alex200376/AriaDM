@@ -1,4 +1,8 @@
+import path from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
+
+import { DEFAULT_CATEGORIES } from '@shared/settings'
 
 import type { AddDownloadInput } from '../../src/shared/settings'
 import type { MediaProbe } from '../../src/main/media/ytdlp'
@@ -71,6 +75,8 @@ function makeRouter(
     ytdlpAvailable?: boolean
     autoDetect?: boolean
     scan?: Partial<PageScan>
+    /** Settings the router reads beyond the two flags it always needed. */
+    settings?: Record<string, unknown>
   } = {}
 ): {
   router: EngineRouter
@@ -109,7 +115,8 @@ function makeRouter(
     getSettings: () => ({
       ytdlpEnabled: true,
       ytdlpDetectSites: options.autoDetect ?? true,
-      downloadDir: 'C:/downloads'
+      downloadDir: 'C:/downloads',
+      ...options.settings
     }) as never,
     log: () => {}
   })
@@ -241,6 +248,48 @@ describe('EngineRouter', () => {
     await router.add(input({ engine: 'ytdlp', dir: 'D:/videos' }))
 
     expect(addMedia.mock.calls[0]![0]).toMatchObject({ dir: 'D:/videos' })
+  })
+
+  it('files a media download into its type folder when sorting is on', async () => {
+    const { router, addMedia } = makeRouter({
+      settings: { sortDownloadsByType: true, categories: DEFAULT_CATEGORIES }
+    })
+
+    await router.add(input({ engine: 'ytdlp' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ dir: path.join('C:/downloads', '影片') })
+  })
+
+  it('files an audio-only request under the music category', async () => {
+    const { router, addMedia } = makeRouter({
+      settings: { sortDownloadsByType: true, categories: DEFAULT_CATEGORIES }
+    })
+
+    await router.add(input({ engine: 'ytdlp', mediaAudioOnly: true }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ dir: path.join('C:/downloads', '音樂') })
+  })
+
+  it('still keeps a chosen folder when sorting is on', async () => {
+    const { router, addMedia } = makeRouter({
+      settings: { sortDownloadsByType: true, categories: DEFAULT_CATEGORIES }
+    })
+
+    await router.add(input({ engine: 'ytdlp', dir: 'D:/videos' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ dir: 'D:/videos' })
+  })
+
+  it('gives an untouched default folder the type subfolder', async () => {
+    // The add dialog prefills the folder field, so the value arriving here is the
+    // default one even though the user never picked it.
+    const { router, addMedia } = makeRouter({
+      settings: { sortDownloadsByType: true, categories: DEFAULT_CATEGORIES }
+    })
+
+    await router.add(input({ engine: 'ytdlp', dir: 'C:/downloads/' }))
+
+    expect(addMedia.mock.calls[0]![0]).toMatchObject({ dir: path.join('C:/downloads', '影片') })
   })
 
   it('downloads the quality the caller picked', async () => {

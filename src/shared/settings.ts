@@ -124,6 +124,16 @@ export type Ipv6Mode = 'auto' | 'on' | 'off'
 
 export interface Settings {
   downloadDir: string
+  /**
+   * File new downloads into a subfolder named after their category (影片, 圖片,
+   * …) inside `downloadDir`.
+   *
+   * The folder is the category's own name, so it matches the sidebar and a custom
+   * category needs no extra field; a category with an explicit `dir` keeps it.
+   * Only the destination of a new download is decided here — files already on
+   * disk are never moved.
+   */
+  sortDownloadsByType: boolean
   connectionsPreset: ConnectionsPreset
   split: number
   maxConnectionPerServer: number

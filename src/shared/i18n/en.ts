@@ -228,6 +228,7 @@ export const en = {
   'add.saveAsTorrent': 'A torrent takes its name from its metadata',
   'add.saveAsHint': 'Leave empty to keep the name the server sends',
   'add.dir': 'Save to',
+  'add.typeFolderHint': 'Sorted by type: this download goes into a subfolder of that folder, named after its category.',
   'add.category': 'Category',
   'add.categoryAuto': 'Detect automatically',
   'add.connections': 'Connection preset',
@@ -499,6 +500,9 @@ export const en = {
   'settings.tab.about': 'About',
   'settings.downloadDirSection': 'Download location',
   'settings.downloadDir': 'Default folder',
+  'settings.sortByType': 'Sort downloads into type folders',
+  'settings.sortByTypeHint':
+    'New downloads go into {folders} inside the folder above. A category with its own folder keeps it, and files already downloaded are not moved.',
   'settings.appearance': 'Appearance',
   'settings.theme': 'Theme',
   'settings.theme.dark': 'Dark',

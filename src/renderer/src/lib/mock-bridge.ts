@@ -131,6 +131,7 @@ function toHistoryRow(item: DownloadItem): HistoryRow {
 
 let settings: Settings = {
   downloadDir: 'C:\\Users\\WOW\\Downloads\\AriaDM',
+  sortDownloadsByType: true,
   connectionsPreset: 'standard',
   split: 8,
   maxConnectionPerServer: 8,

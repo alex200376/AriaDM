@@ -49,6 +49,18 @@ const AUTO_CATEGORY = '__auto__'
 /** How long the pasted URL must sit still before a format probe is launched. */
 const PROBE_DEBOUNCE_MS = 450
 
+/**
+ * Whether a folder field still holds the default folder.
+ *
+ * A pure string comparison after trimming the trailing separators: the field is
+ * prefilled from the same setting, so anything the user actually picked differs
+ * by more than a slash.
+ */
+function sameFolderText(value: string, fallback: string): boolean {
+  const trim = (input: string): string => input.trim().replace(/[\\/]+$/, '')
+  return trim(value) === trim(fallback)
+}
+
 /** One row of the quality picker, built from a probed format. */
 function formatOptionLabel(format: MediaFormatInfo): string {
   const size = format.filesize ? ` · ${formatBytes(format.filesize)}` : ''
@@ -208,6 +220,15 @@ export function AddUrlDialog(): JSX.Element | null {
   )
   const hasYtDlp = toolkits?.ytdlp.present ?? false
   const hasFfmpeg = toolkits?.ffmpeg.present ?? false
+  /*
+   * Whether the folder field is still showing the default one.
+   *
+   * The field is prefilled with it on purpose, so an unchanged value is not a
+   * choice and the type folders still apply. Saying so under the field is what
+   * stops the saved path from looking like it was ignored.
+   */
+  const sortedIntoTypeFolder =
+    settings?.sortDownloadsByType === true && sameFolderText(dir, settings.downloadDir)
 
   // Read an unknown host's page to see whether it holds a video. The main
   // process owns the fetch; every in-flight answer is dropped once the link
@@ -992,6 +1013,9 @@ export function AddUrlDialog(): JSX.Element | null {
                         }}
                       />
                     </div>
+                    {sortedIntoTypeFolder && (
+                      <span className="block text-[11px] leading-relaxed text-faint">{t('add.typeFolderHint')}</span>
+                    )}
                   </Field>
                 </div>
 
@@ -1146,6 +1170,9 @@ export function AddUrlDialog(): JSX.Element | null {
                     }}
                   />
                 </div>
+                {sortedIntoTypeFolder && (
+                  <span className="block text-[11px] leading-relaxed text-faint">{t('add.typeFolderHint')}</span>
+                )}
               </Field>
 
               <SelectField
