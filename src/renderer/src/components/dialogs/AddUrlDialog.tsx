@@ -1,6 +1,7 @@
-import { Captions, FileUp, FolderOpen, Link2, Loader2, Settings2, Sparkles, Wrench } from 'lucide-react'
+import { Captions, FileUp, FolderOpen, FolderTree, Link2, Loader2, Settings2, Sparkles, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { categoryFolderPath, categoryLabel, categorize } from '@shared/categories'
 import { formatBytes } from '@shared/format'
 import { classifyMediaError, type MediaErrorAction, type MediaErrorInfo } from '@shared/media-errors'
 import {
@@ -65,6 +66,18 @@ function sameFolderText(value: string, fallback: string): boolean {
 function formatOptionLabel(format: MediaFormatInfo): string {
   const size = format.filesize ? ` · ${formatBytes(format.filesize)}` : ''
   return `${format.label}${size}`
+}
+
+/** The destination line under a folder field: where this download will land. */
+function DestinationHint({ text }: { text: string }): JSX.Element {
+  return (
+    <span className="mt-1 flex items-center gap-1.5 text-[11px] leading-relaxed text-faint">
+      <FolderTree size={11} className="shrink-0" />
+      <span className="truncate" title={text}>
+        {text}
+      </span>
+    </span>
+  )
 }
 
 export function AddUrlDialog(): JSX.Element | null {
@@ -221,14 +234,44 @@ export function AddUrlDialog(): JSX.Element | null {
   const hasYtDlp = toolkits?.ytdlp.present ?? false
   const hasFfmpeg = toolkits?.ffmpeg.present ?? false
   /*
-   * Whether the folder field is still showing the default one.
+   * The destination, as the main process will resolve it.
    *
-   * The field is prefilled with it on purpose, so an unchanged value is not a
-   * choice and the type folders still apply. Saying so under the field is what
-   * stops the saved path from looking like it was ignored.
+   * The folder field is prefilled with the default on purpose, so an unchanged
+   * value is not a choice and the type folders still apply. The preview uses the
+   * same precedence as the resolver: a folder the user actually picked wins, then
+   * the type's own folder, then the default folder plus a type subfolder.
    */
-  const sortedIntoTypeFolder =
-    settings?.sortDownloadsByType === true && sameFolderText(dir, settings.downloadDir)
+  const categories = settings?.categories ?? []
+  const sortIntoTypes = settings?.sortDownloadsByType === true
+  const folderIsDefault = settings !== null && sameFolderText(dir, settings.downloadDir)
+  const previewName = useMemo(() => {
+    if (out.trim().length > 0) return out.trim()
+    // A torrent payload is named after its metadata, and a metalink file names
+    // its own payload; neither has a URI to read a name from.
+    if (torrent) return torrent.name.replace(/\.torrent$/i, '')
+    if (metalink) return metalink.name
+    if (uris.length === 1) return fileNameFromUri(uris[0]!)
+    return ''
+  }, [out, torrent, metalink, uris])
+  const previewCategory = category || (previewName !== '' ? categorize(previewName, categories) : '')
+  const previewRule = categories.find((entry) => entry.id === previewCategory)
+  const showPlainDestination =
+    settings !== null &&
+    folderIsDefault &&
+    previewRule !== undefined &&
+    (sortIntoTypes || previewRule.dir.length > 0)
+  const plainDestination =
+    settings && previewRule
+      ? categoryFolderPath(categories, previewCategory, settings.downloadDir, sortIntoTypes)
+      : ''
+  const mediaCategory = audioOnly ? 'audio' : 'video'
+  const mediaRule = categories.find((entry) => entry.id === mediaCategory)
+  const showMediaDestination =
+    settings !== null && folderIsDefault && mediaRule !== undefined && (sortIntoTypes || mediaRule.dir.length > 0)
+  const mediaDestination = settings
+    ? categoryFolderPath(categories, mediaCategory, settings.downloadDir, sortIntoTypes)
+    : ''
+  const showBatchDestination = settings !== null && folderIsDefault && sortIntoTypes && uris.length > 1
 
   // Read an unknown host's page to see whether it holds a video. The main
   // process owns the fetch; every in-flight answer is dropped once the link
@@ -1013,8 +1056,8 @@ export function AddUrlDialog(): JSX.Element | null {
                         }}
                       />
                     </div>
-                    {sortedIntoTypeFolder && (
-                      <span className="block text-[11px] leading-relaxed text-faint">{t('add.typeFolderHint')}</span>
+                    {showMediaDestination && (
+                      <DestinationHint text={t('add.savedTo', { path: mediaDestination })} />
                     )}
                   </Field>
                 </div>
@@ -1170,8 +1213,13 @@ export function AddUrlDialog(): JSX.Element | null {
                     }}
                   />
                 </div>
-                {sortedIntoTypeFolder && (
-                  <span className="block text-[11px] leading-relaxed text-faint">{t('add.typeFolderHint')}</span>
+                {showPlainDestination && (
+                  <DestinationHint text={t('add.savedTo', { path: plainDestination })} />
+                )}
+                {showBatchDestination && (
+                  <DestinationHint
+                    text={t('add.savedToBatch', { path: settings?.downloadDir ?? '' })}
+                  />
                 )}
               </Field>
 
@@ -1180,7 +1228,10 @@ export function AddUrlDialog(): JSX.Element | null {
                 value={category || AUTO_CATEGORY}
                 options={[
                   { value: AUTO_CATEGORY, label: t('add.categoryAuto') },
-                  ...(settings?.categories ?? []).map((entry) => ({ value: entry.id, label: entry.name }))
+                  ...(settings?.categories ?? []).map((entry) => ({
+                    value: entry.id,
+                    label: categoryLabel(settings?.categories ?? [], entry.id)
+                  }))
                 ]}
                 onValueChange={(value) => setCategory(value === AUTO_CATEGORY ? '' : value)}
               />

@@ -46,7 +46,14 @@ export type DialogKind = 'none' | 'add' | 'settings' | 'schedules' | 'about' | '
  * on 下載), and because the active panel survives leaving and re-entering
  * settings.
  */
-export type SettingsTab = 'general' | 'downloads' | 'bittorrent' | 'schedules' | 'integrations' | 'about'
+export type SettingsTab =
+  | 'general'
+  | 'folders'
+  | 'downloads'
+  | 'bittorrent'
+  | 'schedules'
+  | 'integrations'
+  | 'about'
 
 export type SortField = 'name' | 'size' | 'progress' | 'speed' | 'eta' | 'addedAt' | 'status'
 

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Download,
   FolderOpen,
+  FolderTree,
   Gauge,
   Globe,
   ImagePlus,
@@ -21,15 +22,15 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
-import type { AppPaths, CategoryRule, ScheduleRule, Settings, SpeedProfile } from '@shared/settings'
+import type { AppPaths, ScheduleRule, Settings, SpeedProfile } from '@shared/settings'
 import type { UpdateInfo, UpdateProgress } from '@shared/ipc'
 import { formatBytes, formatSpeed } from '@shared/format'
 import { getLocale, t, type TranslationKey } from '@shared/i18n'
-import { sanitizeFileName } from '@shared/uri'
 import { MAX_WALLPAPER_ZOOM, MIN_WALLPAPER_ZOOM } from '@shared/wallpaper'
 
 import { paintAccent, paintWallpaperPreview, type WallpaperAdjust } from '../../lib/appearance'
 import { cn } from '../../lib/cn'
+import { TypeFoldersPanel } from './TypeFoldersPanel'
 import { WallpaperCropOverlay } from './WallpaperCropOverlay'
 import { engineLabel, engineTone, type Tone } from '../../lib/labels'
 import { useApp, type SettingsTab } from '../../store/app-store'
@@ -62,6 +63,7 @@ type Tab = SettingsTab
 
 const TABS: { key: Tab; labelKey: TranslationKey; icon: ReactNode }[] = [
   { key: 'general', labelKey: 'settings.tab.general', icon: <SlidersHorizontal size={14} /> },
+  { key: 'folders', labelKey: 'settings.tab.folders', icon: <FolderTree size={14} /> },
   { key: 'downloads', labelKey: 'settings.tab.downloads', icon: <Gauge size={14} /> },
   { key: 'bittorrent', labelKey: 'settings.tab.bittorrent', icon: <Network size={14} /> },
   { key: 'schedules', labelKey: 'settings.tab.schedules', icon: <CalendarClock size={14} /> },
@@ -276,51 +278,8 @@ function GeneralTab({ onAdjust }: { onAdjust(): void }): JSX.Element {
     })
   }
 
-  /**
-   * The folders the switch creates, named the way the resolver names them.
-   *
-   * Only categories without a folder of their own are affected, so listing those
-   * is the honest answer to "what will this do?" — and a custom category shows
-   * up here without any extra wiring.
-   */
-  const typeFolders = settings.categories
-    .filter((rule) => rule.dir.length === 0)
-    .map((rule) => sanitizeFileName(rule.name, rule.id))
-    .join(getLocale() === 'en' ? ', ' : '、')
-
   return (
     <div className="space-y-6">
-      <section>
-        <SectionTitle>{t('settings.downloadDirSection')}</SectionTitle>
-        <Field label={t('settings.downloadDir')}>
-          <div className="flex gap-2">
-            <Input value={settings.downloadDir} onChange={(event) => void patch({ downloadDir: event.target.value })} />
-            <Button
-              variant="secondary"
-              icon={<FolderOpen size={14} />}
-              onClick={() => {
-                void window.api.settings.chooseDirectory(settings.downloadDir).then((chosen) => {
-                  if (chosen) void patch({ downloadDir: chosen })
-                })
-              }}
-            />
-          </div>
-        </Field>
-
-        <div className="mt-3 rounded-lg border border-line bg-elevated/30 px-3">
-          <Row
-            label={t('settings.sortByType')}
-            hint={settings.sortDownloadsByType ? t('settings.sortByTypeHint', { folders: typeFolders }) : undefined}
-          >
-            <Toggle
-              checked={settings.sortDownloadsByType}
-              onChange={(next) => void patch({ sortDownloadsByType: next })}
-              label={t('settings.sortByType')}
-            />
-          </Row>
-        </div>
-      </section>
-
       <section>
         <SectionTitle>{t('settings.appearance')}</SectionTitle>
         <div className="space-y-3">
@@ -1030,125 +989,6 @@ function SchedulesTab(): JSX.Element {
             </Row>
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => void save(draft)}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function CategoriesTab(): JSX.Element {
-  const settings = useApp((state) => state.settings)
-  const pushToast = useApp((state) => state.pushToast)
-  const [draft, setDraft] = useState<CategoryRule | null>(null)
-
-  if (!settings) return <></>
-
-  /**
-   * Where a category's downloads actually land.
-   *
-   * The list used to show only an explicitly configured folder, so with sorting
-   * on it read as if nothing was set while the files went somewhere else. The
-   * effective path is what the user needs to see.
-   */
-  const folderOf = (rule: CategoryRule): string => {
-    if (rule.dir) return rule.dir
-    if (!settings.sortDownloadsByType) return ''
-    const separator = settings.downloadDir.includes('\\') ? '\\' : '/'
-    return `${settings.downloadDir.replace(/[\\/]+$/, '')}${separator}${sanitizeFileName(rule.name, rule.id)}`
-  }
-
-  const save = async (rule: CategoryRule): Promise<void> => {
-    try {
-      const next = await window.api.settings.saveCategory(rule)
-      useApp.setState({ settings: next })
-      setDraft(null)
-      pushToast({ title: t('settings.categories.saved'), body: rule.name, tone: 'success' })
-    } catch (error) {
-      pushToast({ title: t('settings.categories.saveFailed'), body: (error as Error).message, tone: 'error' })
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <SectionTitle
-        action={
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Plus size={13} />}
-            onClick={() =>
-              setDraft({ id: `cat-${Date.now()}`, name: t('settings.categories.new'), extensions: [], dir: '', postAction: {} })
-            }
-          >
-            {t('common.add')}
-          </Button>
-        }
-      >
-        {t('settings.categories')}
-      </SectionTitle>
-
-      <p className="rounded-lg border border-line bg-elevated/30 p-2.5 text-[11px] leading-relaxed text-muted">
-        {t('settings.categories.hint')}
-      </p>
-
-      <div className="space-y-2">
-        {settings.categories.map((rule) => (
-          <div key={rule.id} className="flex items-center gap-3 rounded-lg border border-line bg-elevated/30 px-3 py-2.5">
-            <div className="min-w-0 flex-1">
-              <p className="text-[12.5px] font-medium text-fg">{rule.name}</p>
-              <p className="truncate text-[11px] text-faint">
-                {rule.extensions.length > 0 ? rule.extensions.join(', ') : t('settings.categories.noExtensions')}
-                {folderOf(rule) && ` → ${folderOf(rule)}`}
-              </p>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => setDraft({ ...rule })}>
-              {t('common.edit')}
-            </Button>
-          </div>
-        ))}
-      </div>
-
-      {draft && (
-        <div className="space-y-3 rounded-lg border border-line bg-elevated/30 p-3">
-          <Field label={t('common.name')}>
-            <Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-          </Field>
-          <Field label={t('settings.categories.extensions')} hint={t('settings.categories.extensionsHint')}>
-            <Input
-              value={draft.extensions.join(', ')}
-              onChange={(event) =>
-                setDraft({
-                  ...draft,
-                  extensions: event.target.value
-                    .split(',')
-                    .map((value) => value.trim().toLowerCase().replace(/^\./, ''))
-                    .filter(Boolean)
-                })
-              }
-            />
-          </Field>
-          <Field label={t('settings.categories.dir')} hint={t('settings.categories.dirHint')}>
-            <div className="flex gap-2">
-              <Input value={draft.dir} onChange={(event) => setDraft({ ...draft, dir: event.target.value })} />
-              <Button
-                variant="secondary"
-                icon={<FolderOpen size={14} />}
-                onClick={() => {
-                  void window.api.settings.chooseDirectory(draft.dir || settings.downloadDir).then((chosen) => {
-                    if (chosen) setDraft({ ...draft, dir: chosen })
-                  })
-                }}
-              />
-            </div>
-          </Field>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>
               {t('common.cancel')}
@@ -2257,6 +2097,7 @@ export function SettingsView(): JSX.Element {
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-2xl space-y-8">
           {tab === 'general' && <GeneralTab onAdjust={() => setAdjusting(true)} />}
+          {tab === 'folders' && <TypeFoldersPanel />}
           {tab === 'downloads' && (
             <>
               <NetworkTab />
@@ -2264,12 +2105,7 @@ export function SettingsView(): JSX.Element {
             </>
           )}
           {tab === 'bittorrent' && <BitTorrentTab />}
-          {tab === 'schedules' && (
-            <>
-              <SchedulesTab />
-              <CategoriesTab />
-            </>
-          )}
+          {tab === 'schedules' && <SchedulesTab />}
           {tab === 'integrations' && (
             <>
               <IntegrationsTab />

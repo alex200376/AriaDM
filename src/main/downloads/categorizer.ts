@@ -1,43 +1,14 @@
 import path from 'node:path'
 
+import { categoryFolderPath } from '@shared/categories'
 import type { CategoryRule } from '@shared/settings'
-import { extensionOf, sanitizeFileName } from '@shared/uri'
 
-export const FALLBACK_CATEGORY = 'other'
-
-/**
- * Map a filename to a category id using the user's rules.
- * Rules are evaluated in order, so a user rule can shadow a built-in one.
- */
-export function categorize(fileName: string, categories: CategoryRule[]): string {
-  const extension = extensionOf(fileName)
-  if (!extension) return FALLBACK_CATEGORY
-  for (const category of categories) {
-    if (category.extensions.some((candidate) => candidate.toLowerCase() === extension)) {
-      return category.id
-    }
-  }
-  return FALLBACK_CATEGORY
-}
+// Re-exported so the main process keeps one import site for the categoriser even
+// though the pure rules now live with the preview that reads the same answer.
+export { FALLBACK_CATEGORY, categorize } from '@shared/categories'
 
 export function findCategory(categories: CategoryRule[], id: string): CategoryRule | undefined {
   return categories.find((entry) => entry.id === id)
-}
-
-/**
- * The folder name a category's downloads are filed under.
- *
- * Deliberately the category's own name: the sidebar already shows it, so the
- * disk and the filter cannot disagree, and a custom category needs no second
- * label to invent. `sanitizeFileName` keeps a name like `A/B` a single folder
- * instead of a nested path, and a name of only dots or separators falls back to
- * the id.
- */
-export function categoryFolderName(category: CategoryRule): string {
-  // Separators become underscores before the filename sanitiser runs: that
-  // sanitiser keeps only the last path segment, which would turn a category
-  // named "Movies/HD" into a folder called just "HD" rather than "Movies_HD".
-  return sanitizeFileName(category.name.replace(/[\\/]+/g, '_'), category.id)
 }
 
 /**
@@ -64,10 +35,9 @@ export function sameDirectory(a: string, b: string): boolean {
 /**
  * Where a download in this category should land.
  *
- * Precedence is: the category's own folder, then the type subfolder when sorting
- * is on, then the global download directory. An unknown category (a settings file
- * with no rules, or an id the user deleted) has no folder name to use, so it
- * stays in the root rather than inventing one.
+ * The rules live in `shared/categories` because the renderer previews the same
+ * answer before the download exists; `path.join` is passed in so the main
+ * process keeps its native separators and normalisation.
  */
 export function categoryDirectory(
   categories: CategoryRule[],
@@ -75,10 +45,7 @@ export function categoryDirectory(
   defaultDir: string,
   sortByType = false
 ): string {
-  const category = findCategory(categories, categoryId)
-  if (category?.dir) return category.dir
-  if (!sortByType || !category) return defaultDir
-  return path.join(defaultDir, categoryFolderName(category))
+  return categoryFolderPath(categories, categoryId, defaultDir, sortByType, path.join)
 }
 
 /**
@@ -99,8 +66,4 @@ export function resolveDownloadDirectory(
   // entry points and a missing field must mean "no choice", not a crash.
   if (requested && requested.trim().length > 0 && !sameDirectory(requested, defaultDir)) return requested
   return categoryDirectory(categories, categoryId, defaultDir, sortByType)
-}
-
-export function categoryLabel(categories: CategoryRule[], id: string): string {
-  return findCategory(categories, id)?.name ?? id
 }

@@ -468,10 +468,13 @@ export function createMockApi(): AriaDmApi {
         return settings
       },
       saveCategory: async (rule: CategoryRule) => {
-        settings = {
-          ...settings,
-          categories: [...settings.categories.filter((entry) => entry.id !== rule.id), rule]
-        }
+        // Replace in place: category order decides which extension rule wins, so
+        // appending an edited rule would silently change the matching result.
+        const index = settings.categories.findIndex((entry) => entry.id === rule.id)
+        const categories = [...settings.categories]
+        if (index >= 0) categories[index] = rule
+        else categories.push(rule)
+        settings = { ...settings, categories }
         return settings
       },
       deleteCategory: async (id) => {

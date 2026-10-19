@@ -1,6 +1,7 @@
 import { Copy, ExternalLink, FolderOpen, Link2, Pause, Play, RotateCw, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
+import { categoryLabel } from '@shared/categories'
 import type { DownloadItem, PeerInfo, PieceMap, ServerInfo } from '@shared/download'
 import { etaOf, groupPieces, progressOf } from '@shared/download'
 import type { TranslationKey } from '@shared/i18n'
@@ -82,6 +83,7 @@ function InfoRow({ label, children, mono }: { label: string; children: ReactNode
 
 function OverviewTab({ item }: { item: DownloadItem }): JSX.Element {
   const { t } = useTranslation()
+  const categories = useApp((state) => state.settings?.categories) ?? []
   const fraction = progressOf(item)
   const eta = etaOf(item)
 
@@ -150,7 +152,7 @@ function OverviewTab({ item }: { item: DownloadItem }): JSX.Element {
         </InfoRow>
         <InfoRow label={t('detail.kind')}>{kindLabel(item.kind)}</InfoRow>
         <InfoRow label={t('detail.engine')}>{item.engine === 'ytdlp' ? 'yt-dlp' : 'aria2'}</InfoRow>
-        <InfoRow label={t('detail.category')}>{item.category}</InfoRow>
+        <InfoRow label={t('detail.category')}>{categoryLabel(categories, item.category)}</InfoRow>
         <InfoRow label={t('detail.source')}>{sourceLabel(item.source)}</InfoRow>
         {item.tags.length > 0 && (
           <InfoRow label={t('detail.tags')}>

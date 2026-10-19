@@ -182,6 +182,41 @@ suite('aria2 engine end to end', () => {
     }
   })
 
+  it('writes a type into the folder the user chose for it', async () => {
+    // The per-type override is exact: no extra `影片` subfolder is appended, and
+    // the folder does not have to exist before the first download.
+    const folder = path.join(root, 'media', 'films')
+    const categories = DEFAULT_CATEGORIES.map((rule) =>
+      rule.id === 'video' ? { ...rule, dir: folder } : rule
+    )
+    await settingsStore.patch({ categories, sortDownloadsByType: true })
+    try {
+      const { gids } = await manager.add(
+        makeInput({
+          uris: [`${server.origin}/payload.bin`],
+          out: 'series.mkv',
+          dir: '',
+          split: 4,
+          maxConnectionPerServer: 4,
+          minSplitSize: 1024 * 1024
+        })
+      )
+      const gid = gids[0]!
+      await waitFor(() => manager.getItem(gid)?.status === 'complete', {
+        label: 'the custom-folder download to finish'
+      })
+
+      const written = await fsp.readFile(path.join(folder, 'series.mkv'))
+      expect(createHash('sha256').update(written).digest('hex')).toBe(server.payloadSha256)
+      expect(history.get(gid)?.dir).toBe(folder)
+      expect(history.get(gid)?.category).toBe('video')
+      // The caller sent no folder, so the type override is what chose this one.
+      await expect(fsp.stat(path.join(root, 'downloads', 'series.mkv'))).rejects.toThrow()
+    } finally {
+      await settingsStore.patch({ categories: [], sortDownloadsByType: false })
+    }
+  })
+
   it('names a download after its URL instead of filing every URI as a torrent', async () => {
     // Regression: the suggested name used to be computed as
     // `fresh[0] ?? input.torrentBase64 ? 'torrent' : ''`, which parses as

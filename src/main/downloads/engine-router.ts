@@ -248,21 +248,11 @@ export class EngineRouter {
     const linkedFile =
       scan.streamUrls.length === 0 && scan.mediaUrls.length === 1 ? scan.mediaUrls[0]! : ''
 
-    if (linkedFile !== '') {
-      this.options.log(`engine router: ${url} links a single media file; using aria2`)
-      return await this.options.manager.add({
-        ...input,
-        engine: 'aria2',
-        uris: [linkedFile],
-        tags: withDirectMediaTag(input.tags),
-        ...MEDIA_DIRECT_CONNECTIONS
-      })
-    }
-
     // The extension's panel over an `<audio>` element asks for music, not for the
     // worst available video: it is the one piece of context the page URL cannot
     // carry.
     const audioOnly = input.mediaAudioOnly === true
+    const mediaCategory = audioOnly ? 'audio' : 'video'
 
     /*
      * Where the media file lands.
@@ -275,11 +265,26 @@ export class EngineRouter {
      */
     const mediaDir = resolveDownloadDirectory(
       settings.categories ?? [],
-      audioOnly ? 'audio' : 'video',
+      mediaCategory,
       settings.downloadDir,
       input.dir,
       settings.sortDownloadsByType === true
     )
+
+    if (linkedFile !== '') {
+      this.options.log(`engine router: ${url} links a single media file; using aria2`)
+      return await this.options.manager.add({
+        ...input,
+        engine: 'aria2',
+        uris: [linkedFile],
+        // The route knows this is a video or an audio track, which beats
+        // guessing from the CDN URL's extension — often there is none at all.
+        dir: mediaDir,
+        category: mediaCategory,
+        tags: withDirectMediaTag(input.tags),
+        ...MEDIA_DIRECT_CONNECTIONS
+      })
+    }
 
     const target = streamUrl || url
     this.options.log(
@@ -349,6 +354,7 @@ export class EngineRouter {
           // The route already knows this is a video or an audio track, which is
           // more reliable than the URL's own extension.
           dir: mediaDir,
+          category: mediaCategory,
           tags: withDirectMediaTag(input.tags),
           ...MEDIA_DIRECT_CONNECTIONS
         })
@@ -389,6 +395,10 @@ export class EngineRouter {
           engine: 'aria2',
           uris: [direct.url],
           ...(direct.out ? { out: direct.out } : {}),
+          // Same reason as the other direct-file routes: the CDN URL cannot be
+          // relied on for the extension, and the folder was already decided.
+          dir: mediaDir,
+          category: mediaCategory,
           tags: withDirectMediaTag(input.tags),
           ...MEDIA_DIRECT_CONNECTIONS
         })

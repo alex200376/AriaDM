@@ -526,6 +526,43 @@ describe('EngineRouter', () => {
     expect(result.gids).toEqual(['aria2-gid'])
   })
 
+  it('files a direct media file into its type folder when the CDN has no extension', async () => {
+    // `blobs.example.com/file/abc123` names no type at all. The route knows the
+    // request was a video, so the folder has to come from that, not from the URL's
+    // (missing) suffix — otherwise every such download landed in “other”.
+    const resolved = 'https://blobs.example.com/file/abc123'
+    const { router, add } = makeRouter({
+      directUrl: resolved,
+      settings: { sortDownloadsByType: true, categories: DEFAULT_CATEGORIES }
+    })
+
+    await router.add(input())
+
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dir: path.join('C:/downloads', '影片'),
+        category: 'video'
+      })
+    )
+  })
+
+  it('files an audio-only direct file under the music category', async () => {
+    const resolved = 'https://blobs.example.com/file/abc123'
+    const { router, add } = makeRouter({
+      directUrl: resolved,
+      settings: { sortDownloadsByType: true, categories: DEFAULT_CATEGORIES }
+    })
+
+    await router.add(input({ mediaAudioOnly: true }))
+
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dir: path.join('C:/downloads', '音樂'),
+        category: 'audio'
+      })
+    )
+  })
+
   it('hands a single progressive file from a recognised site to aria2', async () => {
     const resolved = 'https://cdn.example.com/v/abc.mp4'
     const { router, add, addMedia } = makeRouter({

@@ -2,14 +2,13 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { categoryFolderName, categoryLabel } from '@shared/categories'
 import { DEFAULT_CATEGORIES, type CategoryRule } from '@shared/settings'
 
 import {
   FALLBACK_CATEGORY,
   categorize,
   categoryDirectory,
-  categoryFolderName,
-  categoryLabel,
   findCategory,
   resolveDownloadDirectory,
   sameDirectory
@@ -89,6 +88,11 @@ describe('categoryFolderName', () => {
 
   it('keeps a slash in a name from turning into a nested path', () => {
     expect(categoryFolderName(rule({ name: 'A/B' }))).toBe('A_B')
+  })
+
+  it('uses a pinned folder name over the displayed one', () => {
+    expect(categoryFolderName(rule({ name: 'A/B', folderName: 'Movies' }))).toBe('Movies')
+    expect(categoryFolderName(rule({ name: '影片', folderName: 'Films/HD' }))).toBe('Films_HD')
   })
 
   it('falls back to the id when the name has nothing usable', () => {

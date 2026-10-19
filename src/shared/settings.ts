@@ -51,8 +51,24 @@ export interface CategoryRule {
   name: string
   /** Lowercase extensions without the leading dot. */
   extensions: string[]
-  /** Empty means "use the default download directory". */
+  /**
+   * The folder this type is filed into, when the user wants it somewhere other
+   * than the default download folder. Absolute, and used exactly as written —
+   * no type subfolder is appended.
+   *
+   * Empty means "use the default download folder", which becomes the default
+   * folder plus a subfolder named after this type while sorting is on.
+   */
   dir: string
+  /**
+   * The subfolder name used inside the default download folder.
+   *
+   * Empty or absent follows the type's displayed name, so an English interface
+   * creates `Videos` while a Chinese one keeps `影片`. Typing a name pins it and
+   * keeps the folder stable across interface languages. Ignored when `dir` is
+   * set.
+   */
+  folderName?: string
   postAction: Partial<PostAction>
 }
 

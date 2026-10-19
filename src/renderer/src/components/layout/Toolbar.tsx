@@ -1,27 +1,21 @@
 import {
-  Archive,
   Boxes,
   Eraser,
-  FileText,
-  Film,
   Gauge,
-  Image as ImageIcon,
   MoreHorizontal,
-  Music,
-  Package,
   Pause,
   Play,
   Plus,
-  Radio,
   Search,
   Trash2,
   X
 } from 'lucide-react'
-import type { ReactElement } from 'react'
 
+import { categoryLabel } from '@shared/categories'
 import { formatBytes, formatSpeed } from '@shared/format'
 import { t } from '@shared/i18n'
 
+import { CATEGORY_ICONS } from '../../lib/category-icons'
 import { useApp } from '../../store/app-store'
 import { Button, IconButton, Input } from '../ui/primitives'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
@@ -59,17 +53,6 @@ const ALL_CATEGORIES = 'all'
  * The category filter used to be a list in the sidebar, where these made it
  * scannable. A dropdown keeps the same recognition cue with far less chrome.
  */
-const CATEGORY_ICONS: Record<string, ReactElement> = {
-  video: <Film size={14} />,
-  audio: <Music size={14} />,
-  archive: <Archive size={14} />,
-  document: <FileText size={14} />,
-  program: <Package size={14} />,
-  image: <ImageIcon size={14} />,
-  torrent: <Radio size={14} />,
-  other: <Boxes size={14} />
-}
-
 /**
  * The queue toolbar.
  *
@@ -111,7 +94,7 @@ export function Toolbar(): JSX.Element {
   // gone.
   const configured = settings?.categories ?? []
   const categoryRows = [
-    ...configured.map((entry) => ({ id: entry.id, name: entry.name })),
+    ...configured.map((entry) => ({ id: entry.id, name: categoryLabel(configured, entry.id) })),
     ...(configured.some((entry) => entry.id === 'other') ? [] : [{ id: 'other', name: t('category.other') }])
   ].map((entry) => ({ ...entry, count: items.filter((item) => item.category === entry.id).length }))
   // Empty categories are noise in a filter, but the active one always stays put

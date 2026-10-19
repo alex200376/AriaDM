@@ -2,6 +2,7 @@ import {
   Activity,
   CheckCircle2,
   Eraser,
+  FolderTree,
   Gauge,
   History,
   Moon,
@@ -122,6 +123,13 @@ export function CommandPalette(): JSX.Element | null {
         icon: <Gauge size={15} />,
         keywords: 'speed profile limit 限速 設定檔',
         run: () => store.openSettings('downloads')
+      },
+      {
+        id: 'folders',
+        label: t('command.folders'),
+        icon: <FolderTree size={15} />,
+        keywords: 'folders types categories destination 資料夾 分類 儲存位置',
+        run: () => store.openSettings('folders')
       },
       {
         id: 'theme',

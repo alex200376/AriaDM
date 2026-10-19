@@ -1,3 +1,6 @@
+import path from 'node:path'
+
+import { t } from '@shared/i18n'
 import type {
   AppPaths,
   CategoryRule,
@@ -33,6 +36,32 @@ function looksLikeOwnDefault(width: number, height: number): boolean {
       Math.abs(entry.width - width) <= WINDOW_SIZE_TOLERANCE &&
       Math.abs(entry.height - height) <= WINDOW_SIZE_TOLERANCE
   )
+}
+
+/**
+ * Put a category's folder fields into the shape the resolver expects.
+ *
+ * The drive root keeps its separator (`D:\`), because stripping it would turn an
+ * absolute root into the drive-relative `D:` that means something else entirely.
+ * A name of separators only is reduced the same way the folder resolver reduces
+ * it, so what the editor shows is what ends up on disk.
+ */
+function normaliseCategory(rule: CategoryRule): CategoryRule {
+  const name = rule.name.trim()
+  const rawDir = rule.dir.trim()
+  const driveRoot = /^[a-zA-Z]:[\\/]$/.test(rawDir)
+  const dir = driveRoot ? `${rawDir.slice(0, 2)}\\` : rawDir.replace(/[\\/]+$/, '')
+
+  if (dir.length > 0 && !path.isAbsolute(dir)) {
+    throw new Error(t('main.settings.categoryDirAbsolute', { name: name || rule.id }))
+  }
+
+  return {
+    ...rule,
+    name: name || rule.id,
+    dir,
+    folderName: (rule.folderName ?? '').trim().replace(/[\\/]+/g, '_')
+  }
 }
 
 export class SettingsStore {
@@ -116,8 +145,14 @@ export class SettingsStore {
    * Categories are matched in order, so an edited rule keeps its position in the
    * list rather than being appended. Order is meaningful here: a user rule placed
    * before a built-in one is how a conflict gets resolved.
+   *
+   * The folder is normalised and validated here rather than only in the form:
+   * a relative path would silently resolve against the app's working directory,
+   * and a trailing separator would make `path.join` produce a double separator
+   * and a history row that no longer matches the folder on disk.
    */
-  async saveCategory(rule: CategoryRule): Promise<Settings> {
+  async saveCategory(input: CategoryRule): Promise<Settings> {
+    const rule = normaliseCategory(input)
     const settings = this.store.get()
     const categories = [...settings.categories]
     const index = categories.findIndex((entry) => entry.id === rule.id)
