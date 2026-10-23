@@ -211,6 +211,14 @@ export interface Settings {
   handoffToken: string
   /** Show the IDM-style confirmation window when the extension catches a download. */
   showCatchPopup: boolean
+  /**
+   * Bring the main window back to the front once a caught download is started.
+   *
+   * Only the catch popup's "start" choice triggers this: a capture the user then
+   * downloads while looking at a browser tab otherwise leaves the app silently
+   * running behind it, with nothing to show that anything happened.
+   */
+  showWindowOnCatchStart: boolean
 
   ytdlpEnabled: boolean
   ytdlpDetectSites: boolean

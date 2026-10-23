@@ -1057,6 +1057,19 @@ function IntegrationsTab(): JSX.Element {
               disabled={!settings.handoffEnabled}
             />
           </Row>
+          {/* Only the popup's "start" can reveal the window, so without the
+              popup there is no moment left for this to apply to. */}
+          <Row
+            label={t('settings.browser.showWindowOnStart')}
+            hint={t('settings.browser.showWindowOnStartHint')}
+          >
+            <Toggle
+              checked={settings.showWindowOnCatchStart}
+              onChange={(v) => void patch({ showWindowOnCatchStart: v })}
+              label={t('settings.browser.showWindowOnStart')}
+              disabled={!settings.handoffEnabled || !settings.showCatchPopup}
+            />
+          </Row>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">

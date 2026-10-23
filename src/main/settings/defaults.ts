@@ -62,6 +62,9 @@ export function createDefaultSettings(paths: AppPaths): Settings {
     // On by default: it is the whole point of the browser integration, and it is
     // silent when the extension is not installed.
     showCatchPopup: true,
+    // On by default: the popup's "start" is the moment the user asked for the
+    // download, and a window that stays behind the browser hides that it began.
+    showWindowOnCatchStart: true,
 
     ytdlpEnabled: true,
     ytdlpDetectSites: true,

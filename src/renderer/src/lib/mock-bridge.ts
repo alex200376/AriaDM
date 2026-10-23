@@ -162,6 +162,7 @@ let settings: Settings = {
   handoffPort: 7069,
   handoffToken: 'demo-token-4f2a91c7',
   showCatchPopup: true,
+  showWindowOnCatchStart: true,
   ytdlpEnabled: true,
   mediaCookiesFromBrowser: 'auto',
   mediaExtensionCookies: true,

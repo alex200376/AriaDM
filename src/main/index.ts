@@ -56,6 +56,7 @@ import { verifyInstallerSignature } from './update/signature'
 import { UpdateManager } from './update/update-manager'
 import { resolveCookieArgs } from './media/browser-cookies'
 import { BACKGROUND, createMainWindow, resolvePreloadPath, resolveRendererPage } from './window'
+import { revealWindow } from './window-reveal'
 
 const PROTOCOL = 'ariadm'
 
@@ -350,9 +351,7 @@ function showWindow(): void {
     mainWindow = createWindow()
     return
   }
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
+  revealWindow(mainWindow, { focus: true })
 }
 
 function createWindow(): BrowserWindow {
@@ -1266,6 +1265,12 @@ async function bootstrap(): Promise<void> {
       if (action === 'start') {
         if (aria2.length > 0) void manager.resume(aria2)
         for (const gid of media) void mediaJobs.resume(gid)
+
+        // The popup is the usual way a download starts while the app sits behind
+        // the browser or hidden in the tray, so confirming it has to make the
+        // result visible. Resumed first: the window then opens on a live queue
+        // rather than on a row that is still paused.
+        if (settingsStore.get().showWindowOnCatchStart) showWindow()
       } else {
         if (aria2.length > 0) void manager.remove(aria2, false)
         for (const gid of media) void mediaJobs.remove(gid, false)

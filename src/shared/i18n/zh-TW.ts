@@ -698,6 +698,9 @@ export const zhTW = {
   'settings.browser.catchPopup': '顯示下載確認視窗',
   'settings.browser.catchPopupHint':
     '擴充套件抓到連結時，用像 IDM 的小視窗詢問是否開始下載；關閉時仍會保留為稍後下載。',
+  'settings.browser.showWindowOnStart': '確認下載後顯示主視窗',
+  'settings.browser.showWindowOnStartHint':
+    '在小視窗按「開始下載」後，主視窗會還原、回到最前面並取得焦點。',
   'settings.browser.lastError': '瀏覽器整合發生問題：{message}',
   'settings.browser.running': '運作中 :{port}',
   'settings.browser.stopped': '未運作',

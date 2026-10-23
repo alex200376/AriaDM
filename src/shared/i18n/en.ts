@@ -716,6 +716,9 @@ export const en = {
   'settings.browser.catchPopup': 'Show a confirmation window when a download is caught',
   'settings.browser.catchPopupHint':
     'Asks before starting what the extension caught, in an IDM-style window. Closing it keeps the download for later.',
+  'settings.browser.showWindowOnStart': 'Show the main window after starting a catch',
+  'settings.browser.showWindowOnStartHint':
+    'Starting a caught download restores the window, brings it to the front and focuses it.',
   'settings.browser.running': 'Running :{port}',
   'settings.browser.stopped': 'Not running',
   'settings.browser.retrying': 'Reconnecting :{port}…',
